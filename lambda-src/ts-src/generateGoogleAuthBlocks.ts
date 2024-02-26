@@ -14,7 +14,7 @@ import {ActionsBlock, KnownBlock, SectionBlock} from '@slack/bolt';
  */
 export async function generateGoogleAuthBlocks(oauth2Client: Auth.OAuth2Client, slack_user_id: string, response_url: string) {
   const scopes = [
-    'profile',
+    'profile', 'https://www.googleapis.com/auth/cloud-platform'
   ];
 
   // Using a nonce for the state mitigates CSRF attacks.
