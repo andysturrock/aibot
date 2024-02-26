@@ -75,8 +75,6 @@ export async function handlePromptCommand(event: SlashCommandPayload): Promise<v
       requestBody
     };
     
-    const dummy: discoveryengine_v1alpha.Schema$GoogleCloudDiscoveryengineV1alphaSearchResponse = {};
-    console.log(`Dummy: ${util.inspect(dummy, false, null)}`);
     const searchResults = await discoveryengine.projects.locations.collections.dataStores.servingConfigs.search(params);
     console.log(`Search results: ${util.inspect(searchResults, false, null)}`);
 
@@ -123,7 +121,7 @@ export async function handlePromptCommand(event: SlashCommandPayload): Promise<v
           const title = result.document?.derivedStructData["title"] as string;
           // There only seems to be one snippet every time so just take the first.
           // They have <b></b> HTML bold tags in, so replace that with mrkdown * for bold.
-          const snippet = snippets[0].snippet.replace("<b>", "*").replace("</b>", "*");
+          const snippet = snippets[0].snippet.replaceAll("<b>", "*").replaceAll("</b>", "*");
           const text = `<${link}|${title}>\n${snippet}`;
           const sectionBlock: SectionBlock = {
             type: "section",
