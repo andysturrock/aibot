@@ -1,14 +1,14 @@
 import {Auth, discoveryengine_v1alpha, google} from 'googleapis';
 import {getGCalToken} from './tokenStorage';
 import {getSecretValue} from './awsAPI';
-import {postMessage, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postToResponseUrl, SlashCommandPayload} from './slackAPI';
+import {postMessage, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postToResponseUrl, PromptCommandPayload} from './slackAPI';
 import {KnownBlock, SectionBlock} from '@slack/bolt';
 import util from 'util';
 
-export async function handlePromptCommand(event: SlashCommandPayload): Promise<void> {
+export async function handlePromptCommand(event: PromptCommandPayload): Promise<void> {
   console.log(`event: ${util.inspect(event)}`);
   const responseUrl = event.response_url;
-  const channelId = event.channel_id;
+  const channelId = event.channel;
   try {
     const gcalRefreshToken = await getGCalToken(event.user_id);
     if(!gcalRefreshToken) {
@@ -138,10 +138,13 @@ export async function handlePromptCommand(event: SlashCommandPayload): Promise<v
     if(responseUrl) {
       // Use an ephemeral response if we've been called from the slash command.
       const responseType = event.command ? "ephemeral" : "in_channel";
+      console.log(`responseType: ${responseType}`);
       await postToResponseUrl(responseUrl, responseType, `Search results`, blocks);
     }
     else if(channelId) {
-      await postMessage(channelId, `Search results`, blocks);
+      // If we're replying in a channel, whether that be the DM with the bot or in a normal channel,
+      // reply in a thread.
+      await postMessage(channelId, `Search results`, blocks, event.event_ts);
     }
   }
   catch (error) {

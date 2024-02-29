@@ -5,11 +5,10 @@ import util from 'util';
 import {APIGatewayProxyEvent, APIGatewayProxyResult} from "aws-lambda";
 import {verifySlackRequest} from "./verifySlackRequest";
 import {getSecretValue} from "./awsAPI";
-import {SlashCommandPayload} from "./slackAPI";
+import {PromptCommandPayload, SlashCommandPayload} from "./slackAPI";
 import {getGCalToken} from "./tokenStorage";
 
 export async function handleSlashCommand(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
-
   try {
     if(!event.body) {
       throw new Error("Missing event body");
@@ -26,10 +25,13 @@ export async function handleSlashCommand(event: APIGatewayProxyEvent): Promise<A
     // It will use the response_url which comes from the body of the event param.
     // Here we just return an interim result with a 200 code.
     // See https://api.slack.com/interactivity/handling#acknowledgment_response
-
     const blocks = generateImmediateSlackResponseBlocks();
+    const resultBody = {
+      response_type: "ephemeral",
+      blocks
+    };
     const result: APIGatewayProxyResult = {
-      body: JSON.stringify(blocks),
+      body: JSON.stringify(resultBody),
       statusCode: 200
     };
 
@@ -39,13 +41,21 @@ export async function handleSlashCommand(event: APIGatewayProxyEvent): Promise<A
     const slashCommandOptions = body.text.length == 0 ? "" : body.text;
     let functionName = "AIBot-handlePromptCommandLambda";
     const gcalRefreshToken = await getGCalToken(body.user_id);
-    // TODO for now make logging into AAD optional
-    // if(!aadRefreshToken || !gcalRefreshToken) {
+    let payload: PromptCommandPayload | SlashCommandPayload;
+
     if(!gcalRefreshToken || slashCommandOptions === "login") {
       functionName = "AIBot-handleLoginCommandLambda";
+      payload = body;
     }
     else if(slashCommandOptions === "logout") {
       functionName = "AIBot-handleLogoutCommandLambda";
+      payload = body;
+    }
+    else {
+      const promptCommandPayload: PromptCommandPayload = {
+        ...body
+      };
+      payload = promptCommandPayload;
     }
 
     const configuration: LambdaClientConfig = {
@@ -56,7 +66,7 @@ export async function handleSlashCommand(event: APIGatewayProxyEvent): Promise<A
     const input: InvokeCommandInput = {
       FunctionName: functionName,
       InvocationType: InvocationType.Event,
-      Payload: new TextEncoder().encode(JSON.stringify(body))
+      Payload: new TextEncoder().encode(JSON.stringify(payload))
     };
 
     const invokeCommand = new InvokeCommand(input);
@@ -74,7 +84,7 @@ export async function handleSlashCommand(event: APIGatewayProxyEvent): Promise<A
 }
 
 function createErrorResult(text: string) {
-  const blocks = {
+  const resultBody = {
     blocks: [
       {
         type: "section",
@@ -86,7 +96,7 @@ function createErrorResult(text: string) {
     ]
   };
   const result: APIGatewayProxyResult = {
-    body: JSON.stringify(blocks),
+    body: JSON.stringify(resultBody),
     statusCode: 200
   };
   return result;

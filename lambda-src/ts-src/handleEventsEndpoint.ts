@@ -2,11 +2,10 @@ import * as util from 'util';
 import {APIGatewayProxyEvent, APIGatewayProxyResult} from "aws-lambda";
 import {getSecretValue} from './awsAPI';
 import {verifySlackRequest} from './verifySlackRequest';
-import {SlashCommandPayload, getBotId, postEphemeralMessage, postMessage} from './slackAPI';
-import {Block, EnvelopedEvent, SectionBlock, GenericMessageEvent} from '@slack/bolt';
-import {Auth} from 'googleapis';
-import {generateGoogleAuthBlocks} from './generateGoogleAuthBlocks';
+import {PromptCommandPayload, getBotId, postEphemeralMessage} from './slackAPI';
+import {EnvelopedEvent, GenericMessageEvent} from '@slack/bolt';
 import {InvocationType, InvokeCommand, InvokeCommandInput, LambdaClient, LambdaClientConfig} from '@aws-sdk/client-lambda';
+import {generateImmediateSlackResponseBlocks} from './generateImmediateSlackResponseBlocks';
 
 /**
  * Handle the event posts from Slack.
@@ -50,6 +49,7 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
 
     // If it's not that then we're getting a DM from the Messages tab
     const envelopedEvent = JSON.parse(event.body) as EnvelopedEvent;
+    console.log(`envelopedEvent: ${util.inspect(envelopedEvent, false, null)}`);
     if(envelopedEvent.event.type === "message") {
       const genericMessageEvent = envelopedEvent.event as GenericMessageEvent;
       // Get our own user ID and ignore messages we have posted, otherwise we'll get into an infinite loop.
@@ -61,19 +61,10 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
         console.log(`Ignoring message from self ${myId}`);
         return result;
       }
-      
-      console.log(`envelopedEvent: ${util.inspect(envelopedEvent, false, null)}`);
+
       // We need to respond within 3000ms so post an ephemeral message and then
       // call the AIBot-handlePromptCommandLambda asynchronously.
-      const blocks: Block[] = [];
-      const sectionBlock: SectionBlock = {
-        "type": "section",
-        "text": {
-          "type": "mrkdwn",
-          "text": "Thinking..."
-        }
-      };
-      blocks.push(sectionBlock);
+      const blocks = generateImmediateSlackResponseBlocks();
       await postEphemeralMessage(genericMessageEvent.channel, genericMessageEvent.user, "Thinking...", blocks);
 
       const configuration: LambdaClientConfig = {
@@ -83,26 +74,16 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
       if(!genericMessageEvent.text) {
         throw new Error("No text in message");
       }
-      const slashCommandPayload: SlashCommandPayload = {
-        text: genericMessageEvent.text,
-        token: '',
-        team_id: '',
-        team_domain: '',
-        channel_id: genericMessageEvent.channel,
-        channel_name: '',
-        user_id: genericMessageEvent.user,
-        user_name: '',
-        command: '',
-        api_app_id: envelopedEvent.api_app_id,
-        is_enterprise_install: '',
-        response_url: '',
-        trigger_id: ''
+      const promptCommandPayload: PromptCommandPayload = {
+        text: genericMessageEvent.text, // Can be null in GenericMessageEvent but we have checked above.
+        user_id: genericMessageEvent.user,  // Slack seems a bit inconsistent with user vs user_id
+        ...genericMessageEvent
       };
       const lambdaClient = new LambdaClient(configuration);
       const input: InvokeCommandInput = {
         FunctionName: functionName,
         InvocationType: InvocationType.Event,
-        Payload: new TextEncoder().encode(JSON.stringify(slashCommandPayload))
+        Payload: new TextEncoder().encode(JSON.stringify(promptCommandPayload))
       };
   
       const invokeCommand = new InvokeCommand(input);

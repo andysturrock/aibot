@@ -16,6 +16,8 @@ export async function handleInteractiveEndpoint(event: APIGatewayProxyEvent): Pr
       throw new Error("Missing event body");
     }
 
+    console.log(`event.body: ${util.inspect(event.body)}`);
+
     const signingSecret = await getSecretValue('AIBot', 'slackSigningSecret');
     
     // Verify that this request really did come from Slack

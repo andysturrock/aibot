@@ -18,12 +18,13 @@ export async function getBotId() {
   return result.bot_id;
 }
 
-export async function postMessage(channelId: string, text:string, blocks: (KnownBlock | Block)[]) {
+export async function postMessage(channelId: string, text:string, blocks: (KnownBlock | Block)[], thread_ts?: string) {
   const client = await createClient();
   await client.chat.postMessage({
     channel: channelId,
     text,
-    blocks
+    blocks,
+    thread_ts
   });
 }
 
@@ -80,7 +81,7 @@ export type SlashCommandPayload = {
   token: string,
   team_id: string,
   team_domain: string,
-  channel_id: string,
+  channel: string,
   channel_name: string,
   user_id: string,
   user_name: string,
@@ -90,6 +91,15 @@ export type SlashCommandPayload = {
   is_enterprise_install: string,
   response_url: string,
   trigger_id: string
+};
+
+export type PromptCommandPayload = {
+  response_url?: string,
+  channel?: string,
+  user_id: string,
+  text: string,
+  command?: string,
+  event_ts?: string
 };
 
 export type Action = {
