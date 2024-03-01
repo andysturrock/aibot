@@ -3,10 +3,8 @@ import {getGCalToken} from './tokenStorage';
 import {getSecretValue} from './awsAPI';
 import {postMessage, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postToResponseUrl, PromptCommandPayload} from './slackAPI';
 import {KnownBlock, SectionBlock} from '@slack/bolt';
-import util from 'util';
 
 export async function handlePromptCommand(event: PromptCommandPayload): Promise<void> {
-  console.log(`event: ${util.inspect(event)}`);
   const responseUrl = event.response_url;
   const channelId = event.channel;
   try {
@@ -76,7 +74,6 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     };
     
     const searchResults = await discoveryengine.projects.locations.collections.dataStores.servingConfigs.search(params);
-    console.log(`Search results: ${util.inspect(searchResults, false, null)}`);
 
     // Create some Slack blocks to display the results in a reasonable format
     const blocks: KnownBlock[] = [];
@@ -138,7 +135,6 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     if(responseUrl) {
       // Use an ephemeral response if we've been called from the slash command.
       const responseType = event.command ? "ephemeral" : "in_channel";
-      console.log(`responseType: ${responseType}`);
       await postToResponseUrl(responseUrl, responseType, `Search results`, blocks);
     }
     else if(channelId) {
