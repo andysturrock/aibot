@@ -83,6 +83,17 @@ export class LambdaStack extends Stack {
     // Allow read access to the secret it needs
     props.aiBotSecret.grantRead(handlePromptCommandLambda);
 
+    // Create the lambda for handling Slack interactions.
+    const handleInteractiveEndpointLambda = new lambda.Function(this, "handleInteractiveEndpointLambda", {
+      handler: "handleInteractiveEndpoint.handleInteractiveEndpoint",
+      functionName: 'AIBot-handleInteractiveEndpoint',
+      code: lambda.Code.fromAsset("../lambda-src/dist/handleInteractiveEndpoint"),
+      memorySize: 512,
+      ...allLambdaProps
+    });
+    // Allow read access to the secret it needs
+    props.aiBotSecret.grantRead(handleInteractiveEndpointLambda);
+
     // Create the lambda which handles the login to Google.
     // This lambda is called from the initial response lambda, not via the API Gateway.
     const handleLoginCommandLambda = new lambda.Function(this, "handleLoginCommandLambda", {
@@ -107,7 +118,7 @@ export class LambdaStack extends Stack {
     props.aiBotSecret.grantRead(handleLoginCommandLambda);
 
     // Create the lambda which handles the logout from Google.
-    // This lambda is called from the initial response lambda, not via the API Gateway.
+    // This lambda is called from the initial response lambda or the interactive handler lambda, not via the API Gateway.
     const handleLogoutCommandLambda = new lambda.Function(this, "handleLogoutCommandLambda", {
       handler: "handleLogoutCommand.handleLogoutCommand",
       functionName: 'AIBot-handleLogoutCommandLambda',
@@ -123,6 +134,8 @@ export class LambdaStack extends Stack {
     });
     // Give the initial response lambda permission to invoke this one
     handleLogoutCommandLambda.grantInvoke(handleSlashCommand);
+    // And the interaction handler lambda permission to invoke this
+    handleLogoutCommandLambda.grantInvoke(handleInteractiveEndpointLambda);
     // Allow access to the DynamoDB tables
     props.slackIdToGCalTokenTable.grantReadWriteData(handleLogoutCommandLambda);
     // Allow read access to the secret it needs
@@ -142,16 +155,32 @@ export class LambdaStack extends Stack {
     // Allow read access to the secret it needs
     props.aiBotSecret.grantRead(handleGoogleAuthRedirectLambda);
 
-    // Create the lambda for handling Slack interactions.
-    const handleInteractiveEndpointLambda = new lambda.Function(this, "handleInteractiveEndpointLambda", {
-      handler: "handleInteractiveEndpoint.handleInteractiveEndpoint",
-      functionName: 'AIBot-handleInteractiveEndpoint',
-      code: lambda.Code.fromAsset("../lambda-src/dist/handleInteractiveEndpoint"),
-      memorySize: 512,
+    // Create the lambda which handles the Home tab
+    // This lambda is called from the event handler lambda, not via the API Gateway.
+    const handleHomeTabEventLambda = new lambda.Function(this, "handleHomeTabEventLambda", {
+      handler: "handleHomeTabEvent.handleHomeTabEvent",
+      functionName: 'AIBot-handleHomeTabEventLambda',
+      code: lambda.Code.fromAsset("../lambda-src/dist/handleHomeTabEvent"),
+      memorySize: 1024,
       ...allLambdaProps
     });
+    // This function is going to be invoked asynchronously, so set some extra config for that
+    new lambda.EventInvokeConfig(this, 'handleHomeTabEventLambdaEventInvokeConfig', {
+      function: handleHomeTabEventLambda,
+      maxEventAge: Duration.minutes(2),
+      retryAttempts: 2,
+    });
+    // Give the Google auth callback handler lambda permission to call this one
+    handleHomeTabEventLambda.grantInvoke(handleGoogleAuthRedirectLambda);
+    // Give the handle logout lambda permission to invoke this one
+    handleHomeTabEventLambda.grantInvoke(handleLogoutCommandLambda);
+    // Give the handle events lambda permission to invoke this one
+    handleHomeTabEventLambda.grantInvoke(handleEventsEndpointLambda);
+    // Allow access to the DynamoDB tables
+    props.slackIdToGCalTokenTable.grantReadData(handleHomeTabEventLambda);
+    props.stateTable.grantReadWriteData(handleHomeTabEventLambda);
     // Allow read access to the secret it needs
-    props.aiBotSecret.grantRead(handleInteractiveEndpointLambda);
+    props.aiBotSecret.grantRead(handleHomeTabEventLambda);
 
     // Get hold of the hosted zone which has previously been created
     const zone = route53.HostedZone.fromHostedZoneAttributes(this, 'R53Zone', {
