@@ -1,19 +1,19 @@
 import {InvocationType, InvokeCommand, InvokeCommandInput, LambdaClient, LambdaClientConfig} from "@aws-sdk/client-lambda";
 import {generateImmediateSlackResponseBlocks} from './generateImmediateSlackResponseBlocks';
 import querystring from 'querystring';
-import util from 'util';
 import {APIGatewayProxyEvent, APIGatewayProxyResult} from "aws-lambda";
 import {verifySlackRequest} from "./verifySlackRequest";
 import {getSecretValue} from "./awsAPI";
-import {PromptCommandPayload, SlashCommandPayload} from "./slackAPI";
+import {PromptCommandPayload} from "./slackAPI";
 import {getGCalToken} from "./tokenStorage";
+import {SlashCommand} from "@slack/bolt";
 
 export async function handleSlashCommand(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   try {
     if(!event.body) {
       throw new Error("Missing event body");
     }
-    const body = querystring.parse(event.body) as unknown as SlashCommandPayload;
+    const body = querystring.parse(event.body) as unknown as SlashCommand;
 
     const signingSecret = await getSecretValue('AIBot', 'slackSigningSecret');
 
@@ -37,11 +37,10 @@ export async function handleSlashCommand(event: APIGatewayProxyEvent): Promise<A
 
     // Dispatch to the appropriate lambda depending on args passed to the Slash command
     // and whether we are logged into and Google
-    console.log(`Text: <${body.text}>`);
     const slashCommandOptions = body.text.length == 0 ? "" : body.text;
     let functionName = "AIBot-handlePromptCommandLambda";
     const gcalRefreshToken = await getGCalToken(body.user_id);
-    let payload: PromptCommandPayload | SlashCommandPayload;
+    let payload: PromptCommandPayload | SlashCommand;
 
     if(!gcalRefreshToken || slashCommandOptions === "login") {
       functionName = "AIBot-handleLoginCommandLambda";
@@ -72,13 +71,14 @@ export async function handleSlashCommand(event: APIGatewayProxyEvent): Promise<A
     const invokeCommand = new InvokeCommand(input);
     const output = await lambdaClient.send(invokeCommand);
     if(output.StatusCode != 202) {
-      throw new Error(`Failed to invoke ${functionName} - error:${util.inspect(output.FunctionError)}`);
+      console.error(`Failed to invoke ${functionName}`);
+      throw new Error(output.FunctionError);
     }
 
     return result;
   }
   catch (error) {
-    console.error(`Caught error: ${util.inspect(error)}`);
+    console.error(error);
     return createErrorResult("There was an error.  Please contact support.");
   }
 }

@@ -2,8 +2,9 @@ import {APIGatewayProxyEvent, APIGatewayProxyResult} from 'aws-lambda';
 import {generateLoggedInHTML} from './generateLoggedInHTML';
 import {Auth} from 'googleapis';
 import {saveGCalToken} from './tokenStorage';
-import {getSecretValue} from './awsAPI';
+import {getSecretValue, invokeLambda} from './awsAPI';
 import {deleteState, getState} from './stateTable';
+import {AppHomeOpenedEvent} from '@slack/bolt';
 
 export async function handleGoogleAuthRedirect(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   try {
@@ -39,6 +40,15 @@ export async function handleGoogleAuthRedirect(event: APIGatewayProxyEvent): Pro
       throw new Error("Failed to get refresh token from Google authentication service.");
     }
     await saveGCalToken(refreshToken, state.slack_user_id);
+
+    // Fire the handleHomeTabEvent lambda to update the home tab.
+    const appHomeOpenedEvent: AppHomeOpenedEvent = {
+      type: 'app_home_opened',
+      user: state.slack_user_id,
+      channel: "",
+      event_ts: ""
+    };
+    await invokeLambda("AIBot-handleHomeTabEventLambda", JSON.stringify(appHomeOpenedEvent));
 
     const html = generateLoggedInHTML("Google");
     const result: APIGatewayProxyResult = {
