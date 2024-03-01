@@ -12,7 +12,7 @@ import {ActionsBlock, KnownBlock, SectionBlock} from '@slack/bolt';
  * @param response_url Response URL for use in the redirect handler to send messages to the Slack user
  * @returns blocks containing the "Sign in to Google" button
  */
-export async function generateGoogleAuthBlocks(oauth2Client: Auth.OAuth2Client, slack_user_id: string, response_url: string) {
+export async function generateGoogleAuthBlocks(oauth2Client: Auth.OAuth2Client, slack_user_id: string, source: "SlashCommand" | "HomeTab") {
   const scopes = [
     'profile', 'https://www.googleapis.com/auth/cloud-platform'
   ];
@@ -21,13 +21,11 @@ export async function generateGoogleAuthBlocks(oauth2Client: Auth.OAuth2Client, 
   const nonce = crypto.randomBytes(16).toString('hex');
   const state: State = {
     nonce,
-    slack_user_id,
-    response_url
+    slack_user_id
   };
 
   await putState(nonce, state);
 
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: scopes.join(' '),
@@ -58,7 +56,38 @@ export async function generateGoogleAuthBlocks(oauth2Client: Auth.OAuth2Client, 
         },
         url,
         style: "primary",
-        action_id: 'googleSignInButton'
+        action_id: `googleSignInButton${source}`
+      }
+    ]
+  };
+  blocks.push(actionsBlock);
+  return blocks;
+}
+
+export function generateGoogleLogoutBlocks(source: "SlashCommand" | "HomeTab") {
+  const blocks: KnownBlock[] = [];
+  const sectionBlock: SectionBlock = {
+    type: "section",
+    fields: [
+      {
+        type: "plain_text",
+        text: "Sign in to Google"
+      }
+    ]
+  };
+  blocks.push(sectionBlock);
+  const actionsBlock: ActionsBlock = {
+    type: "actions",
+    block_id: "signInButton",
+    elements: [
+      {
+        type: "button",
+        text: {
+          type: "plain_text",
+          text: "Sign out of Google"
+        },
+        style: "primary",
+        action_id: `googleSignOutButton${source}`
       }
     ]
   };

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
+import {LambdaClientConfig, LambdaClient, InvokeCommandInput, InvocationType, InvokeCommand} from "@aws-sdk/client-lambda";
 import {SecretsManagerClient, GetSecretValueCommand, SecretsManagerClientConfig, GetSecretValueRequest} from "@aws-sdk/client-secrets-manager";
 
 /**
@@ -35,11 +36,30 @@ export async function getSecretValue(secretName: string, secretKey: string) {
   type SecretValue = {
     [key: string]: string;
  };
-  const secrets = JSON.parse(response.SecretString as string) as SecretValue;
+  const secrets = JSON.parse(response.SecretString) as SecretValue;
 
   const secret = secrets[secretKey];
   if(!secret) {
     throw new Error(`Secret key ${secretKey} not found`);
   }
   return secret;
+}
+
+export async function invokeLambda(functionName: string, payload: string) {
+  const configuration: LambdaClientConfig = {
+    region: 'eu-west-2'
+  };
+  const lambdaClient = new LambdaClient(configuration);
+  const input: InvokeCommandInput = {
+    FunctionName: functionName,
+    InvocationType: InvocationType.Event,
+    Payload: new TextEncoder().encode(payload)
+  };
+  
+  const invokeCommand = new InvokeCommand(input);
+  const output = await lambdaClient.send(invokeCommand);
+  if(output.StatusCode != 202) {
+    console.error(`Failed to invoke ${functionName}`);
+    throw new Error(output.FunctionError);
+  }
 }

@@ -1,10 +1,9 @@
 import * as util from 'util';
 import {APIGatewayProxyEvent, APIGatewayProxyResult} from "aws-lambda";
-import {getSecretValue} from './awsAPI';
+import {getSecretValue, invokeLambda} from './awsAPI';
 import {verifySlackRequest} from './verifySlackRequest';
 import {PromptCommandPayload, getBotId, postEphemeralMessage} from './slackAPI';
-import {EnvelopedEvent, GenericMessageEvent} from '@slack/bolt';
-import {InvocationType, InvokeCommand, InvokeCommandInput, LambdaClient, LambdaClientConfig} from '@aws-sdk/client-lambda';
+import {AppHomeOpenedEvent, EnvelopedEvent, GenericMessageEvent} from '@slack/bolt';
 import {generateImmediateSlackResponseBlocks} from './generateImmediateSlackResponseBlocks';
 
 /**
@@ -14,7 +13,6 @@ import {generateImmediateSlackResponseBlocks} from './generateImmediateSlackResp
  */
 export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   try {
-    console.log(`event: ${util.inspect(event)}`);
     if(!event.body) {
       throw new Error("Missing event body");
     }
@@ -43,13 +41,11 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
       result.headers = {
         'Content-Type': 'application/json',
       };
-      console.log(`result: ${util.inspect(result)}`);
       return result;
     }
 
-    // If it's not that then we're getting a DM from the Messages tab
+    // Maybe we're getting a DM from the Messages tab
     const envelopedEvent = JSON.parse(event.body) as EnvelopedEvent;
-    console.log(`envelopedEvent: ${util.inspect(envelopedEvent, false, null)}`);
     if(envelopedEvent.event.type === "message") {
       const genericMessageEvent = envelopedEvent.event as GenericMessageEvent;
       // Get our own user ID and ignore messages we have posted, otherwise we'll get into an infinite loop.
@@ -58,7 +54,7 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
         throw new Error("Cannot get bot's own user id");
       }
       if(genericMessageEvent.bot_id === myId) {
-        console.log(`Ignoring message from self ${myId}`);
+        console.debug(`Ignoring message from self ${myId}`);
         return result;
       }
 
@@ -67,10 +63,6 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
       const blocks = generateImmediateSlackResponseBlocks();
       await postEphemeralMessage(genericMessageEvent.channel, genericMessageEvent.user, "Thinking...", blocks);
 
-      const configuration: LambdaClientConfig = {
-        region: 'eu-west-2'
-      };
-      const functionName = "AIBot-handlePromptCommandLambda";
       if(!genericMessageEvent.text) {
         throw new Error("No text in message");
       }
@@ -79,18 +71,18 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
         user_id: genericMessageEvent.user,  // Slack seems a bit inconsistent with user vs user_id
         ...genericMessageEvent
       };
-      const lambdaClient = new LambdaClient(configuration);
-      const input: InvokeCommandInput = {
-        FunctionName: functionName,
-        InvocationType: InvocationType.Event,
-        Payload: new TextEncoder().encode(JSON.stringify(promptCommandPayload))
-      };
-  
-      const invokeCommand = new InvokeCommand(input);
-      const output = await lambdaClient.send(invokeCommand);
-      if(output.StatusCode != 202) {
-        throw new Error(`Failed to invoke ${functionName} - error:${util.inspect(output.FunctionError)}`);
+      await invokeLambda("AIBot-handlePromptCommandLambda", JSON.stringify(promptCommandPayload));
+    }
+    // Else the user has opened the Home tab
+    else if(envelopedEvent.event.type === "app_home_opened") {
+      const appHomeOpenedEvent: AppHomeOpenedEvent = envelopedEvent.event as AppHomeOpenedEvent;
+      // Slightly strangely AppHomeOpenedEvent is fired for when the user opens either Messages or Home tab.
+      if(appHomeOpenedEvent.tab === "home") {
+        await invokeLambda("AIBot-handleHomeTabEventLambda", JSON.stringify(appHomeOpenedEvent));
       }
+    }
+    else {
+      console.warn(`Unexpexted event type: ${envelopedEvent.event.type}`);
     }
     return result;
   }

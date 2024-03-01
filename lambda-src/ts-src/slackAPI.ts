@@ -1,7 +1,6 @@
-import {WebClient, LogLevel} from "@slack/web-api";
+import {WebClient, LogLevel, ViewsPublishArguments} from "@slack/web-api";
 import {getSecretValue} from './awsAPI';
-import {Block, KnownBlock} from "@slack/bolt";
-import util from 'util';
+import {Block, HomeView, KnownBlock} from "@slack/bolt";
 import axios from 'axios';
 
 async function createClient() {
@@ -16,6 +15,19 @@ export async function getBotId() {
   const client = await createClient();
   const result = await client.auth.test();
   return result.bot_id;
+}
+
+export async function publishHomeView(user: string, blocks: (KnownBlock | Block)[]) {
+  const client = await createClient();
+  const homeView: HomeView = {
+    type: "home",
+    blocks
+  };
+  const viewsPublishArguments: ViewsPublishArguments  = {
+    user_id: user,
+    view: homeView
+  };
+  await client.views.publish(viewsPublishArguments);
 }
 
 export async function postMessage(channelId: string, text:string, blocks: (KnownBlock | Block)[], thread_ts?: string) {
@@ -58,9 +70,6 @@ export async function postToResponseUrl(responseUrl: string, responseType: "ephe
     blocks
   };
   const result = await axios.post(responseUrl, messageBody);
-  if(result.status !== 200) {
-    throw new Error(`Error ${util.inspect(result.statusText)} posting response: ${util.inspect(result.data)}`);
-  }
   return result;
 }
 
@@ -77,22 +86,6 @@ export async function postErrorMessageToResponseUrl(responseUrl: string, text: s
   await postToResponseUrl(responseUrl, "ephemeral", text, blocks);
 }
 
-export type SlashCommandPayload = {
-  token: string,
-  team_id: string,
-  team_domain: string,
-  channel: string,
-  channel_name: string,
-  user_id: string,
-  user_name: string,
-  command: string,
-  text: string,
-  api_app_id: string,
-  is_enterprise_install: string,
-  response_url: string,
-  trigger_id: string
-};
-
 export type PromptCommandPayload = {
   response_url?: string,
   channel?: string,
@@ -107,35 +100,3 @@ export type Action = {
   value: string
 };
 
-export type InteractionPayload = {
-  type: string,
-  user: {
-    id: string,
-    username: string,
-    name: string,
-    team_id: string,
-  },
-  container: {
-    type: string,
-    message_ts: string,
-    channel_id: string,
-    is_ephemeral: boolean
-  },
-  team: {
-    id: string,
-    domain: string
-  },
-  channel: {
-    id: string,
-    name: string,
-  },
-  message: {
-    type: 'message',
-    subtype: string,
-    text: string,
-    ts: string,
-    bot_id: string,
-  },
-  response_url: string,
-  actions: Action[]
-};
