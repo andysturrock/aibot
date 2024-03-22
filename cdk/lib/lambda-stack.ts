@@ -6,6 +6,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import {LambdaStackProps} from './common';
 
 export class LambdaStack extends Stack {
@@ -22,7 +23,7 @@ export class LambdaStack extends Stack {
         NODE_OPTIONS: '--enable-source-maps',
       },
       logRetention: logs.RetentionDays.THREE_DAYS,
-      runtime: lambda.Runtime.NODEJS_18_X,
+      runtime: lambda.Runtime.NODEJS_20_X,
       timeout: Duration.seconds(30),
     };
 
@@ -82,6 +83,9 @@ export class LambdaStack extends Stack {
     props.slackIdToGCalTokenTable.grantReadData(handlePromptCommandLambda);
     // Allow read access to the secret it needs
     props.aiBotSecret.grantRead(handlePromptCommandLambda);
+    // Set the name to something short otherwise the GCP workload federation stuff doesn't work.
+    const role = handlePromptCommandLambda.role?.node.defaultChild as iam.CfnRole;
+    role.roleName = role.node.addr;
 
     // Create the lambda for handling Slack interactions.
     const handleInteractiveEndpointLambda = new lambda.Function(this, "handleInteractiveEndpointLambda", {

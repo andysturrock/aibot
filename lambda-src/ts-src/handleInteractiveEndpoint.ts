@@ -1,10 +1,8 @@
-import * as util from 'util';
 import {APIGatewayProxyEvent, APIGatewayProxyResult} from "aws-lambda";
 import {verifySlackRequest} from './verifySlackRequest';
 import axios from 'axios';
 import {getSecretValue, invokeLambda} from './awsAPI';
-import {AppHomeOpenedEvent, BlockAction, KnownBlock, SectionBlock, SlashCommand} from '@slack/bolt';
-import {handleLogoutCommand} from './handleLogoutCommand';
+import {BlockAction, KnownBlock, SectionBlock, SlashCommand} from '@slack/bolt';
 import {publishHomeView} from './slackAPI';
 
 /**

@@ -1,0 +1,4 @@
+{
+  "TODO": "Follow the instructions at https://cloud.google.com/iam/docs/workload-identity-federation-with-other-clouds#node.js",
+  "THEN": "Save the file you download to lambda-src/clientLibraryConfig.json"
+}

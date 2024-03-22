@@ -6,9 +6,9 @@ echo "Deleting old bundles..."
 rm -rf ../lambda-src/dist
 
 echo "Typechecking files..."
-#( cd ../lambda-src &&
-#  tsc --noEmit --project ./tsconfig-build.json
-#)
+( cd ../lambda-src &&
+ tsc --noEmit --project ./tsconfig-build.json
+)
 
 lambdas="handleSlashCommand \
   handlePromptCommand \
@@ -39,4 +39,5 @@ do
   )
 done
 
-
+echo "Adding clientLibraryConfig.json to handlePromptCommand bundle..."
+cp ../lambda-src/clientLibraryConfig.json ../lambda-src/dist/handlePromptCommand

@@ -1,4 +1,3 @@
-import * as util from 'util';
 import {APIGatewayProxyEvent, APIGatewayProxyResult} from "aws-lambda";
 import {getSecretValue, invokeLambda} from './awsAPI';
 import {verifySlackRequest} from './verifySlackRequest';

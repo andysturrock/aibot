@@ -3,6 +3,8 @@ import {getGCalToken} from './tokenStorage';
 import {getSecretValue} from './awsAPI';
 import {postMessage, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postToResponseUrl, PromptCommandPayload} from './slackAPI';
 import {KnownBlock, SectionBlock} from '@slack/bolt';
+import {generateV4ReadSignedUrl} from './generateV4ReadSignedUrl';
+import util from 'util';
 
 export async function handlePromptCommand(event: PromptCommandPayload): Promise<void> {
   const responseUrl = event.response_url;
@@ -119,7 +121,20 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
           // There only seems to be one snippet every time so just take the first.
           // They have <b></b> HTML bold tags in, so replace that with mrkdown * for bold.
           const snippet = snippets[0].snippet.replaceAll("<b>", "*").replaceAll("</b>", "*");
-          const text = `<${link}|${title}>\n${snippet}`;
+          // Generate a signed URL for the document as most users won't be able to access the
+          // bucket link as generally public access to GCP buckets should be disabled.
+          
+          const signedUrl = "(signed URL will be here - under development)";
+          // const bucketName = 'test-signed-urls-123';
+          // const fileName = 'HelloWorld.txt';
+          // try {
+          //   signedUrl = await generateV4ReadSignedUrl(bucketName, fileName);
+          // }
+          // catch (error) {
+          //   console.error(error);
+          // }
+
+          const text = `<${link}|${title}>\n${snippet}\n${signedUrl}`;
           const sectionBlock: SectionBlock = {
             type: "section",
             text: {

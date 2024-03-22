@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "infra as code",
+			"path": "cdk"
+		},
+		{
+			"name": "source code",
+			"path": "lambda-src"
+		},
+	],
+	"settings": {}
+}
