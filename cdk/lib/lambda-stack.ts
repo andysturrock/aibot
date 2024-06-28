@@ -1,13 +1,13 @@
-import {Duration, Stack} from 'aws-cdk-lib';
-import {Construct} from 'constructs';
+import { Duration, Stack } from 'aws-cdk-lib';
+import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as acm from 'aws-cdk-lib/aws-certificatemanager';
-import * as apigateway from 'aws-cdk-lib/aws-apigateway';
-import * as logs from 'aws-cdk-lib/aws-logs';
-import * as iam from 'aws-cdk-lib/aws-iam';
-import {LambdaStackProps} from './common';
+import { Construct } from 'constructs';
+import { LambdaStackProps } from './common';
 
 export class LambdaStack extends Stack {
   constructor(scope: Construct, id: string, props: LambdaStackProps) {
@@ -37,18 +37,6 @@ export class LambdaStack extends Stack {
     // Allow read access to the secret it needs
     props.aiBotSecret.grantRead(handleSlackAuthRedirectLambda);
 
-    // Create the lambda which receives the slash command and generates an initial response.
-    const handleSlashCommand = new lambda.Function(this, "handleSlashCommand", {
-      handler: "handleSlashCommand.handleSlashCommand",
-      functionName: 'AIBot-handleSlashCommand',
-      code: lambda.Code.fromAsset("../lambda-src/dist/handleSlashCommand"),
-      ...allLambdaProps
-    });
-    // Allow read access to the secret it needs
-    props.aiBotSecret.grantRead(handleSlashCommand);
-    // Allow access to the DynamoDB tables
-    props.slackIdToGCalTokenTable.grantReadData(handleSlashCommand);
-
     // Create the lambda for handling events, including DMs from the Messages tab
     const handleEventsEndpointLambda = new lambda.Function(this, "handleEventsEndpointLambda", {
       handler: "handleEventsEndpoint.handleEventsEndpoint",
@@ -61,7 +49,7 @@ export class LambdaStack extends Stack {
     props.aiBotSecret.grantRead(handleEventsEndpointLambda);
 
     // Create the lambda which calls the GCP AI APIs.
-    // This lambda is called from the initial response lambda, not via the API Gateway.
+    // This lambda is called from the events lambda, not via the API Gateway.
     const handlePromptCommandLambda = new lambda.Function(this, "handlePromptCommandLambda", {
       handler: "handlePromptCommand.handlePromptCommand",
       functionName: 'AIBot-handlePromptCommandLambda',
@@ -75,17 +63,17 @@ export class LambdaStack extends Stack {
       maxEventAge: Duration.minutes(2),
       retryAttempts: 2,
     });
-    // Give the initial response lambda permission to invoke this one
-    handlePromptCommandLambda.grantInvoke(handleSlashCommand);
+    // Give the events lambda permission to invoke this one
+    handlePromptCommandLambda.grantInvoke(handleEventsEndpointLambda);
     // And the events one
     handlePromptCommandLambda.grantInvoke(handleEventsEndpointLambda);
     // Allow access to the DynamoDB tables
-    props.slackIdToGCalTokenTable.grantReadData(handlePromptCommandLambda);
+    props.slackIdToHistoryTable.grantReadData(handlePromptCommandLambda);
     // Allow read access to the secret it needs
     props.aiBotSecret.grantRead(handlePromptCommandLambda);
     // Set the name to something short otherwise the GCP workload federation stuff doesn't work.
     const role = handlePromptCommandLambda.role?.node.defaultChild as iam.CfnRole;
-    role.roleName = role.node.addr;
+    role.roleName = 'handlePromptCommandLambdaRole';
 
     // Create the lambda for handling Slack interactions.
     const handleInteractiveEndpointLambda = new lambda.Function(this, "handleInteractiveEndpointLambda", {
@@ -97,67 +85,6 @@ export class LambdaStack extends Stack {
     });
     // Allow read access to the secret it needs
     props.aiBotSecret.grantRead(handleInteractiveEndpointLambda);
-
-    // Create the lambda which handles the login to Google.
-    // This lambda is called from the initial response lambda, not via the API Gateway.
-    const handleLoginCommandLambda = new lambda.Function(this, "handleLoginCommandLambda", {
-      handler: "handleLoginCommand.handleLoginCommand",
-      functionName: 'AIBot-handleLoginCommandLambda',
-      code: lambda.Code.fromAsset("../lambda-src/dist/handleLoginCommand"),
-      memorySize: 1024,
-      ...allLambdaProps
-    });
-    // This function is going to be invoked asynchronously, so set some extra config for that
-    new lambda.EventInvokeConfig(this, 'handleLoginCommandLambdaEventInvokeConfig', {
-      function: handleLoginCommandLambda,
-      maxEventAge: Duration.minutes(2),
-      retryAttempts: 2,
-    });
-    // Give the initial response lambda permission to invoke this one
-    handleLoginCommandLambda.grantInvoke(handleSlashCommand);
-    // Allow access to the DynamoDB tables
-    props.slackIdToGCalTokenTable.grantReadData(handleLoginCommandLambda);
-    props.stateTable.grantReadWriteData(handleLoginCommandLambda);
-    // Allow read access to the secret it needs
-    props.aiBotSecret.grantRead(handleLoginCommandLambda);
-
-    // Create the lambda which handles the logout from Google.
-    // This lambda is called from the initial response lambda or the interactive handler lambda, not via the API Gateway.
-    const handleLogoutCommandLambda = new lambda.Function(this, "handleLogoutCommandLambda", {
-      handler: "handleLogoutCommand.handleLogoutCommand",
-      functionName: 'AIBot-handleLogoutCommandLambda',
-      code: lambda.Code.fromAsset("../lambda-src/dist/handleLogoutCommand"),
-      memorySize: 1024,
-      ...allLambdaProps
-    });
-    // This function is going to be invoked asynchronously, so set some extra config for that
-    new lambda.EventInvokeConfig(this, 'handleLogoutCommandLambdaEventInvokeConfig', {
-      function: handleLogoutCommandLambda,
-      maxEventAge: Duration.minutes(2),
-      retryAttempts: 2,
-    });
-    // Give the initial response lambda permission to invoke this one
-    handleLogoutCommandLambda.grantInvoke(handleSlashCommand);
-    // And the interaction handler lambda permission to invoke this
-    handleLogoutCommandLambda.grantInvoke(handleInteractiveEndpointLambda);
-    // Allow access to the DynamoDB tables
-    props.slackIdToGCalTokenTable.grantReadWriteData(handleLogoutCommandLambda);
-    // Allow read access to the secret it needs
-    props.aiBotSecret.grantRead(handleLogoutCommandLambda);
-
-    // Create the lambda which handles the redirect from the Google auth
-    const handleGoogleAuthRedirectLambda = new lambda.Function(this, "handleGoogleAuthRedirectLambda", {
-      handler: "handleGoogleAuthRedirect.handleGoogleAuthRedirect",
-      functionName: 'AIBot-handleGoogleAuthRedirectLambda',
-      code: lambda.Code.fromAsset("../lambda-src/dist/handleGoogleAuthRedirect"),
-      memorySize: 512,
-      ...allLambdaProps
-    });
-    // Allow access to the DynamoDB tables
-    props.slackIdToGCalTokenTable.grantReadWriteData(handleGoogleAuthRedirectLambda);
-    props.stateTable.grantReadWriteData(handleGoogleAuthRedirectLambda);
-    // Allow read access to the secret it needs
-    props.aiBotSecret.grantRead(handleGoogleAuthRedirectLambda);
 
     // Create the lambda which handles the Home tab
     // This lambda is called from the event handler lambda, not via the API Gateway.
@@ -174,15 +101,10 @@ export class LambdaStack extends Stack {
       maxEventAge: Duration.minutes(2),
       retryAttempts: 2,
     });
-    // Give the Google auth callback handler lambda permission to call this one
-    handleHomeTabEventLambda.grantInvoke(handleGoogleAuthRedirectLambda);
-    // Give the handle logout lambda permission to invoke this one
-    handleHomeTabEventLambda.grantInvoke(handleLogoutCommandLambda);
     // Give the handle events lambda permission to invoke this one
     handleHomeTabEventLambda.grantInvoke(handleEventsEndpointLambda);
     // Allow access to the DynamoDB tables
-    props.slackIdToGCalTokenTable.grantReadData(handleHomeTabEventLambda);
-    props.stateTable.grantReadWriteData(handleHomeTabEventLambda);
+    props.slackIdToHistoryTable.grantReadData(handleHomeTabEventLambda);
     // Allow read access to the secret it needs
     props.aiBotSecret.grantRead(handleHomeTabEventLambda);
 
@@ -233,26 +155,16 @@ export class LambdaStack extends Stack {
     const handleSlackAuthRedirectLambdaIntegration = new apigateway.LambdaIntegration(handleSlackAuthRedirectLambda, {
       requestTemplates: {"application/json": '{ "statusCode": "200" }'}
     });
-    const handleSlashCommandLambdaIntegration = new apigateway.LambdaIntegration(handleSlashCommand, {
-      requestTemplates: {"application/json": '{ "statusCode": "200" }'}
-    });
-    const handleGoogleAuthRedirectLambdaIntegration = new apigateway.LambdaIntegration(handleGoogleAuthRedirectLambda, {
-      requestTemplates: {"application/json": '{ "statusCode": "200" }'}
-    });
     const handleInteractiveEndpointLambdaIntegration = new apigateway.LambdaIntegration(handleInteractiveEndpointLambda, {
       requestTemplates: {"application/json": '{ "statusCode": "200" }'}
     });
     const handleEventsEndpointLambdaIntegration = new apigateway.LambdaIntegration(handleEventsEndpointLambda, {
       requestTemplates: {"application/json": '{ "statusCode": "200" }'}
     });
-    const initialResponseResource = api.root.addResource('aibot');
-    const gcpAuthenticationCallbackResource = api.root.addResource('google-oauth-redirect');
     const handleSlackAuthRedirectResource = api.root.addResource('slack-oauth-redirect');
     const handleInteractiveEndpointResource = api.root.addResource('interactive-endpoint');
     const handleEventsEndpointResource = api.root.addResource('events-endpoint');
     // And add the methods.
-    initialResponseResource.addMethod("POST", handleSlashCommandLambdaIntegration);
-    gcpAuthenticationCallbackResource.addMethod("GET", handleGoogleAuthRedirectLambdaIntegration);
     handleSlackAuthRedirectResource.addMethod("GET", handleSlackAuthRedirectLambdaIntegration);
     handleInteractiveEndpointResource.addMethod("POST", handleInteractiveEndpointLambdaIntegration);
     handleEventsEndpointResource.addMethod("POST", handleEventsEndpointLambdaIntegration);

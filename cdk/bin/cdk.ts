@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
-import {LambdaStack} from '../lib/lambda-stack';
-import {DynamoDBStack} from '../lib/dynamodb-stack';
-import {getEnv} from '../lib/common';
-import {SecretsManagerStack} from '../lib/secretsmanager-stack';
+import 'source-map-support/register';
+import { getEnv } from '../lib/common';
+import { DynamoDBStack } from '../lib/dynamodb-stack';
+import { LambdaStack } from '../lib/lambda-stack';
+import { SecretsManagerStack } from '../lib/secretsmanager-stack';
 
 const lambdaVersion = getEnv('LAMBDA_VERSION', false)!;
 const customDomainName = getEnv('CUSTOM_DOMAIN_NAME', false)!;
@@ -27,8 +27,7 @@ const secretsManagerStack = new SecretsManagerStack(app, 'AIBotSecretsManagerSta
 
 new LambdaStack(app, 'AIBotLambdaStack', {
   env: {region},
-  slackIdToGCalTokenTable: dynamoDBStack.slackIdToGCalTokenTable,
-  stateTable: dynamoDBStack.stateTable,
+  slackIdToHistoryTable: dynamoDBStack.slackIdToHistoryTable,
   aiBotSecret: secretsManagerStack.aiBotSecret,
   lambdaVersion,
   customDomainName,

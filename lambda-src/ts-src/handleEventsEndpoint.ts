@@ -1,9 +1,9 @@
-import {APIGatewayProxyEvent, APIGatewayProxyResult} from "aws-lambda";
-import {getSecretValue, invokeLambda} from './awsAPI';
-import {verifySlackRequest} from './verifySlackRequest';
-import {PromptCommandPayload, getBotId, postEphemeralMessage} from './slackAPI';
-import {AppHomeOpenedEvent, EnvelopedEvent, GenericMessageEvent} from '@slack/bolt';
-import {generateImmediateSlackResponseBlocks} from './generateImmediateSlackResponseBlocks';
+import { AppHomeOpenedEvent, EnvelopedEvent, GenericMessageEvent } from '@slack/bolt';
+import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
+import { getSecretValue, invokeLambda } from './awsAPI';
+import { generateImmediateSlackResponseBlocks } from './generateImmediateSlackResponseBlocks';
+import { PromptCommandPayload, getBotId, postEphemeralMessage } from './slackAPI';
+import { verifySlackRequest } from './verifySlackRequest';
 
 /**
  * Handle the event posts from Slack.
@@ -81,7 +81,7 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
       }
     }
     else {
-      console.warn(`Unexpexted event type: ${envelopedEvent.event.type}`);
+      console.warn(`Unexpected event type: ${envelopedEvent.event.type}`);
     }
     return result;
   }

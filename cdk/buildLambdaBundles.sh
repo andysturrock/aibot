@@ -10,12 +10,9 @@ echo "Typechecking files..."
  tsc --noEmit --project ./tsconfig-build.json
 )
 
-lambdas="handleSlashCommand \
+lambdas=" \
   handlePromptCommand \
-  handleLoginCommand \
-  handleLogoutCommand \
   handleSlackAuthRedirect \
-  handleGoogleAuthRedirect \
   handleInteractiveEndpoint \
   handleEventsEndpoint \
   handleHomeTabEvent \
@@ -39,5 +36,5 @@ do
   )
 done
 
-echo "Adding clientLibraryConfig.json to handlePromptCommand bundle..."
-cp ../lambda-src/clientLibraryConfig.json ../lambda-src/dist/handlePromptCommand
+echo "Adding clientLibraryConfig-aws-aibot.json to handlePromptCommand bundle..."
+cp ../lambda-src/clientLibraryConfig-aws-aibot.json ../lambda-src/dist/handlePromptCommand

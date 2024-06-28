@@ -1,13 +1,10 @@
 
-import {DynamoDBClient, PutItemCommand, PutItemCommandInput, QueryCommand, QueryCommandInput, DeleteItemCommand, DeleteItemCommandInput} from '@aws-sdk/client-dynamodb';
+import { DeleteItemCommand, DeleteItemCommandInput, DynamoDBClient, PutItemCommand, PutItemCommandInput, QueryCommand, QueryCommandInput } from '@aws-sdk/client-dynamodb';
 
 // The very useful TTL functionality in DynamoDB means we
-// can set a TTL on storing the refresh token.
-// This is good security and also keeps down storage costs.
-// This state should be fairly short-lived as it's just to
-// mitigage CSRF attacks on the login redirect.
-const TTL_IN_MS = 1000 * 30; // 30 seconds
-const TableName = "AIBot_State";
+// can set a TTL on storing the history.
+const TTL_IN_MS = 1000 * 60 * 60 * 24 * 7; // One week
+const TableName = "AIBot_SlackIdToHistory";
 
 export type State = {
   nonce: string,
