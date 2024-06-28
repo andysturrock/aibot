@@ -65,10 +65,8 @@ export class LambdaStack extends Stack {
     });
     // Give the events lambda permission to invoke this one
     handlePromptCommandLambda.grantInvoke(handleEventsEndpointLambda);
-    // And the events one
-    handlePromptCommandLambda.grantInvoke(handleEventsEndpointLambda);
     // Allow access to the DynamoDB tables
-    props.slackIdToHistoryTable.grantReadData(handlePromptCommandLambda);
+    props.historyTable.grantReadWriteData(handlePromptCommandLambda);
     // Allow read access to the secret it needs
     props.aiBotSecret.grantRead(handlePromptCommandLambda);
     // Set the name to something short otherwise the GCP workload federation stuff doesn't work.
@@ -103,8 +101,6 @@ export class LambdaStack extends Stack {
     });
     // Give the handle events lambda permission to invoke this one
     handleHomeTabEventLambda.grantInvoke(handleEventsEndpointLambda);
-    // Allow access to the DynamoDB tables
-    props.slackIdToHistoryTable.grantReadData(handleHomeTabEventLambda);
     // Allow read access to the secret it needs
     props.aiBotSecret.grantRead(handleHomeTabEventLambda);
 

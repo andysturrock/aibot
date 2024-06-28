@@ -1,7 +1,7 @@
-import {WebClient, LogLevel, ViewsPublishArguments} from "@slack/web-api";
-import {getSecretValue} from './awsAPI';
-import {Block, HomeView, KnownBlock} from "@slack/bolt";
+import { Block, HomeView, KnownBlock } from "@slack/bolt";
+import { LogLevel, ViewsPublishArguments, WebClient } from "@slack/web-api";
 import axios from 'axios';
+import { getSecretValue } from './awsAPI';
 
 async function createClient() {
   const slackBotToken = await getSecretValue('AIBot', 'slackBotToken');
@@ -92,7 +92,8 @@ export type PromptCommandPayload = {
   user_id: string,
   text: string,
   command?: string,
-  event_ts?: string
+  event_ts?: string,
+  thread_ts?: string
 };
 
 export type Action = {

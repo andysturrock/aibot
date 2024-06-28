@@ -27,7 +27,7 @@ const secretsManagerStack = new SecretsManagerStack(app, 'AIBotSecretsManagerSta
 
 new LambdaStack(app, 'AIBotLambdaStack', {
   env: {region},
-  slackIdToHistoryTable: dynamoDBStack.slackIdToHistoryTable,
+  historyTable: dynamoDBStack.historyTable,
   aiBotSecret: secretsManagerStack.aiBotSecret,
   lambdaVersion,
   customDomainName,
