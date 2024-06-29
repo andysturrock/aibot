@@ -1,4 +1,4 @@
-import { GenerateContentResponse, StartChatParams, VertexAI } from '@google-cloud/vertexai';
+import { GenerateContentResponse, ModelParams, StartChatParams, VertexAI } from '@google-cloud/vertexai';
 import { KnownBlock, SectionBlock } from '@slack/bolt';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
@@ -16,12 +16,16 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     }
     // Rather annoyingly Google seems to only get config from the filesystem.
     process.env["GOOGLE_APPLICATION_CREDENTIALS"] = "./clientLibraryConfig-aws-aibot.json";
-    //
-    const gcpProjectId = await getSecretValue('AIBot', 'gcpProjectId');
-    const vertexAI = new VertexAI({project: gcpProjectId, location: 'europe-west2'});
-    const generativeModel = vertexAI.getGenerativeModel({
-      model: 'gemini-1.5-flash-001',
-    });
+    const project = await getSecretValue('AIBot', 'gcpProjectId');
+    const botName = await getSecretValue('AIBot', 'botName');
+    const model = await getSecretValue('AIBot', 'model');
+    const location = await getSecretValue('AIBot', 'gcpLocation');
+    const vertexAI = new VertexAI({project, location});
+    const modelParams: ModelParams = {
+      model,
+      systemInstruction: `You are a helpful assistant.  Your name is ${botName}.  You must tell people your name is ${botName} if they ask.`
+    };
+    const generativeModel = vertexAI.getGenerativeModel(modelParams);
     
     const startChatParams: StartChatParams = {};
     let history = await getHistory(event.user_id, threadTs);
