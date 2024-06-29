@@ -6,16 +6,13 @@ echo "Deleting old bundles..."
 rm -rf ../lambda-src/dist
 
 echo "Typechecking files..."
-#( cd ../lambda-src &&
-#  tsc --noEmit --project ./tsconfig-build.json
-#)
+( cd ../lambda-src &&
+ tsc --noEmit --project ./tsconfig-build.json
+)
 
-lambdas="handleSlashCommand \
+lambdas=" \
   handlePromptCommand \
-  handleLoginCommand \
-  handleLogoutCommand \
   handleSlackAuthRedirect \
-  handleGoogleAuthRedirect \
   handleInteractiveEndpoint \
   handleEventsEndpoint \
   handleHomeTabEvent \
@@ -39,4 +36,5 @@ do
   )
 done
 
-
+echo "Adding clientLibraryConfig-aws-aibot.json to handlePromptCommand bundle..."
+cp ../lambda-src/clientLibraryConfig-aws-aibot.json ../lambda-src/dist/handlePromptCommand
