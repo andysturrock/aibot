@@ -1,150 +1,57 @@
-import {Auth, discoveryengine_v1alpha, google} from 'googleapis';
-import {getGCalToken} from './tokenStorage';
-import {getSecretValue} from './awsAPI';
-import {postMessage, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postToResponseUrl, PromptCommandPayload} from './slackAPI';
-import {KnownBlock, SectionBlock} from '@slack/bolt';
+import { GenerateContentResponse, StartChatParams, VertexAI } from '@google-cloud/vertexai';
+import { KnownBlock, SectionBlock } from '@slack/bolt';
+import util from 'util';
+import { getSecretValue } from './awsAPI';
+import { getHistory, putHistory } from './historyTable';
+import { PromptCommandPayload, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage } from './slackAPI';
 
 export async function handlePromptCommand(event: PromptCommandPayload): Promise<void> {
   const responseUrl = event.response_url;
   const channelId = event.channel;
   try {
-    const gcalRefreshToken = await getGCalToken(event.user_id);
-    if(!gcalRefreshToken) {
-      if(responseUrl) {
-        await postErrorMessageToResponseUrl(responseUrl, `Log into Google, either with the slash command or the bot's Home tab.`);
-      }
-      else if(channelId) {
-        await postEphmeralErrorMessage(channelId, event.user_id, `Log into Google, either with the slash command or the bot's Home tab.`);
-      }
-      return;
+    // If we are in a thread we'll respond there.  If not then we'll start a thread for the response.
+    const threadTs = event.thread_ts || event.event_ts;
+    if(!threadTs) {
+      throw new Error("Need thread_ts or event_ts field in event");
     }
-
-    // User is logged into both Google so now we can use those APIs to call Vertex AI.
-    const gcpClientId = await getSecretValue('AIBot', 'gcpClientId');
-    const gcpClientSecret = await getSecretValue('AIBot', 'gcpClientSecret');
-    const aiBotUrl = await getSecretValue('AIBot', 'aiBotUrl');
-    const gcpRedirectUri = `${aiBotUrl}/google-oauth-redirect`;
-    // Something like projects/<projectid>/locations/<region>/collections/default_collection/dataStores/<datastore>/servingConfigs/default_search
-    const servingConfig = await getSecretValue('AIBot', 'servingConfig');
-    // Something like https://eu-discoveryengine.googleapis.com/v1alpha - ie contains the region
-    const rootUrl = await getSecretValue('AIBot', 'rootUrl');
-
-    const oAuth2ClientOptions: Auth.OAuth2ClientOptions = {
-      clientId: gcpClientId,
-      clientSecret: gcpClientSecret,
-      redirectUri: gcpRedirectUri
-    };
-    const oauth2Client = new Auth.OAuth2Client(oAuth2ClientOptions);
-  
-    oauth2Client.setCredentials({
-      refresh_token: gcalRefreshToken
+    // Rather annoyingly Google seems to only get config from the filesystem.
+    process.env["GOOGLE_APPLICATION_CREDENTIALS"] = "./clientLibraryConfig-aws-aibot.json";
+    //
+    const gcpProjectId = await getSecretValue('AIBot', 'gcpProjectId');
+    const vertexAI = new VertexAI({project: gcpProjectId, location: 'europe-west2'});
+    const generativeModel = vertexAI.getGenerativeModel({
+      model: 'gemini-1.5-flash-001',
     });
-    const options: discoveryengine_v1alpha.Options = {
-      version: 'v1alpha',
-      auth: oauth2Client,
-      rootUrl
-    };
-    const discoveryengine = google.discoveryengine(options);
-    const requestBody: discoveryengine_v1alpha.Schema$GoogleCloudDiscoveryengineV1alphaSearchRequest = {
-      query: event.text,
-      pageSize: 5,
-      spellCorrectionSpec: {
-        mode: "AUTO"
-      },
-      queryExpansionSpec: {
-        condition: "AUTO"
-      },
-      contentSearchSpec: {
-        // extractiveContentSpec: {
-        //   maxExtractiveAnswerCount: 5
-        // },
-        summarySpec: {
-          summaryResultCount: 5,
-          ignoreAdversarialQuery: true,
-          includeCitations: true
-        },
-        snippetSpec: {
-          returnSnippet: true
-        }
-      }
-    };
-    const params: discoveryengine_v1alpha.Params$Resource$Projects$Locations$Collections$Datastores$Servingconfigs$Search = {
-      servingConfig,
-      requestBody
-    };
     
-    const searchResults = await discoveryengine.projects.locations.collections.dataStores.servingConfigs.search(params);
-
+    const startChatParams: StartChatParams = {};
+    let history = await getHistory(event.user_id, threadTs);
+    startChatParams.history = history;
+    const chatSession = generativeModel.startChat(startChatParams);
+    const generateContentResult = await chatSession.sendMessage(event.text);
+    history = await chatSession.getHistory();
+    await putHistory(event.user_id, threadTs, history);
+    const contentResponse: GenerateContentResponse = generateContentResult.response;
+    const response = contentResponse.candidates? contentResponse.candidates[0].content.parts[0].text : "Hmmm sorry I couldn't answer that.";
+    
     // Create some Slack blocks to display the results in a reasonable format
     const blocks: KnownBlock[] = [];
-    
-    // Summary first
-    const summary = searchResults.data.summary;
-    if(summary) {
-      const sectionBlock: SectionBlock = {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: summary.summaryWithMetadata?.summary || "I don't know."
-          // TODO put citations in here
-        }
-      };
-      blocks.push(sectionBlock);
-    }
-
-    // Now the individual documents
-    if(!searchResults.data.results) {
-      const sectionBlock: SectionBlock = {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: "No results returned for query"
-        }
-      };
-      blocks.push(sectionBlock);
-    }
-    else {
-      for(const result of searchResults.data.results) {
-        if(result.document?.derivedStructData) {
-          type Snippet = {
-            snippet: string,
-            snippet_status: "SUCCESS" | "NO_SNIPPET_AVAILABLE"
-          };
-          const snippets = result.document?.derivedStructData["snippets"] as Snippet[];
-          let link = result.document?.derivedStructData["link"] as string;
-          // The link is in form gs://datastore/documentname, eg gs://searchtest1-docs/Atom Bank JIRA AE-1 - AE-1175.pdf
-          // We can turn that into a real link by changing the scheme and prepending the GCP storage domain.
-          link = link.replace("gs://", "https://storage.cloud.google.com/");
-          const title = result.document?.derivedStructData["title"] as string;
-          // There only seems to be one snippet every time so just take the first.
-          // They have <b></b> HTML bold tags in, so replace that with mrkdown * for bold.
-          const snippet = snippets[0].snippet.replaceAll("<b>", "*").replaceAll("</b>", "*");
-          const text = `<${link}|${title}>\n${snippet}`;
-          const sectionBlock: SectionBlock = {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text
-            }
-          };
-          blocks.push(sectionBlock);
-        }
+    const sectionBlock: SectionBlock = {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: response || "Hmmm sorry I couldn't answer that."
       }
-    }
-
-    if(responseUrl) {
-      // Use an ephemeral response if we've been called from the slash command.
-      const responseType = event.command ? "ephemeral" : "in_channel";
-      await postToResponseUrl(responseUrl, responseType, `Search results`, blocks);
-    }
-    else if(channelId) {
-      // If we're replying in a channel, whether that be the DM with the bot or in a normal channel,
-      // reply in a thread.
+    };
+    blocks.push(sectionBlock);
+        
+    if(channelId) {
       await postMessage(channelId, `Search results`, blocks, event.event_ts);
     }
+    
   }
   catch (error) {
     console.error(error);
+    console.error(util.inspect(error, false, null));
     if(responseUrl) {
       await postErrorMessageToResponseUrl(responseUrl, "Failed to call AI API");
     }
