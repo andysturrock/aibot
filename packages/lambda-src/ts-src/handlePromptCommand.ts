@@ -1,9 +1,9 @@
-import { GenerateContentResponse, ModelParams, StartChatParams, VertexAI } from '@google-cloud/vertexai';
-import { KnownBlock, SectionBlock } from '@slack/bolt';
+import {GenerateContentResponse, ModelParams, StartChatParams, VertexAI} from '@google-cloud/vertexai';
+import {KnownBlock, SectionBlock} from '@slack/bolt';
 import util from 'util';
-import { getSecretValue } from './awsAPI';
-import { getHistory, putHistory } from './historyTable';
-import { PromptCommandPayload, getBotUserId, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage, removeReaction } from './slackAPI';
+import {getSecretValue} from './awsAPI';
+import {getHistory, putHistory} from './historyTable';
+import {PromptCommandPayload, getBotUserId, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage, removeReaction} from './slackAPI';
 
 export async function handlePromptCommand(event: PromptCommandPayload): Promise<void> {
   const responseUrl = event.response_url;

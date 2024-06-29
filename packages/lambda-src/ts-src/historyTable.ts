@@ -1,6 +1,6 @@
 
-import { DeleteItemCommand, DeleteItemCommandInput, DynamoDBClient, PutItemCommand, PutItemCommandInput, QueryCommand, QueryCommandInput } from '@aws-sdk/client-dynamodb';
-import { Content } from '@google-cloud/vertexai';
+import {DeleteItemCommand, DeleteItemCommandInput, DynamoDBClient, PutItemCommand, PutItemCommandInput, QueryCommand, QueryCommandInput} from '@aws-sdk/client-dynamodb';
+import {Content} from '@google-cloud/vertexai';
 
 // The very useful TTL functionality in DynamoDB means we
 // can set a TTL on storing the history.

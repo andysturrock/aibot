@@ -1,5 +1,5 @@
-import { AppHomeOpenedEvent, KnownBlock, MrkdwnElement, SectionBlock } from '@slack/bolt';
-import { publishHomeView } from './slackAPI';
+import {AppHomeOpenedEvent, KnownBlock, MrkdwnElement, SectionBlock} from '@slack/bolt';
+import {publishHomeView} from './slackAPI';
 
 export async function handleHomeTabEvent(event: AppHomeOpenedEvent) {
   const blocks: KnownBlock[] = [];
