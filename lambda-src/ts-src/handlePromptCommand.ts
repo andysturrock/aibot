@@ -3,7 +3,7 @@ import { KnownBlock, SectionBlock } from '@slack/bolt';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
 import { getHistory, putHistory } from './historyTable';
-import { PromptCommandPayload, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage } from './slackAPI';
+import { PromptCommandPayload, getBotUserId, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage, removeReaction } from './slackAPI';
 
 export async function handlePromptCommand(event: PromptCommandPayload): Promise<void> {
   const responseUrl = event.response_url;
@@ -26,6 +26,14 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
       systemInstruction: `You are a helpful assistant.  Your name is ${botName}.  You must tell people your name is ${botName} if they ask.`
     };
     const generativeModel = vertexAI.getGenerativeModel(modelParams);
+
+    // Change any @mention of the bot to the bot's name.  Slack escapes @mentions like this: <@U00XYZ>.
+    // See https://api.slack.com/methods/bots.info#markdown for explanation of bot ids and user ids.
+    const botUserId = await getBotUserId(event.bot_id, event.team_id);
+    if(botUserId) {
+      const regex = new RegExp(`<@${botUserId}>`, "g");
+      event.text = event.text.replace(regex, botName);
+    }
     
     const startChatParams: StartChatParams = {};
     let history = await getHistory(event.user_id, threadTs);
@@ -49,6 +57,10 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     blocks.push(sectionBlock);
         
     if(channelId) {
+      // Remove the eyes emoji from the original message so we don't have eyes littered everywhere.
+      if(event.event_ts) {  // Should not be null in reality, just the type system says it can be.
+        await removeReaction(channelId, event.event_ts, "eyes");
+      }
       await postMessage(channelId, `Search results`, blocks, event.event_ts);
     }
     
