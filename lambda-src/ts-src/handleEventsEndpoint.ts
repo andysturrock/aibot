@@ -1,8 +1,8 @@
 import { AppHomeOpenedEvent, EnvelopedEvent, GenericMessageEvent } from '@slack/bolt';
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
+import util from 'util';
 import { getSecretValue, invokeLambda } from './awsAPI';
-import { generateImmediateSlackResponseBlocks } from './generateImmediateSlackResponseBlocks';
-import { PromptCommandPayload, getBotId, postEphemeralMessage } from './slackAPI';
+import { PromptCommandPayload, addReaction, getBotId } from './slackAPI';
 import { verifySlackRequest } from './verifySlackRequest';
 
 /**
@@ -11,6 +11,7 @@ import { verifySlackRequest } from './verifySlackRequest';
  * @returns HTTP 200 back to Slack immediately to indicate the event payload has been received.
  */
 export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
+  console.log(`event: ${util.inspect(event, false, null)}`);
   try {
     if(!event.body) {
       throw new Error("Missing event body");
@@ -25,27 +26,11 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
       statusCode: 200
     };
 
-    // This handles the initial event API verification.
-    // See https://api.slack.com/events/url_verification
-    type URLVerification = {
-      token:string;
-      challenge: string;
-      type: string;
-    };
-    const urlVerification = JSON.parse(event.body) as URLVerification;
-    if(urlVerification.type === "url_verification") {
-      result.body = JSON.stringify({
-        challenge: urlVerification.challenge
-      });
-      result.headers = {
-        'Content-Type': 'application/json',
-      };
-      return result;
-    }
-
-    // Maybe we're getting a DM from the Messages tab
     const envelopedEvent = JSON.parse(event.body) as EnvelopedEvent;
-    if(envelopedEvent.event.type === "message") {
+    switch(envelopedEvent.event.type) {
+    // DM from the Messages tab or @mention
+    case "message":
+    case "app_mention":{
       const genericMessageEvent = envelopedEvent.event as GenericMessageEvent;
       // Get our own user ID and ignore messages we have posted, otherwise we'll get into an infinite loop.
       const myId = await getBotId();
@@ -57,10 +42,9 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
         return result;
       }
 
-      // We need to respond within 3000ms so post an ephemeral message and then
-      // call the AIBot-handlePromptCommandLambda asynchronously.
-      const blocks = generateImmediateSlackResponseBlocks();
-      await postEphemeralMessage(genericMessageEvent.channel, genericMessageEvent.user, "Thinking...", blocks);
+      // We need to respond within 3000ms so add an eyes emoji to the user's message to show we are looking it.
+      // Then call the AIBot-handlePromptCommandLambda asynchronously.
+      await addReaction(genericMessageEvent.channel, genericMessageEvent.event_ts, "eyes");
 
       if(!genericMessageEvent.text) {
         throw new Error("No text in message");
@@ -68,21 +52,47 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
       const promptCommandPayload: PromptCommandPayload = {
         text: genericMessageEvent.text, // Can be null in GenericMessageEvent but we have checked above.
         user_id: genericMessageEvent.user,  // Slack seems a bit inconsistent with user vs user_id
-        ...genericMessageEvent
+        ...genericMessageEvent,
+        bot_id: myId,
+        team_id: envelopedEvent.team_id
       };
       await invokeLambda("AIBot-handlePromptCommandLambda", JSON.stringify(promptCommandPayload));
+      break;
     }
-    // Else the user has opened the Home tab
-    else if(envelopedEvent.event.type === "app_home_opened") {
+    case "app_home_opened": {
       const appHomeOpenedEvent: AppHomeOpenedEvent = envelopedEvent.event as AppHomeOpenedEvent;
       // Slightly strangely AppHomeOpenedEvent is fired for when the user opens either Messages or Home tab.
       if(appHomeOpenedEvent.tab === "home") {
         await invokeLambda("AIBot-handleHomeTabEventLambda", JSON.stringify(appHomeOpenedEvent));
       }
+      break;
     }
-    else {
+
+    case "url_verification": {
+      // This handles the initial event API verification.
+      // See https://api.slack.com/events/url_verification
+      type URLVerification = {
+        token:string;
+        challenge: string;
+        type: string;
+      };
+      const urlVerification = JSON.parse(event.body) as URLVerification;
+      if(urlVerification.type === "url_verification") {
+        result.body = JSON.stringify({
+          challenge: urlVerification.challenge
+        });
+        result.headers = {
+          'Content-Type': 'application/json',
+        };
+      }
+      break;
+    }
+    
+    default:
       console.warn(`Unexpected event type: ${envelopedEvent.event.type}`);
+      break;
     }
+
     return result;
   }
   catch (error) {
