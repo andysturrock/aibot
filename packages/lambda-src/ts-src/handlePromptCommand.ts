@@ -1,9 +1,9 @@
-import {GenerateContentResponse, ModelParams, StartChatParams, VertexAI} from '@google-cloud/vertexai';
-import {KnownBlock, SectionBlock} from '@slack/bolt';
+import { GenerateContentResponse, ModelParams, StartChatParams, VertexAI } from '@google-cloud/vertexai';
+import { KnownBlock, SectionBlock } from '@slack/bolt';
 import util from 'util';
-import {getSecretValue} from './awsAPI';
-import {getHistory, putHistory} from './historyTable';
-import {PromptCommandPayload, getBotUserId, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage, removeReaction} from './slackAPI';
+import { getSecretValue } from './awsAPI';
+import { getHistory, putHistory } from './historyTable';
+import { PromptCommandPayload, getBotUserId, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage, removeReaction } from './slackAPI';
 
 export async function handlePromptCommand(event: PromptCommandPayload): Promise<void> {
   const responseUrl = event.response_url;
@@ -15,7 +15,7 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
       throw new Error("Need thread_ts or event_ts field in event");
     }
     // Rather annoyingly Google seems to only get config from the filesystem.
-    process.env["GOOGLE_APPLICATION_CREDENTIALS"] = "./clientLibraryConfig-aws-aibot.json";
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = "./clientLibraryConfig-aws-aibot.json";
     const project = await getSecretValue('AIBot', 'gcpProjectId');
     const botName = await getSecretValue('AIBot', 'botName');
     const model = await getSecretValue('AIBot', 'model');
