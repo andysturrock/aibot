@@ -1,6 +1,7 @@
 import { Block, HomeView, KnownBlock } from "@slack/bolt";
-import { LogLevel, ViewsPublishArguments, WebClient } from "@slack/web-api";
+import { BotsInfoArguments, ChatDeleteArguments, LogLevel, ReactionsAddArguments, ReactionsRemoveArguments, ViewsPublishArguments, WebClient } from "@slack/web-api";
 import axios from 'axios';
+import util from 'util';
 import { getSecretValue } from './awsAPI';
 
 async function createClient() {
@@ -15,6 +16,21 @@ export async function getBotId() {
   const client = await createClient();
   const result = await client.auth.test();
   return result.bot_id;
+}
+
+/**
+ * Get a bot's user id
+ * @param botId 
+ * @returns user id if the bot has one, else undefined
+ */
+export async function getBotUserId(botId: string, teamId: string) {
+  const client = await createClient();
+  const botsInfoArguments: BotsInfoArguments = {
+    bot: botId,
+    team_id: teamId
+  };
+  const result = await client.bots.info(botsInfoArguments);
+  return result.bot?.user_id;
 }
 
 export async function publishHomeView(user: string, blocks: (KnownBlock | Block)[]) {
@@ -40,14 +56,21 @@ export async function postMessage(channelId: string, text:string, blocks: (Known
   });
 }
 
-export async function postEphemeralMessage(channelId: string, userId: string, text:string, blocks: (KnownBlock | Block)[]) {
+export async function postEphemeralMessage(channelId: string,
+  userId: string,
+  text:string,
+  blocks: (KnownBlock | Block)[],
+  threadTs?: string
+) {
   const client = await createClient();
-  await client.chat.postEphemeral({
+  const result = await client.chat.postEphemeral({
     user: userId,
     channel: channelId,
     text,
-    blocks
-  });  
+    blocks,
+    thread_ts: threadTs
+  });
+  return result.message_ts;
 }
 
 export async function postEphmeralErrorMessage(channelId: string, userId:string, text: string) {
@@ -61,6 +84,36 @@ export async function postEphmeralErrorMessage(channelId: string, userId:string,
     }
   ];
   await postEphemeralMessage(channelId, userId, text, blocks);
+}
+
+export async function deleteMessage(channelId: string, ts: string) {
+  const client = await createClient();
+  const chatDeleteArguments: ChatDeleteArguments = {
+    channel: channelId,
+    ts
+  };
+  const result = await client.chat.delete(chatDeleteArguments);
+  console.log(`delete result: ${util.inspect(result, false, null)}`);
+}
+
+export async function addReaction(channelId: string, timestamp: string, name: string) {
+  const client = await createClient();
+  const reactionsAddArguments: ReactionsAddArguments = {
+    channel: channelId,
+    timestamp,
+    name
+  };
+  await client.reactions.add(reactionsAddArguments);
+}
+
+export async function removeReaction(channelId: string, timestamp: string, name: string) {
+  const client = await createClient();
+  const reactionsRemoveArguments: ReactionsRemoveArguments = {
+    channel: channelId,
+    timestamp,
+    name
+  };
+  await client.reactions.remove(reactionsRemoveArguments);
 }
 
 export async function postToResponseUrl(responseUrl: string, responseType: "ephemeral" | "in_channel", text: string, blocks: KnownBlock[]) {
@@ -93,7 +146,9 @@ export type PromptCommandPayload = {
   text: string,
   command?: string,
   event_ts?: string,
-  thread_ts?: string
+  thread_ts?: string,
+  bot_id: string,
+  team_id: string
 };
 
 export type Action = {
