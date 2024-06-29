@@ -1,7 +1,7 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-import {StackProps} from 'aws-cdk-lib';
+import { StackProps } from 'aws-cdk-lib';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 
@@ -23,8 +23,7 @@ export function getEnv(name: string, optional = false): string | undefined {
 }
 
 export interface LambdaStackProps extends StackProps {
-  readonly slackIdToGCalTokenTable: dynamodb.Table;
-  readonly stateTable: dynamodb.Table;
+  readonly historyTable: dynamodb.Table;
   readonly aiBotSecret: secretsmanager.ISecret;
   readonly lambdaVersion: string;
   readonly customDomainName: string;
