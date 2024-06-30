@@ -1,8 +1,8 @@
-import { Block, HomeView, KnownBlock } from "@slack/bolt";
-import { BotsInfoArguments, ChatDeleteArguments, LogLevel, ReactionsAddArguments, ReactionsRemoveArguments, ViewsPublishArguments, WebClient } from "@slack/web-api";
+import {Block, HomeView, KnownBlock} from "@slack/bolt";
+import {BotsInfoArguments, ChatDeleteArguments, LogLevel, ReactionsAddArguments, ReactionsRemoveArguments, ViewsPublishArguments, WebClient} from "@slack/web-api";
 import axios from 'axios';
 import util from 'util';
-import { getSecretValue } from './awsAPI';
+import {getSecretValue} from './awsAPI';
 
 async function createClient() {
   const slackBotToken = await getSecretValue('AIBot', 'slackBotToken');

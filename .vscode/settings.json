@@ -1,0 +1,8 @@
+{
+  "eslint.codeActionsOnSave.rules": null,
+  "eslint.workingDirectories": [
+    { "directory": "packages/cdk", "changeProcessCWD": true },
+    { "directory": "packages/lambda-src", "changeProcessCWD": true }
+  ],
+  "json.schemaDownload.enable": true
+}

@@ -32,7 +32,7 @@ export async function getHistory(slackId: string, threadTs: string) : Promise<Co
   };
   const data = await ddbClient.send(new QueryCommand(params));
   const items = data.Items;
-  if(items && items[0] && items[0].history.S) {
+  if(items?.[0]?.history.S) {
     const history = JSON.parse(items[0].history.S) as Content[];
     return history;
   }

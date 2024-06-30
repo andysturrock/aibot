@@ -6,6 +6,8 @@
     "cdk": "bin/cdk.js"
   },
   "scripts": {
+    "lint": "eslint .",
+    "fix": "eslint . --fix",
     "watch": "tsc -w",
     "test": "jest",
     "build": "bash buildLambdaBundles.sh",

@@ -10,12 +10,12 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
   const channelId = event.channel;
   try {
     // If we are in a thread we'll respond there.  If not then we'll start a thread for the response.
-    const threadTs = event.thread_ts || event.event_ts;
+    const threadTs = event.thread_ts ?? event.event_ts;
     if(!threadTs) {
       throw new Error("Need thread_ts or event_ts field in event");
     }
     // Rather annoyingly Google seems to only get config from the filesystem.
-    process.env["GOOGLE_APPLICATION_CREDENTIALS"] = "./clientLibraryConfig-aws-aibot.json";
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = "./clientLibraryConfig-aws-aibot.json";
     const project = await getSecretValue('AIBot', 'gcpProjectId');
     const botName = await getSecretValue('AIBot', 'botName');
     const model = await getSecretValue('AIBot', 'model');
@@ -51,7 +51,7 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
       type: "section",
       text: {
         type: "mrkdwn",
-        text: response || "Hmmm sorry I couldn't answer that."
+        text: response ?? "Hmmm sorry I couldn't answer that."
       }
     };
     blocks.push(sectionBlock);

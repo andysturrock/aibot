@@ -22,15 +22,15 @@ export function getEnv(name: string, optional = false): string | undefined {
   return val;
 }
 
-export interface LambdaStackProps extends StackProps {
+export type LambdaStackProps = {
   readonly historyTable: dynamodb.Table;
   readonly aiBotSecret: secretsmanager.ISecret;
   readonly lambdaVersion: string;
   readonly customDomainName: string;
   readonly aiBotDomainName: string;
   readonly route53ZoneId: string;
-}
+} & StackProps;
 
-export interface SecretsManagerStackProps extends StackProps {
+export type SecretsManagerStackProps = {
   readonly customDomainName: string;
-}
+} & StackProps;

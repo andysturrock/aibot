@@ -1,8 +1,8 @@
-import { BlockAction } from '@slack/bolt';
-import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
+import {BlockAction} from '@slack/bolt';
+import {APIGatewayProxyEvent, APIGatewayProxyResult} from "aws-lambda";
 import util from 'util';
-import { getSecretValue } from './awsAPI';
-import { verifySlackRequest } from './verifySlackRequest';
+import {getSecretValue} from './awsAPI';
+import {verifySlackRequest} from './verifySlackRequest';
 
 /**
  * Handle the interaction posts from Slack.
