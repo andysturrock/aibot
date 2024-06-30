@@ -5,7 +5,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ["packages/*/dist/"]
+    ignores: ["packages/*/dist/", "packages/*/node_modules/", "packages/*/cdk.out"]
   },
   eslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
@@ -18,5 +18,21 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname,
       },
     },
+    rules: {
+      "@typescript-eslint/semi": ["error"],
+      "@typescript-eslint/consistent-type-definitions": [
+        "error",
+        "type"
+      ],
+      "@typescript-eslint/restrict-template-expressions": [
+        "error",
+        {
+          allowNumber: true,
+          allowBoolean: true,
+          allowNullish: true,
+          allowRegExp: true
+        },
+      ],
+    }
   }
 );

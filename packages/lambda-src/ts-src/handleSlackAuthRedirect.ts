@@ -1,7 +1,7 @@
-import {APIGatewayProxyEvent, APIGatewayProxyResult} from "aws-lambda";
-import axios, {AxiosRequestConfig} from "axios";
+import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
+import axios, { AxiosRequestConfig } from "axios";
 import querystring from 'querystring';
-import {getSecretValue} from "./awsAPI";
+import { getSecretValue } from "./awsAPI";
 
 export async function handleSlackAuthRedirect(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   try {

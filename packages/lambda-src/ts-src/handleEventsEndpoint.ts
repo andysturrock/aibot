@@ -1,9 +1,9 @@
-import {AppHomeOpenedEvent, EnvelopedEvent, GenericMessageEvent} from '@slack/bolt';
-import {APIGatewayProxyEvent, APIGatewayProxyResult} from "aws-lambda";
+import { AppHomeOpenedEvent, EnvelopedEvent, GenericMessageEvent } from '@slack/bolt';
+import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import util from 'util';
-import {getSecretValue, invokeLambda} from './awsAPI';
-import {PromptCommandPayload, addReaction, getBotId} from './slackAPI';
-import {verifySlackRequest} from './verifySlackRequest';
+import { getSecretValue, invokeLambda } from './awsAPI';
+import { PromptCommandPayload, addReaction, getBotId } from './slackAPI';
+import { verifySlackRequest } from './verifySlackRequest';
 
 /**
  * Handle the event posts from Slack.

@@ -1,8 +1,9 @@
 {
   "extends": "@tsconfig/node20/tsconfig.json",
   "compilerOptions": {
-    "moduleResolution": "NodeNext",
-    "module": "NodeNext"
+    "moduleResolution": "Node16",
+    "module": "Node16"
   },
-  "exclude": ["node_modules", "dist"]
+  "include": ["packages/**/*", "eslint.config.js"],
+  "exclude": ["**/node_modules", "**/dist", "**/cdk.out"]
 }

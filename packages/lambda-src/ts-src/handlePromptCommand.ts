@@ -10,7 +10,7 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
   const channelId = event.channel;
   try {
     // If we are in a thread we'll respond there.  If not then we'll start a thread for the response.
-    const threadTs = event.thread_ts || event.event_ts;
+    const threadTs = event.thread_ts ?? event.event_ts;
     if(!threadTs) {
       throw new Error("Need thread_ts or event_ts field in event");
     }
@@ -51,7 +51,7 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
       type: "section",
       text: {
         type: "mrkdwn",
-        text: response || "Hmmm sorry I couldn't answer that."
+        text: response ?? "Hmmm sorry I couldn't answer that."
       }
     };
     blocks.push(sectionBlock);
