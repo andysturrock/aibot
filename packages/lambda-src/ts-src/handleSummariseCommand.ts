@@ -1,11 +1,10 @@
-import { GenerateContentResponse, ModelParams, StartChatParams, VertexAI } from '@google-cloud/vertexai';
+import { ModelParams, VertexAI } from '@google-cloud/vertexai';
 import { KnownBlock, SectionBlock } from '@slack/bolt';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
-import { getHistory, putHistory } from './historyTable';
-import { PromptCommandPayload, getBotUserId, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage, removeReaction } from './slackAPI';
+import { PromptCommandPayload, getBotUserId, getChannelMessages, getThreadMessages, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage, removeReaction } from './slackAPI';
 
-export async function handlePromptCommand(event: PromptCommandPayload): Promise<void> {
+export async function handleSummariseCommand(event: PromptCommandPayload): Promise<void> {
   const responseUrl = event.response_url;
   const channelId = event.channel;
   try {
@@ -34,16 +33,34 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
       const regex = new RegExp(`<@${botUserId}>`, "g");
       event.text = event.text.replace(regex, botName);
     }
-    
-    const startChatParams: StartChatParams = {};
-    let history = await getHistory(event.user_id, threadTs);
-    startChatParams.history = history;
-    const chatSession = generativeModel.startChat(startChatParams);
-    const generateContentResult = await chatSession.sendMessage(event.text);
-    history = await chatSession.getHistory();
-    await putHistory(event.user_id, threadTs, history);
-    const contentResponse: GenerateContentResponse = generateContentResult.response;
-    const response = contentResponse.candidates? contentResponse.candidates[0].content.parts[0].text : "Hmmm sorry I couldn't answer that.";
+
+    // If the event has a thread_ts field we'll summarise the thread.
+    // Else we'll summarise the channel.
+    let request = "";
+    if(event.thread_ts && event.channel) {
+      const texts = await getThreadMessages(event.channel, event.thread_ts);
+      request = `This is a collection of messages in a thread in a Slack channel.
+        Please summarise the following messages:
+        ${texts.join("\n")}`;
+    }
+    else if (event.channel) {
+      const thirtyDaysAgo = new Date(new Date().getTime() - (30 * 24 * 60 * 60 * 1000));
+      // Slack's timestamps are in seconds rather than ms.
+      const texts = await getChannelMessages(event.channel, `${thirtyDaysAgo.getTime() / 1000}`, true);
+      // Messages are returned most recent at the start of the array, so swap that round.
+      texts.reverse();
+      request = `This is a collection of messages in a Slack channel.
+        Please summarise the following messages:
+        ${texts.join("\n")}`;
+    }
+    else {
+      throw new Error("Need channel or thread_ts field in event");
+    }
+
+    const sorry = "Sorry - I couldn't summarise that.";
+    const generateContentResult = await generativeModel.generateContent(request);
+    const contentResponse = generateContentResult.response;
+    const response = contentResponse.candidates? contentResponse.candidates[0].content.parts[0].text : sorry;
     
     // Create some Slack blocks to display the results in a reasonable format
     const blocks: KnownBlock[] = [];
@@ -51,7 +68,7 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
       type: "section",
       text: {
         type: "mrkdwn",
-        text: response ?? "Hmmm sorry I couldn't answer that."
+        text: response ?? sorry
       }
     };
     blocks.push(sectionBlock);
@@ -61,7 +78,7 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
       if(event.event_ts) {  // Should not be null in reality, just the type system says it can be.
         await removeReaction(channelId, event.event_ts, "eyes");
       }
-      await postMessage(channelId, `${botName} response`, blocks, event.event_ts);
+      await postMessage(channelId, `${botName} summary`, blocks, event.event_ts);
     }
     
   }
