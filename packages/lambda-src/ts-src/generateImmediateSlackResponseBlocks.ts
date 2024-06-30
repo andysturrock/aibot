@@ -1,4 +1,4 @@
-import { Block, SectionBlock } from "@slack/bolt";
+import {Block, SectionBlock} from "@slack/bolt";
 
 export function generateImmediateSlackResponseBlocks() {
   const blocks: Block[] = [];

@@ -6,8 +6,11 @@ import { DynamoDBStack } from '../lib/dynamodb-stack';
 import { LambdaStack } from '../lib/lambda-stack';
 import { SecretsManagerStack } from '../lib/secretsmanager-stack';
 
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
 const lambdaVersion = getEnv('LAMBDA_VERSION', false)!;
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
 const customDomainName = getEnv('CUSTOM_DOMAIN_NAME', false)!;
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
 const route53ZoneId = getEnv('R53_ZONE_ID', false)!;
 const aiBotDomainName = `aibot.${customDomainName}`;
 
