@@ -33,6 +33,7 @@ export default tseslint.config(
           allowRegExp: true
         },
       ],
+      "indent": ["error", 2]
     }
   }
 );
