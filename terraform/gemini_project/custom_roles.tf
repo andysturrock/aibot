@@ -19,6 +19,7 @@ resource "google_project_iam_binding" "aibot_binding" {
   role     = "projects/${var.gcp_gemini_project_id}/roles/${google_project_iam_custom_role.aibot_role.role_id}"
   members = [
     "principal://iam.googleapis.com/projects/${var.gcp_identity_project_number}/locations/global/workloadIdentityPools/${var.workload_identity_pool_id}/subject/arn:aws:sts::${var.aws_account_id}:assumed-role/handlePromptCommandLambdaRole/AIBot-handlePromptCommandLambda",
+    "principal://iam.googleapis.com/projects/${var.gcp_identity_project_number}/locations/global/workloadIdentityPools/${var.workload_identity_pool_id}/subject/arn:aws:sts::${var.aws_account_id}:assumed-role/handleSummariseCommandLambdaRole/AIBot-handleSummariseCommandLambda",
   ]
 }
 

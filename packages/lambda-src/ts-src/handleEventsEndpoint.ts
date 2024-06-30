@@ -1,6 +1,5 @@
 import { AppHomeOpenedEvent, EnvelopedEvent, GenericMessageEvent } from '@slack/bolt';
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
-import util from 'util';
 import { getSecretValue, invokeLambda } from './awsAPI';
 import { PromptCommandPayload, addReaction, getBotId } from './slackAPI';
 import { verifySlackRequest } from './verifySlackRequest';
@@ -11,7 +10,6 @@ import { verifySlackRequest } from './verifySlackRequest';
  * @returns HTTP 200 back to Slack immediately to indicate the event payload has been received.
  */
 export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
-  console.log(`event: ${util.inspect(event, false, null)}`);
   try {
     if(!event.body) {
       throw new Error("Missing event body");
@@ -30,7 +28,7 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
     switch(envelopedEvent.event.type) {
     // DM from the Messages tab or @mention
     case "message":
-    case "app_mention":{
+    case "app_mention": {
       const genericMessageEvent = envelopedEvent.event as GenericMessageEvent;
       // Get our own user ID and ignore messages we have posted, otherwise we'll get into an infinite loop.
       const myId = await getBotId();
@@ -56,7 +54,19 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
         bot_id: myId,
         team_id: envelopedEvent.team_id
       };
-      await invokeLambda("AIBot-handlePromptCommandLambda", JSON.stringify(promptCommandPayload));
+
+      // If the user has asked for a summary, dispatch to that lambda.
+      // In a thread or channel the user will @mention the bot.  We don't know the bot's
+      // user id here, and we don't want to cal the API to find it as that might be slow.
+      // So use just a regex to remove escaped user IDs.
+      // We know this will be our bot's user id because we have been @mentioned to get to here.
+      // The entire string could be "@someone-else summarise @botname" but then it won't match the regex below.
+      if(genericMessageEvent.text.replace(/^<@[A-Z0-9]+>\s+/, "") == "summarise") {
+        await invokeLambda("AIBot-handleSummariseCommandLambda", JSON.stringify(promptCommandPayload));
+      }
+      else {
+        await invokeLambda("AIBot-handlePromptCommandLambda", JSON.stringify(promptCommandPayload));
+      }
       break;
     }
     case "app_home_opened": {
@@ -67,7 +77,6 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
       }
       break;
     }
-
     case "url_verification": {
       // This handles the initial event API verification.
       // See https://api.slack.com/events/url_verification
@@ -87,7 +96,6 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
       }
       break;
     }
-    
     default:
       console.warn(`Unexpected event type: ${envelopedEvent.event.type}`);
       break;
