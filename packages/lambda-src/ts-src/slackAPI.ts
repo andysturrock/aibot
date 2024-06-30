@@ -1,13 +1,20 @@
-import {Block, HomeView, KnownBlock} from "@slack/bolt";
-import {BotsInfoArguments, ChatDeleteArguments, LogLevel, ReactionsAddArguments, ReactionsRemoveArguments, ViewsPublishArguments, WebClient} from "@slack/web-api";
+import { Block, HomeView, KnownBlock } from "@slack/bolt";
+import { BotsInfoArguments, ChatDeleteArguments, ConversationsHistoryArguments, ConversationsRepliesArguments, LogLevel, ReactionsAddArguments, ReactionsRemoveArguments, ViewsPublishArguments, WebClient } from "@slack/web-api";
 import axios from 'axios';
-import util from 'util';
-import {getSecretValue} from './awsAPI';
+import { getSecretValue } from './awsAPI';
 
 async function createClient() {
   const slackBotToken = await getSecretValue('AIBot', 'slackBotToken');
 
   return new WebClient(slackBotToken, {
+    logLevel: LogLevel.INFO
+  });
+}
+
+async function createUserClient() {
+  const slackBotUserToken = await getSecretValue('AIBot', 'slackBotUserToken');
+
+  return new WebClient(slackBotUserToken, {
     logLevel: LogLevel.INFO
   });
 }
@@ -92,8 +99,7 @@ export async function deleteMessage(channelId: string, ts: string) {
     channel: channelId,
     ts
   };
-  const result = await client.chat.delete(chatDeleteArguments);
-  console.log(`delete result: ${util.inspect(result, false, null)}`);
+  await client.chat.delete(chatDeleteArguments);
 }
 
 export async function addReaction(channelId: string, timestamp: string, name: string) {
@@ -137,6 +143,47 @@ export async function postErrorMessageToResponseUrl(responseUrl: string, text: s
     }
   ];
   await postToResponseUrl(responseUrl, "ephemeral", text, blocks);
+}
+
+export async function getThreadMessages(channelId: string, threadTs: string) {
+  // Note requires user token. See https://api.slack.com/methods/conversations.replies.
+  const client = await createUserClient();
+  const conversationsRepliesArguments: ConversationsRepliesArguments = {
+    channel: channelId,
+    ts: threadTs
+  };
+  const replies = await client.conversations.replies(conversationsRepliesArguments);
+  const texts: string[] = replies.messages?.map(m => m.text ?? "") ?? [];
+  return texts;
+}
+
+export async function getChannelMessages(channelId: string, oldest? : string | undefined, includeThreads = false) {
+  const client = await createClient();
+  const conversationsHistoryArguments: ConversationsHistoryArguments = {
+    channel: channelId,
+    oldest
+  };
+  const history = await client.conversations.history(conversationsHistoryArguments);
+  
+  if(includeThreads) {
+    const texts: string[] = [];
+    for(const message of history.messages ?? []) {
+      if(message.reply_count && message.reply_count > 0 && message.ts) {
+        const threadMessages = await getThreadMessages(channelId, message.ts);
+        // Reverse the order of the thread messages because they are returned oldest first
+        // whereas channel messages returned newest first.
+        texts.push(...threadMessages.reverse());
+      }
+      else if(message.text) {
+        texts.push(message.text);
+      }
+    }
+    return texts;
+  }
+  else {
+    const texts: string[] = history.messages?.map(m => m.text ?? "") ?? [];
+    return texts;
+  }
 }
 
 export type PromptCommandPayload = {
