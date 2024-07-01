@@ -145,6 +145,17 @@ export async function postErrorMessageToResponseUrl(responseUrl: string, text: s
   await postToResponseUrl(responseUrl, "ephemeral", text, blocks);
 }
 
+export type Message = {
+  user: string,
+  text: string,
+  date?: Date
+};
+
+function tsToDate(ts: string) {
+  const seconds = ts.split('.')[0];
+  return ts ? new Date(Number.parseInt(seconds) * 1000) : undefined;
+}
+
 export async function getThreadMessages(channelId: string, threadTs: string) {
   // Note requires user token. See https://api.slack.com/methods/conversations.replies.
   const client = await createUserClient();
@@ -153,11 +164,20 @@ export async function getThreadMessages(channelId: string, threadTs: string) {
     ts: threadTs
   };
   const replies = await client.conversations.replies(conversationsRepliesArguments);
-  const texts: string[] = replies.messages?.map(m => m.text ?? "") ?? [];
-  return texts;
+  
+  const messageReplies = replies.messages?.filter(message => message.type == "message") ?? [];
+  const messages: Message[] = messageReplies.map(message => {
+    const date = message.ts ? tsToDate(message.ts) : undefined;
+    return {
+      user: message.user ?? "",
+      text: message.text ?? "",
+      date
+    };
+  });
+  return messages;
 }
 
-export async function getChannelMessages(channelId: string, oldest? : string | undefined, includeThreads = false) {
+export async function getChannelMessages(channelId: string, oldest? : string | undefined, includeThreads = true) {
   const client = await createClient();
   const conversationsHistoryArguments: ConversationsHistoryArguments = {
     channel: channelId,
@@ -166,23 +186,37 @@ export async function getChannelMessages(channelId: string, oldest? : string | u
   const history = await client.conversations.history(conversationsHistoryArguments);
   
   if(includeThreads) {
-    const texts: string[] = [];
+    // The thread includes the main message so don't need to get that separately.
+    const messages: Message[] = [];
     for(const message of history.messages ?? []) {
       if(message.reply_count && message.reply_count > 0 && message.ts) {
         const threadMessages = await getThreadMessages(channelId, message.ts);
         // Reverse the order of the thread messages because they are returned oldest first
         // whereas channel messages returned newest first.
-        texts.push(...threadMessages.reverse());
+        messages.push(...threadMessages.reverse());
       }
-      else if(message.text) {
-        texts.push(message.text);
+      else if(message.type == "message" && message.text) {
+        const date = message.ts ? tsToDate(message.ts) : undefined;
+        messages.push({
+          user: message.user ?? "",
+          text: message.text ?? "",
+          date
+        });
       }
     }
-    return texts;
+    return messages;
   }
   else {
-    const texts: string[] = history.messages?.map(m => m.text ?? "") ?? [];
-    return texts;
+    // Just return the main messages.
+    const messageReplies = history.messages?.filter(message => message.type == "message") ?? [];
+    const messages: Message[] = messageReplies.map(message => {
+      return {
+        user: message.user ?? "",
+        text: message.text ?? "",
+        ts: message.ts ?? ""
+      };
+    });
+    return messages;
   }
 }
 

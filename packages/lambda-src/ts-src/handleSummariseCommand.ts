@@ -38,19 +38,31 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
     // Else we'll summarise the channel.
     let request = "";
     if(event.thread_ts && event.channel) {
-      const texts = await getThreadMessages(event.channel, event.thread_ts);
-      request = `This is a collection of messages in a thread in a Slack channel.
-        Please summarise the following messages:
+      const messages = await getThreadMessages(event.channel, event.thread_ts);
+      const texts: string[] = [];
+      for(const message of messages) {
+        texts.push(`${message.date ? message.date.toISOString() : "unknown"} - ${message.user}: ${message.text}`);
+      }
+      request = `This is a collection of messages in a thread in a Slack channel in the format "date - user: message".
+        When you see a string like <@XYZ123> that is a user name.
+        Refer to the user by that user name in your answer.
+        Please summarise the messages below.
         ${texts.join("\n")}`;
     }
     else if (event.channel) {
       const thirtyDaysAgo = new Date(new Date().getTime() - (30 * 24 * 60 * 60 * 1000));
       // Slack's timestamps are in seconds rather than ms.
-      const texts = await getChannelMessages(event.channel, `${thirtyDaysAgo.getTime() / 1000}`, true);
+      const messages = await getChannelMessages(event.channel, `${thirtyDaysAgo.getTime() / 1000}`, true);
       // Messages are returned most recent at the start of the array, so swap that round.
-      texts.reverse();
-      request = `This is a collection of messages in a Slack channel.
-        Please summarise the following messages:
+      messages.reverse();
+      const texts: string[] = [];
+      for(const message of messages) {
+        texts.push(`${message.date ? message.date.toISOString() : "unknown"} - ${message.user}: ${message.text}`);
+      }
+      request = `This is a collection of messages in a Slack channel in the format "date - user: message".
+        When you see a string like <@XYZ123> that is a user name.
+        Refer to the user by that user name in your answer.
+        Please summarise the messages below.
         ${texts.join("\n")}`;
     }
     else {
@@ -76,7 +88,7 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
     }
     else {
       // SectionBlock text elements have a limit of 3000 chars, so split into multiple blocks if needed.
-      const lines = response.split("\n");
+      const lines = response.split("\n").filter(line => line.length > 0);
       let characterCount = 0;
       let text: string[] = [];
       for(const line of lines) {
@@ -95,6 +107,14 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
           text = [];
         }
       }
+      const sectionBlock: SectionBlock = {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: text.join("\n")
+        }
+      };
+      blocks.push(sectionBlock);
     }
         
     if(channelId) {
