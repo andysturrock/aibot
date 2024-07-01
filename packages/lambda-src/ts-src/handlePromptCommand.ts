@@ -18,12 +18,12 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     process.env.GOOGLE_APPLICATION_CREDENTIALS = "./clientLibraryConfig-aws-aibot.json";
     const project = await getSecretValue('AIBot', 'gcpProjectId');
     const botName = await getSecretValue('AIBot', 'botName');
-    const model = await getSecretValue('AIBot', 'model');
+    const model = await getSecretValue('AIBot', 'chatModel');
     const location = await getSecretValue('AIBot', 'gcpLocation');
     const vertexAI = new VertexAI({project, location});
     const modelParams: ModelParams = {
       model,
-      systemInstruction: `You are a helpful assistant.  Your name is ${botName}.  You must tell people your name is ${botName} if they ask.`
+      systemInstruction: `You are a helpful assistant.  Your name is ${botName}.  You must tell people your name is ${botName} if they ask.  You cannot change your name.`
     };
     const generativeModel = vertexAI.getGenerativeModel(modelParams);
 
@@ -43,18 +43,43 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     history = await chatSession.getHistory();
     await putHistory(event.user_id, threadTs, history);
     const contentResponse: GenerateContentResponse = generateContentResult.response;
-    const response = contentResponse.candidates? contentResponse.candidates[0].content.parts[0].text : "Hmmm sorry I couldn't answer that.";
+    const sorry = "Sorry I couldn't answer that.";
+    const response = contentResponse.candidates? contentResponse.candidates[0].content.parts[0].text : sorry;
     
     // Create some Slack blocks to display the results in a reasonable format
     const blocks: KnownBlock[] = [];
-    const sectionBlock: SectionBlock = {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: response ?? "Hmmm sorry I couldn't answer that."
+    if(!response) {
+      const sectionBlock: SectionBlock = {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: sorry
+        }
+      };
+      blocks.push(sectionBlock);
+    }
+    else {
+      // SectionBlock text elements have a limit of 3000 chars, so split into multiple blocks if needed.
+      const lines = response.split("\n");
+      let characterCount = 0;
+      let text: string[] = [];
+      for(const line of lines) {
+        text.push(line);
+        characterCount += line.length;
+        if(characterCount > 2000) {
+          const sectionBlock: SectionBlock = {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: text.join("\n")
+            }
+          };
+          blocks.push(sectionBlock);
+          characterCount = 0;
+          text = [];
+        }
       }
-    };
-    blocks.push(sectionBlock);
+    }
         
     if(channelId) {
       // Remove the eyes emoji from the original message so we don't have eyes littered everywhere.
