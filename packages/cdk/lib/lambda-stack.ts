@@ -55,7 +55,8 @@ export class LambdaStack extends Stack {
       functionName: 'AIBot-handlePromptCommandLambda',
       code: lambda.Code.fromAsset("../lambda-src/dist/handlePromptCommand"),
       memorySize: 1024,
-      ...allLambdaProps
+      ...allLambdaProps,
+      timeout: Duration.seconds(180)
     });
     // This function is going to be invoked asynchronously, so set some extra config for that
     new lambda.EventInvokeConfig(this, 'handlePromptCommandLambdaEventInvokeConfig', {
@@ -80,7 +81,8 @@ export class LambdaStack extends Stack {
       functionName: 'AIBot-handleSummariseCommandLambda',
       code: lambda.Code.fromAsset("../lambda-src/dist/handleSummariseCommand"),
       memorySize: 1024,
-      ...allLambdaProps
+      ...allLambdaProps,
+      timeout: Duration.seconds(180)
     });
     // This function is going to be invoked asynchronously, so set some extra config for that
     new lambda.EventInvokeConfig(this, 'handleSummariseCommandLambdaEventInvokeConfig', {
