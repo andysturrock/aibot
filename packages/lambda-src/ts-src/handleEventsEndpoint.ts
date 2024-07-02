@@ -32,11 +32,11 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
       const genericMessageEvent = envelopedEvent.event as GenericMessageEvent;
       // Get our own user ID and ignore messages we have posted, otherwise we'll get into an infinite loop.
       const myId = await getBotId();
-      if(!myId) {
+      if(!myId.bot_id || !myId.bot_user_id) {
         throw new Error("Cannot get bot's own user id");
       }
-      if(genericMessageEvent.bot_id === myId) {
-        console.debug(`Ignoring message from self ${myId}`);
+      if(genericMessageEvent.bot_id === myId.bot_id) {
+        console.debug(`Ignoring message from self ${myId.bot_id} or ${myId.bot_user_id}`);
         return result;
       }
 
@@ -51,17 +51,15 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
         text: genericMessageEvent.text, // Can be null in GenericMessageEvent but we have checked above.
         user_id: genericMessageEvent.user,  // Slack seems a bit inconsistent with user vs user_id
         ...genericMessageEvent,
-        bot_id: myId,
+        bot_id: myId.bot_id,
+        bot_user_id: myId.bot_user_id,
         team_id: envelopedEvent.team_id
       };
 
       // If the user has asked for a summary, dispatch to that lambda.
-      // In a thread or channel the user will @mention the bot.  We don't know the bot's
-      // user id here, and we don't want to cal the API to find it as that might be slow.
-      // So use just a regex to remove escaped user IDs.
-      // We know this will be our bot's user id because we have been @mentioned to get to here.
-      // The entire string could be "@someone-else summarise @botname" but then it won't match the regex below.
-      if(genericMessageEvent.text.replace(/^<@[A-Z0-9]+>\s+/, "") == "summarise") {
+      // In a thread or channel the user will use "@bot summarise" so use a regex to match that.
+      // Note the double \\ to escape \s
+      if(genericMessageEvent.text.match(new RegExp(`<@${myId.bot_user_id}>\\ssummarise`))) {
         await invokeLambda("AIBot-handleSummariseCommandLambda", JSON.stringify(promptCommandPayload));
       }
       else {

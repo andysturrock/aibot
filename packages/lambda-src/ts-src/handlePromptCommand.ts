@@ -3,7 +3,7 @@ import { KnownBlock, SectionBlock } from '@slack/bolt';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
 import { getHistory, putHistory } from './historyTable';
-import { PromptCommandPayload, getBotUserId, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage, removeReaction } from './slackAPI';
+import { PromptCommandPayload, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage, removeReaction } from './slackAPI';
 
 export async function handlePromptCommand(event: PromptCommandPayload): Promise<void> {
   const responseUrl = event.response_url;
@@ -27,13 +27,10 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     };
     const generativeModel = vertexAI.getGenerativeModel(modelParams);
 
-    // Change any @mention of the bot to the bot's name.  Slack escapes @mentions like this: <@U00XYZ>.
+    // Change any @mention from the bot's id to the bot's user id.  Slack escapes @mentions like this: <@U00XYZ>.
     // See https://api.slack.com/methods/bots.info#markdown for explanation of bot ids and user ids.
-    const botUserId = await getBotUserId(event.bot_id, event.team_id);
-    if(botUserId) {
-      const regex = new RegExp(`<@${botUserId}>`, "g");
-      event.text = event.text.replace(regex, botName);
-    }
+    const regex = new RegExp(`<@${event.bot_id}>`, "g");
+    event.text = event.text.replace(regex, `<@${event.bot_user_id}>`);
     
     const startChatParams: StartChatParams = {};
     let history = await getHistory(event.user_id, threadTs);
