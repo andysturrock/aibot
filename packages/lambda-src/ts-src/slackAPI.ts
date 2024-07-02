@@ -170,7 +170,7 @@ export async function getThreadMessages(channelId: string, threadTs: string) {
   };
   const replies = await client.conversations.replies(conversationsRepliesArguments);
   
-  const messageReplies = replies.messages?.filter(message => message.type == "message") ?? [];
+  const messageReplies = replies.messages?.filter(message => (message.type == "message" && message.text && message.text.length > 0)) ?? [];
   const messages: Message[] = messageReplies.map(message => {
     const date = message.ts ? tsToDate(message.ts) : undefined;
     return {
@@ -200,7 +200,7 @@ export async function getChannelMessages(channelId: string, oldest? : string | u
         // whereas channel messages returned newest first.
         messages.push(...threadMessages.reverse());
       }
-      else if(message.type == "message" && message.text) {
+      else if(message.type == "message" && message.text && message.text.length > 0) {
         const date = message.ts ? tsToDate(message.ts) : undefined;
         messages.push({
           user: message.user ?? "",
