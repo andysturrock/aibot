@@ -42,8 +42,6 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     const contentResponse: GenerateContentResponse = generateContentResult.response;
     const sorry = "Sorry I couldn't answer that.";
     const response = contentResponse.candidates? contentResponse.candidates[0].content.parts[0].text : sorry;
-
-    console.log(`response: ${util.inspect(response, false, null)}`);
     
     // Create some Slack blocks to display the results in a reasonable format
     const blocks: KnownBlock[] = [];
@@ -63,7 +61,6 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
       let characterCount = 0;
       let text: string[] = [];
       for(const line of lines) {
-        console.log(`line: ${line}`);
         text.push(line);
         characterCount += line.length;
         if(characterCount > 2000) {
@@ -79,14 +76,16 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
           text = [];
         }
       }
-      const sectionBlock: SectionBlock = {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: text.join("\n")
-        }
-      };
-      blocks.push(sectionBlock);
+      if(text.length > 0) {
+        const sectionBlock: SectionBlock = {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: text.join("\n")
+          }
+        };
+        blocks.push(sectionBlock);
+      }
     }
         
     if(channelId) {
