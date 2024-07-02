@@ -59,7 +59,8 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
       // If the user has asked for a summary, dispatch to that lambda.
       // In a thread or channel the user will use "@bot summarise" so use a regex to match that.
       // Note the double \\ to escape \s
-      if(genericMessageEvent.text.match(new RegExp(`<@${myId.bot_user_id}>\\ssummarise`))) {
+      if(genericMessageEvent.text.match(new RegExp(`<@${myId.bot_user_id}>\\ssummarise`)) ??
+          genericMessageEvent.text.match(new RegExp(`<@${myId.bot_user_id}>\\slumos`))) {
         await invokeLambda("AIBot-handleSummariseCommandLambda", JSON.stringify(promptCommandPayload));
       }
       else {
