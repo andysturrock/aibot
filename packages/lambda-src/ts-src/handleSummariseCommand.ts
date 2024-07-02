@@ -2,7 +2,7 @@ import { ModelParams, VertexAI } from '@google-cloud/vertexai';
 import { KnownBlock, SectionBlock } from '@slack/bolt';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
-import { PromptCommandPayload, getBotUserId, getChannelMessages, getThreadMessages, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage, removeReaction } from './slackAPI';
+import { PromptCommandPayload, getChannelMessages, getThreadMessages, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage, removeReaction } from './slackAPI';
 
 export async function handleSummariseCommand(event: PromptCommandPayload): Promise<void> {
   const responseUrl = event.response_url;
@@ -26,13 +26,10 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
     };
     const generativeModel = vertexAI.getGenerativeModel(modelParams);
 
-    // Change any @mention of the bot to the bot's name.  Slack escapes @mentions like this: <@U00XYZ>.
+    // Change any @mention from the bot's id to the bot's user id.  Slack escapes @mentions like this: <@U00XYZ>.
     // See https://api.slack.com/methods/bots.info#markdown for explanation of bot ids and user ids.
-    const botUserId = await getBotUserId(event.bot_id, event.team_id);
-    if(botUserId) {
-      const regex = new RegExp(`<@${botUserId}>`, "g");
-      event.text = event.text.replace(regex, botName);
-    }
+    const regex = new RegExp(`<@${event.bot_id}>`, "g");
+    event.text = event.text.replace(regex, `<@${event.bot_user_id}>`);
 
     // If the event has a thread_ts field we'll summarise the thread.
     // Else we'll summarise the channel.
@@ -44,8 +41,9 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
         texts.push(`${message.date ? message.date.toISOString() : "unknown"} - ${message.user}: ${message.text}`);
       }
       request = `This is a collection of messages in a thread in a Slack channel in the format "date - user: message".
-        When you see a string like <@XYZ123> that is a user name.
-        Refer to the user by that user name in your answer.
+        When you see a string like <@XYZ123> that is a user id.
+        Refer to the user by that user id in your answer.  Keep the < and the > characters around the user id.
+        Try to include dates in your answer.
         Please summarise the messages below.
         ${texts.join("\n")}`;
     }
@@ -60,8 +58,9 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
         texts.push(`${message.date ? message.date.toISOString() : "unknown"} - ${message.user}: ${message.text}`);
       }
       request = `This is a collection of messages in a Slack channel in the format "date - user: message".
-        When you see a string like <@XYZ123> that is a user name.
-        Refer to the user by that user name in your answer.
+        When you see a string like <@XYZ123> that is a user id.
+        Refer to the user by that user id in your answer.  Keep the < and the > characters around the user id.
+        Try to include dates in your answer.
         Please summarise the messages below.
         ${texts.join("\n")}`;
     }
@@ -73,6 +72,8 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
     const generateContentResult = await generativeModel.generateContent(request);
     const contentResponse = generateContentResult.response;
     const response = contentResponse.candidates? contentResponse.candidates[0].content.parts[0].text : sorry;
+
+    console.log(`response: ${response}`);
 
     // Create some Slack blocks to display the results in a reasonable format
     const blocks: KnownBlock[] = [];
@@ -89,6 +90,7 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
     else {
       // SectionBlock text elements have a limit of 3000 chars, so split into multiple blocks if needed.
       const lines = response.split("\n").filter(line => line.length > 0);
+      console.log(`lines: ${util.inspect(lines, false, null)}`);
       let characterCount = 0;
       let text: string[] = [];
       for(const line of lines) {
