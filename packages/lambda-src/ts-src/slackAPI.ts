@@ -1,7 +1,6 @@
 import { Block, HomeView, KnownBlock } from "@slack/bolt";
 import { BotsInfoArguments, ChatDeleteArguments, ConversationsHistoryArguments, ConversationsRepliesArguments, LogLevel, ReactionsAddArguments, ReactionsRemoveArguments, ViewsPublishArguments, WebClient } from "@slack/web-api";
 import axios from 'axios';
-import util from 'util';
 import { getSecretValue } from './awsAPI';
 
 async function createClient() {
@@ -23,7 +22,6 @@ async function createUserClient() {
 export async function getBotId() {
   const client = await createClient();
   const result = await client.auth.test();
-  console.log(`getBotId() result: ${util.inspect(result, false, null)}`);
   return {
     bot_id: result.bot_id,
     bot_user_id: result.user_id

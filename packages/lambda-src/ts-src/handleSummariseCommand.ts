@@ -31,6 +31,9 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
     const regex = new RegExp(`<@${event.bot_id}>`, "g");
     event.text = event.text.replace(regex, `<@${event.bot_user_id}>`);
 
+    // If we have been invoked by the "lumos" command we'll make the summary more sassy.
+    const sassy = event.text.toLowerCase().includes("lumos") ? "Make the summary really sassy." : "";
+
     // If the event has a thread_ts field we'll summarise the thread.
     // Else we'll summarise the channel.
     let request = "";
@@ -45,6 +48,7 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
         Refer to the user by that user id in your answer.  Keep the < and the > characters around the user id.
         Try to include dates in your answer.
         Please summarise the messages below.
+        ${sassy}
         ${texts.join("\n")}`;
     }
     else if (event.channel) {
@@ -62,6 +66,7 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
         Refer to the user by that user id in your answer.  Keep the < and the > characters around the user id.
         Try to include dates in your answer.
         Please summarise the messages below.
+        ${sassy}
         ${texts.join("\n")}`;
     }
     else {
@@ -72,8 +77,6 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
     const generateContentResult = await generativeModel.generateContent(request);
     const contentResponse = generateContentResult.response;
     const response = contentResponse.candidates? contentResponse.candidates[0].content.parts[0].text : sorry;
-
-    console.log(`response: ${response}`);
 
     // Create some Slack blocks to display the results in a reasonable format
     const blocks: KnownBlock[] = [];
@@ -90,7 +93,6 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
     else {
       // SectionBlock text elements have a limit of 3000 chars, so split into multiple blocks if needed.
       const lines = response.split("\n").filter(line => line.length > 0);
-      console.log(`lines: ${util.inspect(lines, false, null)}`);
       let characterCount = 0;
       let text: string[] = [];
       for(const line of lines) {
@@ -109,14 +111,16 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
           text = [];
         }
       }
-      const sectionBlock: SectionBlock = {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: text.join("\n")
-        }
-      };
-      blocks.push(sectionBlock);
+      if(text.length > 0) {
+        const sectionBlock: SectionBlock = {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: text.join("\n")
+          }
+        };
+        blocks.push(sectionBlock);
+      }
     }
         
     if(channelId) {
