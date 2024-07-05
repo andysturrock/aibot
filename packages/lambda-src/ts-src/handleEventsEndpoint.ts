@@ -56,6 +56,11 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
         team_id: envelopedEvent.team_id
       };
 
+      // Change any @mention from the bot's id to the bot's user id.  Slack escapes @mentions like this: <@U00XYZ>.
+      // See https://api.slack.com/methods/bots.info#markdown for explanation of bot ids and user ids.
+      const regex = new RegExp(`<@${myId.bot_id}>`, "g");
+      genericMessageEvent.text = genericMessageEvent.text.replace(regex, `<@${myId.bot_user_id}>`);
+
       // If the user has asked for a summary, dispatch to that lambda.
       // In a thread or channel the user will use "@bot summarise" so use a regex to match that.
       // Note the double \\ to escape \s
