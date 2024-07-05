@@ -126,7 +126,20 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
     if(channelId) {
       // Remove the eyes emoji from the original message so we don't have eyes littered everywhere.
       if(event.event_ts) {  // Should not be null in reality, just the type system says it can be.
-        await removeReaction(channelId, event.event_ts, "eyes");
+        try{
+          // There have been times when the AI API has been a bit slow and the user has
+          // deleted their original message, so we'll just warn in the logs if we can't remove the
+          // reaction.  Even if there is some other reason for the inability to remove the reaction
+          // it'll be a better experience for the user to still get their summary.
+          await removeReaction(channelId, event.event_ts, "eyes");
+        }
+        catch(error) {
+          console.warn(`Error removing reaction to original message.  Details:
+            ts: ${event.event_ts}
+            channel: ${channelId}
+            user id: ${event.user_id}`);
+          console.warn(error);
+        }
       }
       await postMessage(channelId, `${botName} summary`, blocks, event.event_ts);
     }
