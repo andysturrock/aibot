@@ -91,7 +91,16 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     if(channelId) {
       // Remove the eyes emoji from the original message so we don't have eyes littered everywhere.
       if(event.event_ts) {  // Should not be null in reality, just the type system says it can be.
-        await removeReaction(channelId, event.event_ts, "eyes");
+        try {
+          await removeReaction(channelId, event.event_ts, "eyes");
+        }
+        catch (error) {
+          console.warn(`Error removing reaction to original message.  Details:
+            ts: ${event.event_ts}
+            channel: ${channelId}
+            user id: ${event.user_id}`);
+          console.warn(error);
+        }
       }
       await postMessage(channelId, `${botName} response`, blocks, event.event_ts);
     }
