@@ -1,7 +1,10 @@
 terraform {
   required_providers {
     google = {
-      configuration_aliases = [ google ]
+      configuration_aliases = [google]
+    }
+    google-beta = {
+      configuration_aliases = [google-beta]
     }
   }
 }
@@ -22,6 +25,6 @@ variable "aws_account_id" {
 }
 
 variable "workload_identity_pool_id" {
-  type = string
+  type        = string
   description = "Workload Identity Pool Id where the AWS role is mapped"
 }
