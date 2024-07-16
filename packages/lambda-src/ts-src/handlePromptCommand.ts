@@ -6,11 +6,16 @@ import { getHistory, putHistory } from './historyTable';
 import { PromptCommandPayload, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage } from './slackAPI';
 
 export async function handlePromptCommand(event: PromptCommandPayload): Promise<void> {
+  console.log(`event: ${util.inspect(event, false, null)}`);
   const responseUrl = event.response_url;
   const channelId = event.channel;
   try {
     const botName = await getSecretValue('AIBot', 'botName');
-    const generativeModel = await getGenerativeModel();
+    const betaUserSlackIds = await getSecretValue('AIBot', 'betaUserSlackIds');
+    console.log(`betaUserSlackIds: ${betaUserSlackIds}`);
+    const useGrounding = event.user_id.match(new RegExp(betaUserSlackIds)) !== null;
+    console.log(`useGrounding: ${useGrounding}`);
+    const generativeModel = await getGenerativeModel(useGrounding);
 
     // If we are in a thread we'll respond there.  If not then we'll start a thread for the response.
     const threadTs = event.thread_ts ?? event.event_ts;
@@ -18,7 +23,7 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
       throw new Error("Need thread_ts or event_ts field in event");
     }
     
-    const startChatParams: StartChatParams = {};
+    const startChatParams: StartChatParams = { };
     let history = await getHistory(event.user_id, threadTs);
     startChatParams.history = history;
     const chatSession = generativeModel.startChat(startChatParams);
@@ -27,6 +32,7 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     await putHistory(event.user_id, threadTs, history);
     const contentResponse: GenerateContentResponse = generateContentResult.response;
     const sorry = "Sorry I couldn't answer that.";
+    console.log(`contentResponse: ${util.inspect(contentResponse, false, null)}`);
     const response = contentResponse.candidates? contentResponse.candidates[0].content.parts[0].text : sorry;
     
     const blocks = generateResponseBlocks(response, sorry);

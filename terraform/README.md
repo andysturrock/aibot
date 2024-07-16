@@ -31,6 +31,17 @@ iam.serviceAccounts.get
 resourcemanager.projects.get
 resourcemanager.projects.getIamPolicy
 resourcemanager.projects.setIamPolicy
+storage.buckets.create
+storage.buckets.get
+storage.buckets.delete
+storage.objects.list
+storage.objects.delete
+discoveryengine.dataStores.create
+discoveryengine.dataStores.get
+discoveryengine.dataStores.delete
+discoveryengine.engines.create
+discoveryengine.engines.get
+discoveryengine.engines.delete
 ```
 
 ### TODO
