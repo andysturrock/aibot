@@ -13,9 +13,9 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     const botName = await getSecretValue('AIBot', 'botName');
     const betaUserSlackIds = await getSecretValue('AIBot', 'betaUserSlackIds');
     console.log(`betaUserSlackIds: ${betaUserSlackIds}`);
-    const useGrounding = event.user_id.match(new RegExp(betaUserSlackIds)) !== null;
-    console.log(`useGrounding: ${useGrounding}`);
-    const generativeModel = await getGenerativeModel(useGrounding);
+    const useCustomSearchGrounding = event.user_id.match(new RegExp(betaUserSlackIds)) !== null;
+    console.log(`useCustomSearchGrounding: ${useCustomSearchGrounding}`);
+    const generativeModel = await getGenerativeModel({useGoogleSearchGrounding: true, useCustomSearchGrounding});
 
     // If we are in a thread we'll respond there.  If not then we'll start a thread for the response.
     const threadTs = event.thread_ts ?? event.event_ts;
@@ -32,7 +32,7 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     await putHistory(event.user_id, threadTs, history);
     const contentResponse: GenerateContentResponse = generateContentResult.response;
     const sorry = "Sorry I couldn't answer that.";
-    console.log(`contentResponse: ${util.inspect(contentResponse, false, null)}`);
+    console.log(`generateContentResult: ${util.inspect(generateContentResult, false, null)}`);
     const response = contentResponse.candidates? contentResponse.candidates[0].content.parts[0].text : sorry;
     
     const blocks = generateResponseBlocks(response, sorry);
@@ -40,7 +40,7 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     if(channelId && event.event_ts) {
       // Remove the eyes emoji from the original message so we don't have eyes littered everywhere.
       await removeReaction(channelId, event.event_ts);
-      await postMessage(channelId, `${botName} summary`, blocks, event.event_ts);
+      await postMessage(channelId, `${botName} response`, blocks, event.event_ts);
     }
     
   }
