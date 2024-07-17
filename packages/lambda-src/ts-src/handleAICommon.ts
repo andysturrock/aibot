@@ -1,9 +1,14 @@
-import { GenerationConfig, GenerativeModel, ModelParams, Retrieval, RetrievalTool, Tool, VertexAI, VertexAISearch } from '@google-cloud/vertexai';
+import { GenerationConfig, GenerativeModel, GoogleSearchRetrieval, GoogleSearchRetrievalTool, ModelParams, Retrieval, RetrievalTool, Tool, VertexAI, VertexAISearch } from '@google-cloud/vertexai';
 import { KnownBlock, SectionBlock } from '@slack/bolt';
 import { getSecretValue } from './awsAPI';
 import * as slackAPI from './slackAPI';
 
-export async function getGenerativeModel(useGrounding = false): Promise<GenerativeModel> {
+export type GetGenerativeModelParams = {
+  useGoogleSearchGrounding: boolean,
+  useCustomSearchGrounding: boolean
+};
+
+export async function getGenerativeModel(params: GetGenerativeModelParams = {useGoogleSearchGrounding: true, useCustomSearchGrounding: false}): Promise<GenerativeModel> {
   // Rather annoyingly Google seems to only get config from the filesystem.
   process.env.GOOGLE_APPLICATION_CREDENTIALS = "./clientLibraryConfig-aws-aibot.json";
   const project = await getSecretValue('AIBot', 'gcpProjectId');
@@ -15,7 +20,7 @@ export async function getGenerativeModel(useGrounding = false): Promise<Generati
   const generationConfig: GenerationConfig = {
     temperature: 0.5
   };
-  if(useGrounding) {
+  if(params.useCustomSearchGrounding) {
     generationConfig.temperature = 0;
     const dataStoreIds = await getSecretValue('AIBot', 'gcpDataStoreIds');
   
@@ -33,6 +38,17 @@ export async function getGenerativeModel(useGrounding = false): Promise<Generati
       tools.push(retrievalTool);
     }
   }
+  if(params.useGoogleSearchGrounding) {
+    // Google search grounding is a useful way to overcome dated training data, hence default to true.
+    const googleSearchRetrieval: GoogleSearchRetrieval = {
+      disableAttribution: false
+    };
+    const googleSearchRetrievalTool: GoogleSearchRetrievalTool = {
+      googleSearchRetrieval
+    };
+    tools.push(googleSearchRetrievalTool);
+  }
+
   const modelParams: ModelParams = {
     model,
     tools,
