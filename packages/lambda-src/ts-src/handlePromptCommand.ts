@@ -1,4 +1,4 @@
-import { GenerateContentResponse, StartChatParams } from '@google-cloud/vertexai';
+import { GenerateContentResponse, GroundingAttributionWeb, StartChatParams } from '@google-cloud/vertexai';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
 import { generateResponseBlocks, getGenerativeModel, removeReaction } from './handleAICommon';
@@ -15,7 +15,7 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     console.log(`betaUserSlackIds: ${betaUserSlackIds}`);
     const useCustomSearchGrounding = event.user_id.match(new RegExp(betaUserSlackIds)) !== null;
     console.log(`useCustomSearchGrounding: ${useCustomSearchGrounding}`);
-    const generativeModel = await getGenerativeModel({useGoogleSearchGrounding: true, useCustomSearchGrounding});
+    const generativeModel = await getGenerativeModel({useGoogleSearchGrounding: true, useCustomSearchGrounding: useCustomSearchGrounding});
 
     // If we are in a thread we'll respond there.  If not then we'll start a thread for the response.
     const threadTs = event.thread_ts ?? event.event_ts;
@@ -34,8 +34,19 @@ export async function handlePromptCommand(event: PromptCommandPayload): Promise<
     const sorry = "Sorry I couldn't answer that.";
     console.log(`generateContentResult: ${util.inspect(generateContentResult, false, null)}`);
     const response = contentResponse.candidates? contentResponse.candidates[0].content.parts[0].text : sorry;
+    // Seem to get duplicate attributions so use a Set to check we don't have it already.
+    // Annoyingly JS Sets use object equals and you can't override it to do content equality,
+    // otherwise would just put the attributions in a set directly to make unique.
+    const groundingAttributionWebs: GroundingAttributionWeb[] = [];
+    const urls = new Set<string>();
+    for(const groundingAttribution of contentResponse.candidates?.[0].groundingMetadata?.groundingAttributions ?? []) {
+      if(groundingAttribution.web?.uri && !urls.has(groundingAttribution.web.uri)) {
+        urls.add(groundingAttribution.web.uri);
+        groundingAttributionWebs.push(groundingAttribution.web);
+      } 
+    }
     
-    const blocks = generateResponseBlocks(response, sorry);
+    const blocks = generateResponseBlocks(response, sorry, groundingAttributionWebs);
         
     if(channelId && event.event_ts) {
       // Remove the eyes emoji from the original message so we don't have eyes littered everywhere.
