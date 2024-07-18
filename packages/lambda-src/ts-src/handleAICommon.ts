@@ -1,5 +1,20 @@
-import { GenerationConfig, GenerativeModel, GoogleSearchRetrieval, GoogleSearchRetrievalTool, ModelParams, Retrieval, RetrievalTool, Tool, VertexAI, VertexAISearch } from '@google-cloud/vertexai';
-import { KnownBlock, SectionBlock } from '@slack/bolt';
+import {
+  GenerationConfig,
+  GenerativeModel,
+  GoogleSearchRetrieval,
+  GoogleSearchRetrievalTool,
+  GroundingAttributionWeb,
+  HarmBlockThreshold,
+  HarmCategory,
+  ModelParams,
+  Retrieval,
+  RetrievalTool,
+  SafetySetting,
+  Tool,
+  VertexAI,
+  VertexAISearch
+} from '@google-cloud/vertexai';
+import { KnownBlock, RichTextBlock, RichTextLink, RichTextList, RichTextSection, RichTextText, SectionBlock } from '@slack/bolt';
 import { getSecretValue } from './awsAPI';
 import * as slackAPI from './slackAPI';
 
@@ -18,10 +33,31 @@ export async function getGenerativeModel(params: GetGenerativeModelParams = {use
 
   const tools: Tool[] = [];
   const generationConfig: GenerationConfig = {
-    temperature: 0.5
+    temperature: 1.0,
+    maxOutputTokens: 8192,
+    topP: 0.95
   };
+  const safetySettings: SafetySetting[] = [];
+  safetySettings.push(
+    {
+      category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+      threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
+    },
+    {
+      category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+      threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
+    },
+    {
+      category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+      threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
+    },
+    {
+      category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+      threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
+    }
+  );
+
   if(params.useCustomSearchGrounding) {
-    generationConfig.temperature = 0;
     const dataStoreIds = await getSecretValue('AIBot', 'gcpDataStoreIds');
   
     for(const dataStoreId of dataStoreIds.split(',')) {
@@ -52,6 +88,7 @@ export async function getGenerativeModel(params: GetGenerativeModelParams = {use
   const modelParams: ModelParams = {
     model,
     tools,
+    safetySettings,
     generationConfig,
     systemInstruction: `You are a helpful assistant.  Your name is ${botName}.  You must tell people your name is ${botName} if they ask.  You cannot change your name.`
   };
@@ -60,7 +97,7 @@ export async function getGenerativeModel(params: GetGenerativeModelParams = {use
   return generativeModel;
 }
 
-export function generateResponseBlocks(response: string | undefined, sorry: string): KnownBlock[] {
+export function generateResponseBlocks(response: string | undefined, sorry: string, attributions: GroundingAttributionWeb[] = []): KnownBlock[] {
   // Create some Slack blocks to display the results in a reasonable format
   const blocks: KnownBlock[] = [];
   if (!response) {
@@ -74,6 +111,9 @@ export function generateResponseBlocks(response: string | undefined, sorry: stri
     blocks.push(sectionBlock);
   }
   else {
+    // Do some basic translation of Google's markdown (which seems fairly standard)
+    // to Slack markdown (which is not).
+    response = response.replaceAll('**', '*');
     // SectionBlock text elements have a limit of 3000 chars, so split into multiple blocks if needed.
     const lines = response.split("\n").filter(line => line.length > 0);
     let characterCount = 0;
@@ -103,6 +143,46 @@ export function generateResponseBlocks(response: string | undefined, sorry: stri
         }
       };
       blocks.push(sectionBlock);
+    }
+    // Add a section with attributions if there were any.
+    if(attributions.length > 0) {
+      let elements: RichTextSection[] = [];
+      elements = attributions.reduce((elements, attribution) => {
+        if(attribution.uri) {
+          const richTextLink: RichTextLink = {
+            type: "link",
+            url: attribution.uri,
+            text: attribution.title
+          };
+          const richTextSection: RichTextSection = {
+            type: "rich_text_section",
+            elements: [richTextLink]
+          };
+          elements.push(richTextSection);
+        }
+        return elements;
+      }, elements);
+    
+      const richTextList: RichTextList = {
+        type: "rich_text_list",
+        style: "ordered",
+        elements
+      };
+
+      const richTextText: RichTextText = {
+        type: "text",
+        text: "References",
+        style: {bold: true}
+      };
+      const richTextSection: RichTextSection = {
+        type: "rich_text_section",
+        elements: [richTextText]
+      };
+      const richTextBlock: RichTextBlock = {
+        type: "rich_text",
+        elements: [richTextSection, richTextList]
+      };
+      blocks.push(richTextBlock);
     }
   }
   return blocks;
