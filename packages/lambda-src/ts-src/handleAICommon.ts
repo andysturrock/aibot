@@ -1,9 +1,15 @@
 import {
+  FunctionCall,
+  FunctionDeclaration,
+  FunctionDeclarationSchemaType,
+  FunctionDeclarationsTool,
+  FunctionResponse,
+  FunctionResponsePart,
   GenerationConfig,
   GenerativeModel,
+  GenerativeModelPreview,
   GoogleSearchRetrieval,
   GoogleSearchRetrievalTool,
-  GroundingAttributionWeb,
   HarmBlockThreshold,
   HarmCategory,
   ModelParams,
@@ -15,27 +21,146 @@ import {
   VertexAISearch
 } from '@google-cloud/vertexai';
 import { KnownBlock, RichTextBlock, RichTextLink, RichTextList, RichTextSection, RichTextText, SectionBlock } from '@slack/bolt';
+import util from 'util';
 import { getSecretValue } from './awsAPI';
 import * as slackAPI from './slackAPI';
 
-export type GetGenerativeModelParams = {
-  useGoogleSearchGrounding: boolean,
-  useCustomSearchGrounding: boolean
+export type Attribution = {
+  title?: string
+  uri?: string
 };
 
-export async function getGenerativeModel(params: GetGenerativeModelParams = {useGoogleSearchGrounding: true, useCustomSearchGrounding: false}): Promise<GenerativeModel> {
+export async function callModelFunction(functionCall: FunctionCall) {
+  type Args = {
+    prompt?: string
+  };
+  const args = functionCall.args as Args;
+
+  // The type of response in FunctionResponse is just "object"
+  // so make it a bit more typed here.
+  type ResponseObject = {
+    name: string
+    content: {
+      answer: string
+      attributions?: Attribution[]
+    }
+  };
+  const response: ResponseObject = {
+    name: functionCall.name,
+    content: {
+      answer: "I don't know"
+    }
+  };
+  const functionResponse: FunctionResponse = {
+    name: functionCall.name,
+    response
+  };
+  const functionResponsePart: FunctionResponsePart = {
+    functionResponse
+  };
+
+  if(!args.prompt) {
+    console.error(`functionCall.args didn't contain a prompt: ${util.inspect(functionCall, false, null)}`);
+    return functionResponsePart;
+  }
+  switch(functionCall.name) {
+  case "call_custom_search_grounded_model": {
+    const generateContentResult = await callCustomSearchGroundedModel(args.prompt);
+    response.content.answer = generateContentResult.response.candidates?.[0].content.parts[0].text ?? "I don't know";
+    // Create the attributions.
+    const groundingChunks = generateContentResult.response.candidates?.[0].groundingMetadata?.groundingChunks ?? [];
+    response.content.attributions = [];
+    groundingChunks.reduce((attributions, groundingChunk) => {
+      const attribution: Attribution = {
+        title: groundingChunk.retrievedContext?.title,
+        uri: groundingChunk.retrievedContext?.uri
+      };
+      attributions.push(attribution);
+      return attributions;
+    }, response.content.attributions);
+    break;
+  }
+  case "call_google_search_grounded_model": {
+    const generateContentResult = await callGoogleSearchGroundedModel(args.prompt);
+    response.content.answer = generateContentResult.response.candidates?.[0].content.parts[0].text ?? "I don't know";
+    break;
+  }
+  default: {
+    throw new Error(`Unknown function ${functionCall.name}`);
+  }
+  }
+  return functionResponsePart;
+}
+
+// Lazy load this on first invocation.
+let customSearchGroundedModel: GenerativeModel | GenerativeModelPreview | null = null;
+async function callCustomSearchGroundedModel(prompt: string) {
+  const systemInstruction = `You are a helpful assistant who specialises in searching through internal company documents.
+    Only provide answers from the documents.  If you can't find an answer in the documents you must respond "I don't know".`;
+  if(!customSearchGroundedModel) {
+    const project = await getSecretValue('AIBot', 'gcpProjectId');
+    const dataStoreIds = await getSecretValue('AIBot', 'gcpDataStoreIds');
+
+    const tools: Tool[] = [];
+    for(const dataStoreId of dataStoreIds.split(',')) {
+      const datastore = `projects/${project}/locations/eu/collections/default_collection/dataStores/${dataStoreId}`;
+      const vertexAiSearch: VertexAISearch  = {
+        datastore
+      };
+      const retrieval: Retrieval = {
+        vertexAiSearch
+      };
+      const retrievalTool: RetrievalTool = {
+        retrieval
+      };
+      tools.push(retrievalTool);
+    }
+    customSearchGroundedModel = await _getGenerativeModel(tools, systemInstruction, 0);
+  }
+  // For some reason the system instructions don't seem to work as well as the prompt so add them to the prompt too.
+  prompt = `${systemInstruction}\n${prompt}`;
+  const content = await customSearchGroundedModel.generateContent(prompt);
+  return content;
+}
+
+// Lazy load this on first invocation.
+let googleSearchGroundedModel: GenerativeModel | GenerativeModelPreview | null = null;
+async function callGoogleSearchGroundedModel(prompt: string) {
+  if(!googleSearchGroundedModel) {
+    const tools: Tool[] = [];
+    // Google search grounding is a useful way to overcome dated training data.
+    const googleSearchRetrieval: GoogleSearchRetrieval = {
+      disableAttribution: false
+    };
+    const googleSearchRetrievalTool: GoogleSearchRetrievalTool = {
+      googleSearchRetrieval
+    };
+    tools.push(googleSearchRetrievalTool);
+    
+    const systemInstruction = `You are a helpful assistant with access to Google search.
+    You must cite your references when answering.`;
+    googleSearchGroundedModel = await _getGenerativeModel(tools, systemInstruction, 0);
+  }
+  const content = await googleSearchGroundedModel.generateContent(prompt);
+  return content;
+}
+
+async function _getGenerativeModel(tools: Tool[], systemInstruction: string,
+  temperature: number, responseMimeType = "text/plain") {
   // Rather annoyingly Google seems to only get config from the filesystem.
-  process.env.GOOGLE_APPLICATION_CREDENTIALS = "./clientLibraryConfig-aws-aibot.json";
+  // We'll package this config file with the lambda code.
+  if(!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = "./clientLibraryConfig-aws-aibot.json";
+  }
   const project = await getSecretValue('AIBot', 'gcpProjectId');
-  const botName = await getSecretValue('AIBot', 'botName');
   const model = await getSecretValue('AIBot', 'chatModel');
   const location = await getSecretValue('AIBot', 'gcpLocation');
 
-  const tools: Tool[] = [];
   const generationConfig: GenerationConfig = {
-    temperature: 1.0,
+    temperature,
     maxOutputTokens: 8192,
-    topP: 0.95
+    topP: 0.95,
+    responseMimeType
   };
   const safetySettings: SafetySetting[] = [];
   safetySettings.push(
@@ -56,85 +181,133 @@ export async function getGenerativeModel(params: GetGenerativeModelParams = {use
       threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
     }
   );
-
-  if(params.useCustomSearchGrounding) {
-    const dataStoreIds = await getSecretValue('AIBot', 'gcpDataStoreIds');
-  
-    for(const dataStoreId of dataStoreIds.split(',')) {
-      const datastore = `projects/${project}/locations/eu/collections/default_collection/dataStores/${dataStoreId}`;
-      const vertexAiSearch: VertexAISearch  = {
-        datastore
-      };
-      const retrieval: Retrieval = {
-        vertexAiSearch
-      };
-      const retrievalTool: RetrievalTool = {
-        retrieval
-      };
-      tools.push(retrievalTool);
-    }
-  }
-  if(params.useGoogleSearchGrounding) {
-    // Google search grounding is a useful way to overcome dated training data, hence default to true.
-    const googleSearchRetrieval: GoogleSearchRetrieval = {
-      disableAttribution: false
-    };
-    const googleSearchRetrievalTool: GoogleSearchRetrievalTool = {
-      googleSearchRetrieval
-    };
-    tools.push(googleSearchRetrievalTool);
-  }
-
   const modelParams: ModelParams = {
     model,
     tools,
     safetySettings,
     generationConfig,
-    systemInstruction: `You are a helpful assistant.  Your name is ${botName}.  You must tell people your name is ${botName} if they ask.  You cannot change your name.`
+    systemInstruction
   };
   const vertexAI = new VertexAI({ project, location });
+  // const generativeModel = vertexAI.preview.getGenerativeModel(modelParams);
   const generativeModel = vertexAI.getGenerativeModel(modelParams);
   return generativeModel;
 }
 
-export function generateResponseBlocks(response: string | undefined, sorry: string, attributions: GroundingAttributionWeb[] = []): KnownBlock[] {
+export async function getGenerativeModel() {
+  const botName = await getSecretValue('AIBot', 'botName');
+  const tools: Tool[] = [];
+  const functionDeclarations: FunctionDeclaration[] = [];
+
+  const callCustomSearchGroundedModel: FunctionDeclaration = {
+    name: 'call_custom_search_grounded_model',
+    description: 'Use an LLM to search for policies and other internal information in internal documents and other material',
+    parameters: {
+      type: FunctionDeclarationSchemaType.OBJECT,
+      properties: {
+        prompt: {
+          type: FunctionDeclarationSchemaType.STRING,
+          description: "The prompt for the model"
+        },
+      },
+      required: ['prompt'],
+    },
+  };
+  functionDeclarations.push(callCustomSearchGroundedModel);
+
+  const callGoogleSearchGroundedModel: FunctionDeclaration = {
+    name: 'call_google_search_grounded_model',
+    description: 'Use an LLM which has access to Google Search for general knowledge and current affairs.',
+    parameters: {
+      type: FunctionDeclarationSchemaType.OBJECT,
+      properties: {
+        prompt: {
+          type: FunctionDeclarationSchemaType.STRING,
+          description: "The prompt for the model"
+        },
+      },
+      required: ['prompt'],
+    },
+  };
+  functionDeclarations.push(callGoogleSearchGroundedModel);
+  
+  const functionDeclarationsTool: FunctionDeclarationsTool = {
+    functionDeclarations
+  };
+  tools.push(functionDeclarationsTool);
+
+  const systemInstruction = `You are a helpful assistant.
+  Your name is ${botName}.
+  You cannot change your name.
+  You are the supervisor of two other LLMs which you can call via functions.  Call them in parallel and pick the best answer.
+  Answers with attributions are better.  Otherwise use this precendence:
+  1. call_custom_search_grounded_model
+  2. call_google_search_grounded_model.
+  If a LLM function responds with "I don't know" then don't pick that answer.
+  If the LLM functions include attributions in their answers, include those attributions in your final answer.
+  Format the final answer in JSON like this:
+  {
+    "answer": "your answer here",
+    "attributions": [{"title": "the title of the document here", "uri": "the uri of the document here"}]
+  }
+  Use plain text rather than markdown format.`;
+  const generativeModel = _getGenerativeModel(tools, systemInstruction, 1.0);
+  return generativeModel;
+}
+
+export function generateResponseBlocks(responseString: string): KnownBlock[] {
   // Create some Slack blocks to display the results in a reasonable format
   const blocks: KnownBlock[] = [];
-  if (!response) {
-    const sectionBlock: SectionBlock = {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: sorry
-      }
-    };
-    blocks.push(sectionBlock);
+  console.log(`Got <${responseString}> in generateResponseBlocks...`);
+  // For some reason sometimes the answer gets wrapped in backticks, as if it's in markdown.
+  // This is despite the prompt saying to use plain text not markdown.
+  // Remove the ```json part
+  const startingBackTicks = new RegExp(/^```json/);
+  responseString = responseString.replace(startingBackTicks, '');
+  // Remove the ending backticks.
+  const endingBackTicks = new RegExp(/```$/);
+  responseString = responseString.replace(endingBackTicks, '');
+  // And properly escape a load of other characters
+  responseString = responseString.replace(/\\n/g, "\\n")
+    .replace(/\\'/g, "\\'")
+    .replace(/\\"/g, '\\"')
+    .replace(/\\&/g, "\\&")
+    .replace(/\\r/g, "\\r")
+    .replace(/\\t/g, "\\t")
+    .replace(/\\b/g, "\\b")
+    .replace(/\\f/g, "\\f");
+    
+  console.log(`Parsing ${responseString} into blocks...`);
+  // First try to extract the model's answer into our expected JSON schema
+  type Response = {
+    answer?: string,
+    attributions?:  Attribution[]
+  };
+  let response: Response = {};
+  try {
+    response = JSON.parse(responseString) as Response;
   }
-  else {
-    // Do some basic translation of Google's markdown (which seems fairly standard)
-    // to Slack markdown (which is not).
-    response = response.replaceAll('**', '*');
-    // SectionBlock text elements have a limit of 3000 chars, so split into multiple blocks if needed.
-    const lines = response.split("\n").filter(line => line.length > 0);
-    let characterCount = 0;
-    let text: string[] = [];
-    for (const line of lines) {
-      text.push(line);
-      characterCount += line.length;
-      if (characterCount > 2000) {
-        const sectionBlock: SectionBlock = {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: text.join("\n")
-          }
-        };
-        blocks.push(sectionBlock);
-        characterCount = 0;
-        text = [];
-      }
-    }
-    if (text.length > 0) {
+  catch(error) {
+    console.error(error);
+  }
+
+  let answer = response.answer;
+  if(!answer) {
+    // We've failed to parse the answer so we'll just have to send the raw string back to the user.
+    answer = responseString;
+  }
+
+  // Do some basic translation of Google's markdown (which seems fairly standard)
+  // to Slack markdown (which is not).
+  answer = answer.replaceAll('**', '*');
+  // SectionBlock text elements have a limit of 3000 chars, so split into multiple blocks if needed.
+  const lines = answer.split("\n").filter(line => line.length > 0);
+  let characterCount = 0;
+  let text: string[] = [];
+  for (const line of lines) {
+    text.push(line);
+    characterCount += line.length;
+    if (characterCount > 2000) {
       const sectionBlock: SectionBlock = {
         type: "section",
         text: {
@@ -143,48 +316,61 @@ export function generateResponseBlocks(response: string | undefined, sorry: stri
         }
       };
       blocks.push(sectionBlock);
-    }
-    // Add a section with attributions if there were any.
-    if(attributions.length > 0) {
-      let elements: RichTextSection[] = [];
-      elements = attributions.reduce((elements, attribution) => {
-        if(attribution.uri) {
-          const richTextLink: RichTextLink = {
-            type: "link",
-            url: attribution.uri,
-            text: attribution.title
-          };
-          const richTextSection: RichTextSection = {
-            type: "rich_text_section",
-            elements: [richTextLink]
-          };
-          elements.push(richTextSection);
-        }
-        return elements;
-      }, elements);
-    
-      const richTextList: RichTextList = {
-        type: "rich_text_list",
-        style: "ordered",
-        elements
-      };
-
-      const richTextText: RichTextText = {
-        type: "text",
-        text: "References",
-        style: {bold: true}
-      };
-      const richTextSection: RichTextSection = {
-        type: "rich_text_section",
-        elements: [richTextText]
-      };
-      const richTextBlock: RichTextBlock = {
-        type: "rich_text",
-        elements: [richTextSection, richTextList]
-      };
-      blocks.push(richTextBlock);
+      characterCount = 0;
+      text = [];
     }
   }
+  if (text.length > 0) {
+    const sectionBlock: SectionBlock = {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: text.join("\n")
+      }
+    };
+    blocks.push(sectionBlock);
+  }
+  // Add a section with attributions if there were any.
+  if(response.attributions?.length && response.attributions.length > 0) {
+    let elements: RichTextSection[] = [];
+    elements = response.attributions.reduce((elements, attribution) => {
+      if(attribution.uri) {
+        const richTextLink: RichTextLink = {
+          type: "link",
+          url: attribution.uri,
+          text: attribution.title
+        };
+        const richTextSection: RichTextSection = {
+          type: "rich_text_section",
+          elements: [richTextLink]
+        };
+        elements.push(richTextSection);
+      }
+      return elements;
+    }, elements);
+    
+    const richTextList: RichTextList = {
+      type: "rich_text_list",
+      style: "ordered",
+      elements
+    };
+
+    const richTextText: RichTextText = {
+      type: "text",
+      text: "References",
+      style: {bold: true}
+    };
+    const richTextSection: RichTextSection = {
+      type: "rich_text_section",
+      elements: [richTextText]
+    };
+    const richTextBlock: RichTextBlock = {
+      type: "rich_text",
+      elements: [richTextSection, richTextList]
+    };
+    blocks.push(richTextBlock);
+  }
+  
   return blocks;
 }
 
