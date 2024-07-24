@@ -5,14 +5,13 @@ import { InvocationType, InvokeCommand, InvokeCommandInput, LambdaClient, Lambda
 import { GetSecretValueCommand, GetSecretValueRequest, SecretsManagerClient, SecretsManagerClientConfig } from "@aws-sdk/client-secrets-manager";
 
 /**
- * Get a secret value from AWS Secrets Manager
+ * Get a secret value from the environment or AWS Secrets Manager
  * @param secretName Name of the secrets
  * @param secretKey Key of the secret.  The secret is assumed to be stored as JSON text.
  * @returns The secret value as a string
  * @throws AccessDeniedException if the caller doesn't have access to that secret or Error if the secret or key don't exist
  */
 export async function getSecretValue(secretName: string, secretKey: string) {
-
   const envSecret = process.env[secretKey];
   if(envSecret) {
     return envSecret;

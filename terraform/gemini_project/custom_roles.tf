@@ -1,4 +1,4 @@
-# Need to use a random suffic as GCP soft-deletes custom roles.
+# Need to use a random suffix as GCP soft-deletes custom roles.
 # So to be able to delete and recreate we need to use a different name each time.
 resource "random_id" "role_name_suffix" {
   byte_length = 2
