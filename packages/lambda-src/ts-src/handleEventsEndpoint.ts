@@ -1,5 +1,6 @@
 import { AppHomeOpenedEvent, EnvelopedEvent, GenericMessageEvent } from '@slack/bolt';
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
+import util from 'util';
 import { getSecretValue, invokeLambda } from './awsAPI';
 import { PromptCommandPayload, addReaction, getBotId } from './slackAPI';
 import { verifySlackRequest } from './verifySlackRequest';
@@ -24,7 +25,26 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
       statusCode: 200
     };
 
+    type URLVerification = {
+      token:string;
+      challenge: string;
+      type: string;
+    };
+    // This handles the initial event API verification.
+    // See https://api.slack.com/events/url_verification
+    const urlVerification = JSON.parse(event.body) as URLVerification;
+    if(urlVerification.type === "url_verification") {
+      result.body = JSON.stringify({
+        challenge: urlVerification.challenge
+      });
+      result.headers = {
+        'Content-Type': 'application/json',
+      };
+      return result;
+    }
+
     const envelopedEvent = JSON.parse(event.body) as EnvelopedEvent;
+    console.log(`envelopedEvent: ${util.inspect(envelopedEvent, false, null)}`);
     switch(envelopedEvent.event.type) {
     // DM from the Messages tab or @mention
     case "message":
@@ -81,30 +101,10 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
       }
       break;
     }
-    case "url_verification": {
-      // This handles the initial event API verification.
-      // See https://api.slack.com/events/url_verification
-      type URLVerification = {
-        token:string;
-        challenge: string;
-        type: string;
-      };
-      const urlVerification = JSON.parse(event.body) as URLVerification;
-      if(urlVerification.type === "url_verification") {
-        result.body = JSON.stringify({
-          challenge: urlVerification.challenge
-        });
-        result.headers = {
-          'Content-Type': 'application/json',
-        };
-      }
-      break;
-    }
     default:
       console.warn(`Unexpected event type: ${envelopedEvent.event.type}`);
       break;
     }
-
     return result;
   }
   catch (error) {

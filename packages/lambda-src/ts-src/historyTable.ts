@@ -4,7 +4,7 @@ import { Content } from '@google-cloud/vertexai';
 
 // The very useful TTL functionality in DynamoDB means we
 // can set a TTL on storing the history.
-const TTL_IN_MS = 1000 * 60 * 60 * 24 * 7; // One week
+const TTL_IN_MS = 1000 * 60 * 60 * 24 * 30; // Thirty days
 const TableName = "AIBot_History";
 
 export type History = {
