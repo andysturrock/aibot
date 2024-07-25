@@ -36,7 +36,7 @@ async function callGoogleGroundedModel(prompt: string) {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function chat() {
   try {
-    const generativeModel = await getGenerativeModel();
+    const generativeModel = await getGenerativeModel("myChannel", "myThreadTs");
 
     const rl = readline.createInterface({
       input: process.stdin,
@@ -138,7 +138,8 @@ async function testHandlePromptCommand() {
     bot_id: '',
     bot_user_id: '',
     team_id: '',
-    thread_ts: '1'
+    event_ts: "1721893185.864729",
+    channel: "C06KQCCSJMU"
   };
   let history: Content[] = [];
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

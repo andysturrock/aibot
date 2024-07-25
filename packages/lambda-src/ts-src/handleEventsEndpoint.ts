@@ -1,6 +1,5 @@
 import { AppHomeOpenedEvent, EnvelopedEvent, GenericMessageEvent } from '@slack/bolt';
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
-import util from 'util';
 import { getSecretValue, invokeLambda } from './awsAPI';
 import { PromptCommandPayload, addReaction, getBotId } from './slackAPI';
 import { verifySlackRequest } from './verifySlackRequest';
@@ -44,7 +43,6 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
     }
 
     const envelopedEvent = JSON.parse(event.body) as EnvelopedEvent;
-    console.log(`envelopedEvent: ${util.inspect(envelopedEvent, false, null)}`);
     switch(envelopedEvent.event.type) {
     // DM from the Messages tab or @mention
     case "message":
@@ -84,13 +82,13 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
       // If the user has asked for a summary, dispatch to that lambda.
       // In a thread or channel the user will use "@bot summarise" so use a regex to match that.
       // Note the double \\ to escape \s
-      if(genericMessageEvent.text.match(new RegExp(`<@${myId.bot_user_id}>\\ssummarise`)) ??
-          genericMessageEvent.text.match(new RegExp(`<@${myId.bot_user_id}>\\slumos`))) {
-        await invokeLambda("AIBot-handleSummariseCommandLambda", JSON.stringify(promptCommandPayload));
-      }
-      else {
-        await invokeLambda("AIBot-handlePromptCommandLambda", JSON.stringify(promptCommandPayload));
-      }
+      // if(genericMessageEvent.text.match(new RegExp(`<@${myId.bot_user_id}>\\ssummarise`)) ??
+      //     genericMessageEvent.text.match(new RegExp(`<@${myId.bot_user_id}>\\slumos`))) {
+      //   await invokeLambda("AIBot-handleSummariseCommandLambda", JSON.stringify(promptCommandPayload));
+      // }
+      // else {
+      await invokeLambda("AIBot-handlePromptCommandLambda", JSON.stringify(promptCommandPayload));
+      // }
       break;
     }
     case "app_home_opened": {
