@@ -12,7 +12,6 @@ echo "Typechecking files..."
 
 lambdas=" \
   handlePromptCommand \
-  handleSummariseCommand \
   handleSlackAuthRedirect \
   handleInteractiveEndpoint \
   handleEventsEndpoint \
@@ -39,6 +38,3 @@ done
 
 echo "Adding clientLibraryConfig-aws-aibot.json to handlePromptCommand bundle..."
 cp ../lambda-src/clientLibraryConfig-aws-aibot.json ../lambda-src/dist/handlePromptCommand
-
-echo "Adding clientLibraryConfig-aws-aibot.json to handleSummariseCommand bundle..."
-cp ../lambda-src/clientLibraryConfig-aws-aibot.json ../lambda-src/dist/handleSummariseCommand
