@@ -74,30 +74,6 @@ export class LambdaStack extends Stack {
     const handlePromptCommandLambdaRole = handlePromptCommandLambda.role?.node.defaultChild as iam.CfnRole;
     handlePromptCommandLambdaRole.roleName = 'handlePromptCommandLambdaRole';
 
-    // Create the lambda which does the summary AI.
-    // This lambda is called from the events lambda, not via the API Gateway.
-    const handleSummariseCommandLambda = new lambda.Function(this, "handleSummariseCommandLambda", {
-      handler: "handleSummariseCommand.handleSummariseCommand",
-      functionName: 'AIBot-handleSummariseCommandLambda',
-      code: lambda.Code.fromAsset("../lambda-src/dist/handleSummariseCommand"),
-      memorySize: 1024,
-      ...allLambdaProps,
-      timeout: Duration.seconds(180)
-    });
-    // This function is going to be invoked asynchronously, so set some extra config for that
-    new lambda.EventInvokeConfig(this, 'handleSummariseCommandLambdaEventInvokeConfig', {
-      function: handleSummariseCommandLambda,
-      maxEventAge: Duration.minutes(2),
-      retryAttempts: 2,
-    });
-    // Give the events lambda permission to invoke this one
-    handleSummariseCommandLambda.grantInvoke(handleEventsEndpointLambda);
-    // Allow read access to the secret it needs
-    props.aiBotSecret.grantRead(handleSummariseCommandLambda);
-    // Set the name to something short otherwise the GCP workload federation stuff doesn't work.
-    const handleSummariseCommandLambdaRole = handleSummariseCommandLambda.role?.node.defaultChild as iam.CfnRole;
-    handleSummariseCommandLambdaRole.roleName = 'handleSummariseCommandLambdaRole';
-
     // Create the lambda for handling Slack interactions.
     const handleInteractiveEndpointLambda = new lambda.Function(this, "handleInteractiveEndpointLambda", {
       handler: "handleInteractiveEndpoint.handleInteractiveEndpoint",
