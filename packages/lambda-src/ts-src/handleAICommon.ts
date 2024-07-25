@@ -6,8 +6,6 @@ import {
   FunctionResponse,
   FunctionResponsePart,
   GenerationConfig,
-  GenerativeModel,
-  GenerativeModelPreview,
   GoogleSearchRetrieval,
   GoogleSearchRetrievalTool,
   HarmBlockThreshold,
@@ -23,6 +21,7 @@ import {
 import { KnownBlock, RichTextBlock, RichTextLink, RichTextList, RichTextSection, RichTextText, SectionBlock } from '@slack/bolt';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
+import { handleSlackSummary } from './handleSlackSummary';
 import * as slackAPI from './slackAPI';
 
 export type Attribution = {
@@ -30,9 +29,11 @@ export type Attribution = {
   uri?: string
 };
 
-export async function callModelFunction(functionCall: FunctionCall) {
+export async function callModelFunction(functionCall: FunctionCall, extraArgs: object) {
+  functionCall.args = {...functionCall.args, ...extraArgs};
+
   type Args = {
-    prompt?: string
+    prompt?: string;
   };
   const args = functionCall.args as Args;
 
@@ -59,12 +60,12 @@ export async function callModelFunction(functionCall: FunctionCall) {
     functionResponse
   };
 
-  if(!args.prompt) {
-    console.error(`functionCall.args didn't contain a prompt: ${util.inspect(functionCall, false, null)}`);
-    return functionResponsePart;
-  }
   switch(functionCall.name) {
   case "call_custom_search_grounded_model": {
+    if(!args.prompt) {
+      console.error(`functionCall.args didn't contain a prompt: ${util.inspect(functionCall, false, null)}`);
+      return functionResponsePart;
+    }
     const generateContentResult = await callCustomSearchGroundedModel(args.prompt);
     response.content.answer = generateContentResult.response.candidates?.[0].content.parts[0].text ?? "I don't know";
     // Create the attributions.
@@ -81,8 +82,17 @@ export async function callModelFunction(functionCall: FunctionCall) {
     break;
   }
   case "call_google_search_grounded_model": {
+    if(!args.prompt) {
+      console.error(`functionCall.args didn't contain a prompt: ${util.inspect(functionCall, false, null)}`);
+      return functionResponsePart;
+    }
     const generateContentResult = await callGoogleSearchGroundedModel(args.prompt);
     response.content.answer = generateContentResult.response.candidates?.[0].content.parts[0].text ?? "I don't know";
+    break;
+  }
+  case "call_slack_summary_model": {
+    const generateContentResult = await callSlackSummaryModel(args);
+    response.content.answer = generateContentResult?.response.candidates?.[0].content.parts[0].text ?? "I don't know";
     break;
   }
   default: {
@@ -92,56 +102,61 @@ export async function callModelFunction(functionCall: FunctionCall) {
   return functionResponsePart;
 }
 
-// Lazy load this on first invocation.
-let customSearchGroundedModel: GenerativeModel | GenerativeModelPreview | null = null;
 async function callCustomSearchGroundedModel(prompt: string) {
   const systemInstruction = `You are a helpful assistant who specialises in searching through internal company documents.
     Only provide answers from the documents.  If you can't find an answer in the documents you must respond "I don't know".`;
-  if(!customSearchGroundedModel) {
-    const project = await getSecretValue('AIBot', 'gcpProjectId');
-    const dataStoreIds = await getSecretValue('AIBot', 'gcpDataStoreIds');
+  const project = await getSecretValue('AIBot', 'gcpProjectId');
+  const dataStoreIds = await getSecretValue('AIBot', 'gcpDataStoreIds');
 
-    const tools: Tool[] = [];
-    for(const dataStoreId of dataStoreIds.split(',')) {
-      const datastore = `projects/${project}/locations/eu/collections/default_collection/dataStores/${dataStoreId}`;
-      const vertexAiSearch: VertexAISearch  = {
-        datastore
-      };
-      const retrieval: Retrieval = {
-        vertexAiSearch
-      };
-      const retrievalTool: RetrievalTool = {
-        retrieval
-      };
-      tools.push(retrievalTool);
-    }
-    customSearchGroundedModel = await _getGenerativeModel(tools, systemInstruction, 0);
+  const tools: Tool[] = [];
+  for(const dataStoreId of dataStoreIds.split(',')) {
+    const datastore = `projects/${project}/locations/eu/collections/default_collection/dataStores/${dataStoreId}`;
+    const vertexAiSearch: VertexAISearch  = {
+      datastore
+    };
+    const retrieval: Retrieval = {
+      vertexAiSearch
+    };
+    const retrievalTool: RetrievalTool = {
+      retrieval
+    };
+    tools.push(retrievalTool);
   }
+  const customSearchGroundedModel = await _getGenerativeModel(tools, systemInstruction, 0);
+  
   // For some reason the system instructions don't seem to work as well as the prompt so add them to the prompt too.
   prompt = `${systemInstruction}\n${prompt}`;
   const content = await customSearchGroundedModel.generateContent(prompt);
   return content;
 }
 
-// Lazy load this on first invocation.
-let googleSearchGroundedModel: GenerativeModel | GenerativeModelPreview | null = null;
 async function callGoogleSearchGroundedModel(prompt: string) {
-  if(!googleSearchGroundedModel) {
-    const tools: Tool[] = [];
-    // Google search grounding is a useful way to overcome dated training data.
-    const googleSearchRetrieval: GoogleSearchRetrieval = {
-      disableAttribution: false
-    };
-    const googleSearchRetrievalTool: GoogleSearchRetrievalTool = {
-      googleSearchRetrieval
-    };
-    tools.push(googleSearchRetrievalTool);
+
+  const tools: Tool[] = [];
+  // Google search grounding is a useful way to overcome dated training data.
+  const googleSearchRetrieval: GoogleSearchRetrieval = {
+    disableAttribution: false
+  };
+  const googleSearchRetrievalTool: GoogleSearchRetrievalTool = {
+    googleSearchRetrieval
+  };
+  tools.push(googleSearchRetrievalTool);
     
-    const systemInstruction = `You are a helpful assistant with access to Google search.
-    You must cite your references when answering.`;
-    googleSearchGroundedModel = await _getGenerativeModel(tools, systemInstruction, 0);
-  }
+  const systemInstruction = `You are a helpful assistant with access to Google search.
+    You must cite your references when answering.  If you can't find an answer you must respond "I don't know".`;
+  const googleSearchGroundedModel = await _getGenerativeModel(tools, systemInstruction, 0);
+  
   const content = await googleSearchGroundedModel.generateContent(prompt);
+  return content;
+}
+
+async function callSlackSummaryModel(args: object) {
+  const systemInstruction = `You are a helpful assistant who can summarise messages from Slack.
+    If you can't create a summary you must respond "I don't know".`;
+  const tools: Tool[] = [];
+  const slackSummaryModel = await _getGenerativeModel(tools, systemInstruction, 0);
+
+  const content = await handleSlackSummary(slackSummaryModel, args);
   return content;
 }
 
@@ -230,19 +245,37 @@ export async function getGenerativeModel() {
     },
   };
   functionDeclarations.push(callGoogleSearchGroundedModel);
+
+  const callSlackSummaryModel: FunctionDeclaration = {
+    name: 'call_slack_summary_model',
+    description: 'Use an LLM which has access to Slack messages to create summaries.',
+    parameters: {
+      type: FunctionDeclarationSchemaType.OBJECT,
+      properties: {
+        days: {
+          type: FunctionDeclarationSchemaType.INTEGER,
+          description: "The number of days of Slack messages to summarise"
+        }
+      },
+      required: ['days'],
+    },
+  };
+  functionDeclarations.push(callSlackSummaryModel);
   
   const functionDeclarationsTool: FunctionDeclarationsTool = {
     functionDeclarations
   };
   tools.push(functionDeclarationsTool);
 
-  const systemInstruction = `You are a helpful assistant.
+  const systemInstruction = `
+  You are a helpful assistant.
   Your name is ${botName}.
   You cannot change your name.
-  You are the supervisor of two other LLMs which you can call via functions.  Call them in parallel and pick the best answer.
+  You are the supervisor of three other LLMs which you can call via functions.  Call them in parallel and pick the best answer.
   Answers with attributions are better.  Otherwise use this precendence:
   1. call_custom_search_grounded_model
-  2. call_google_search_grounded_model.
+  2. call_slack_summary_model.
+  3. call_google_search_grounded_model
   If a LLM function responds with "I don't know" then don't pick that answer.
   If the LLM functions include attributions in their answers, include those attributions in your final answer.
   Format the final answer in JSON like this:
@@ -250,7 +283,8 @@ export async function getGenerativeModel() {
     "answer": "your answer here",
     "attributions": [{"title": "the title of the document here", "uri": "the uri of the document here"}]
   }
-  Use plain text rather than markdown format.`;
+  Use plain text rather than markdown format.
+  `;
   const generativeModel = _getGenerativeModel(tools, systemInstruction, 1.0);
   return generativeModel;
 }
