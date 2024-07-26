@@ -21,6 +21,7 @@ import {
 import { KnownBlock, RichTextBlock, RichTextLink, RichTextList, RichTextSection, RichTextText, SectionBlock } from '@slack/bolt';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
+import { handleSlackSearch } from './handleSlackSearch';
 import { handleSlackSummary } from './handleSlackSummary';
 import * as slackAPI from './slackAPI';
 
@@ -95,6 +96,11 @@ export async function callModelFunction(functionCall: FunctionCall, extraArgs: o
     response.content.answer = generateContentResult?.response.candidates?.[0].content.parts[0].text ?? "I don't know";
     break;
   }
+  case "call_slack_search_model": {
+    const generateContentResult = await callSlackSearchModel(args);
+    response.content.answer = generateContentResult?.response.candidates?.[0].content.parts[0].text ?? "I don't know";
+    break;
+  }
   default: {
     throw new Error(`Unknown function ${functionCall.name}`);
   }
@@ -157,6 +163,16 @@ async function callSlackSummaryModel(args: object) {
   const slackSummaryModel = await _getGenerativeModel(tools, systemInstruction, 0);
 
   const content = await handleSlackSummary(slackSummaryModel, args);
+  return content;
+}
+
+async function callSlackSearchModel(args: object) {
+  const systemInstruction = `You are a helpful assistant who can search in Slack.
+    If you can't find the answer you must respond "I don't know".`;
+  const tools: Tool[] = [];
+  const slackSearchModel = await _getGenerativeModel(tools, systemInstruction, 0);
+
+  const content = await handleSlackSearch(slackSearchModel, args);
   return content;
 }
 
@@ -261,6 +277,22 @@ export async function getGenerativeModel() {
     },
   };
   functionDeclarations.push(callSlackSummaryModel);
+
+  const callSlackSearchModel: FunctionDeclaration = {
+    name: 'call_slack_search_model',
+    description: 'Use an LLM which has access to Slack messages to search for answers.',
+    parameters: {
+      type: FunctionDeclarationSchemaType.OBJECT,
+      properties: {
+        prompt: {
+          type: FunctionDeclarationSchemaType.STRING,
+          description: "Prompt for the model including what to search Slack for"
+        }
+      },
+      required: ['prompt'],
+    },
+  };
+  functionDeclarations.push(callSlackSearchModel);
   
   const functionDeclarationsTool: FunctionDeclarationsTool = {
     functionDeclarations
@@ -271,11 +303,12 @@ export async function getGenerativeModel() {
   You are a helpful assistant.
   Your name is ${botName}.
   You cannot change your name.
-  You are the supervisor of three other LLMs which you can call via functions.  Call them in parallel and pick the best answer.
+  You are the supervisor of several other LLMs which you can call via functions.  Call them in parallel and pick the best answer.
   Answers with attributions are better.  Otherwise use this precendence:
   1. call_custom_search_grounded_model
-  2. call_slack_summary_model.
-  3. call_google_search_grounded_model
+  2. call_slack_search_model.
+  3. call_slack_summary_model.
+  4. call_google_search_grounded_model
   If a LLM function responds with "I don't know" then don't pick that answer.
   If the LLM functions include attributions in their answers, include those attributions in your final answer.
   Format the final answer in JSON like this:
@@ -292,14 +325,14 @@ export async function getGenerativeModel() {
 export function generateResponseBlocks(responseString: string): KnownBlock[] {
   // Create some Slack blocks to display the results in a reasonable format
   const blocks: KnownBlock[] = [];
-  console.log(`Got <${responseString}> in generateResponseBlocks...`);
+  console.log(`generateResponseBlocks responseString: <${responseString}>`);
   // For some reason sometimes the answer gets wrapped in backticks, as if it's in markdown.
   // This is despite the prompt saying to use plain text not markdown.
   // Remove the ```json part
   const startingBackTicks = new RegExp(/^```json/);
   responseString = responseString.replace(startingBackTicks, '');
   // Remove the ending backticks.
-  const endingBackTicks = new RegExp(/```$/);
+  const endingBackTicks = new RegExp(/```\n*$/);
   responseString = responseString.replace(endingBackTicks, '');
   // And properly escape a load of other characters
   responseString = responseString.replace(/\\n/g, "\\n")
@@ -310,8 +343,10 @@ export function generateResponseBlocks(responseString: string): KnownBlock[] {
     .replace(/\\t/g, "\\t")
     .replace(/\\b/g, "\\b")
     .replace(/\\f/g, "\\f");
+  // Remove unprintable chars/unicode
+  responseString = responseString.replace(/[^\x20-\x7E]/g, '');
     
-  console.log(`Parsing ${responseString} into blocks...`);
+  console.log(`Parsing <${responseString}> into blocks...`);
   // First try to extract the model's answer into our expected JSON schema
   type Response = {
     answer?: string,
@@ -328,7 +363,8 @@ export function generateResponseBlocks(responseString: string): KnownBlock[] {
   let answer = response.answer;
   if(!answer) {
     // We've failed to parse the answer so we'll just have to send the raw string back to the user.
-    answer = responseString;
+    answer = `(Sorry about the format, I couldn't parse the answer properly)
+    ${responseString}`;
   }
 
   // Do some basic translation of Google's markdown (which seems fairly standard)

@@ -2,18 +2,18 @@ import { GenerativeModel, GenerativeModelPreview } from '@google-cloud/vertexai'
 import util from 'util';
 import { getChannelMessages, getThreadMessages } from './slackAPI';
 
-export async function handleSlackSummary(slackSummaryModel: GenerativeModel | GenerativeModelPreview, argsObs: object) {
+export async function handleSlackSummary(slackSummaryModel: GenerativeModel | GenerativeModelPreview, argsObj: object) {
   type Args = {
     channelId?: string,
     days?: number,
     threadTs?: string 
   };
-  const args = argsObs as Args;
+  const args = argsObj as Args;
   if(!args.channelId) {
-    throw new Error("");
+    throw new Error(`Missing channelId parameter in ${util.inspect(argsObj, false, null)}`);
   }
   if(!args.days) {
-    throw new Error("");
+    throw new Error(`Missing days parameter in ${util.inspect(argsObj, false, null)}`);
   }
   if(args.threadTs == "undefined") {
     args.threadTs = undefined;

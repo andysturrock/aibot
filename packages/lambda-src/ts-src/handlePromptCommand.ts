@@ -12,6 +12,7 @@ import { getHistory, putHistory } from './historyTable';
 import { PromptCommandPayload, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage } from './slackAPI';
 
 export async function handlePromptCommand(event: PromptCommandPayload) {
+  console.log(`handlePromptCommand ${util.inspect(event, false, null)}`);
   await _handlePromptCommand(event, getHistory, putHistory);
 }
 
@@ -46,11 +47,11 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     array.push(textPart);
     let response: string | undefined = undefined;
     while(response == undefined) {
-      console.log(`array input to chat: ${util.inspect(array, false, null, true)}`);
+      console.log(`array input to chat: ${util.inspect(array, false, null)}`);
       const generateContentResult = await chatSession.sendMessage(array);
 
       const contentResponse = generateContentResult.response;
-      console.log(`contentResponse: ${util.inspect(contentResponse, false, null, true)}`);
+      console.log(`contentResponse: ${util.inspect(contentResponse, false, null)}`);
       response = contentResponse.candidates?.[0].content.parts[0].text;
 
       // reply and function calls should be mutually exclusive, but if we have a reply
@@ -63,16 +64,16 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
           }
           return functionCalls;
         }, functionCalls);
-        console.log(`functionCalls: ${util.inspect(functionCalls, false, null, true)}`);
+        console.log(`functionCalls: ${util.inspect(functionCalls, false, null)}`);
         array = new Array<Part>();
         for (const functionCall of functionCalls) {
-          console.log(`***** functionCall: ${util.inspect(functionCall, false, null, true)}`);
+          console.log(`***** functionCall: ${util.inspect(functionCall, false, null)}`);
           const extraArgs = {
             channelId,
             threadTs: event.thread_ts
           };
           const functionResponsePart = await callModelFunction(functionCall, extraArgs);
-          console.log(`functionResponsePart: ${util.inspect(functionResponsePart, false, null, true)}`);
+          console.log(`functionResponsePart: ${util.inspect(functionResponsePart, false, null)}`);
           array.push(functionResponsePart);
         }
       }
