@@ -181,7 +181,7 @@ export async function getThreadMessages(channelId: string, threadTs: string) {
 }
 
 export async function getChannelMessages(channelId: string, oldest? : string | undefined, includeThreads = true) {
-  const client = await createClient();
+  const client = await createUserClient();
   const conversationsHistoryArguments: ConversationsHistoryArguments = {
     channel: channelId,
     oldest
