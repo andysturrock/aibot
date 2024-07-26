@@ -299,7 +299,7 @@ export function generateResponseBlocks(responseString: string): KnownBlock[] {
   const startingBackTicks = new RegExp(/^```json/);
   responseString = responseString.replace(startingBackTicks, '');
   // Remove the ending backticks.
-  const endingBackTicks = new RegExp(/```$/);
+  const endingBackTicks = new RegExp(/```\n*$/);
   responseString = responseString.replace(endingBackTicks, '');
   // And properly escape a load of other characters
   responseString = responseString.replace(/\\n/g, "\\n")
@@ -310,6 +310,9 @@ export function generateResponseBlocks(responseString: string): KnownBlock[] {
     .replace(/\\t/g, "\\t")
     .replace(/\\b/g, "\\b")
     .replace(/\\f/g, "\\f");
+
+  // Remove unprintable chars/unicode
+  responseString = responseString.replace(/[^\x20-\x7E]/g, '');
     
   console.log(`Parsing ${responseString} into blocks...`);
   // First try to extract the model's answer into our expected JSON schema
@@ -328,7 +331,8 @@ export function generateResponseBlocks(responseString: string): KnownBlock[] {
   let answer = response.answer;
   if(!answer) {
     // We've failed to parse the answer so we'll just have to send the raw string back to the user.
-    answer = responseString;
+    answer = `(Sorry about the format, I couldn't parse the answer properly)
+${responseString}`;
   }
 
   // Do some basic translation of Google's markdown (which seems fairly standard)
