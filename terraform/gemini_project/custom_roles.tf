@@ -11,7 +11,9 @@ resource "google_project_iam_custom_role" "aibot_role" {
 
   permissions = [
     "aiplatform.endpoints.predict",
-    "discoveryengine.servingConfigs.search"
+    "discoveryengine.servingConfigs.search",
+    "storage.objects.create",
+    "storage.objects.delete"
   ]
 }
 

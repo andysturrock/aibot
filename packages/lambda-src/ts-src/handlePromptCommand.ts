@@ -1,3 +1,4 @@
+import { Storage } from '@google-cloud/storage';
 import {
   Content,
   FunctionCall,
@@ -5,13 +6,17 @@ import {
   StartChatParams,
   TextPart
 } from '@google-cloud/vertexai';
+import axios, { AxiosRequestConfig } from 'axios';
+import path from 'node:path';
+import stream from 'node:stream/promises';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
 import { callModelFunction, generateResponseBlocks, getGenerativeModel, removeReaction } from './handleAICommon';
 import { getHistory, putHistory } from './historyTable';
-import { PromptCommandPayload, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage } from './slackAPI';
+import { File, PromptCommandPayload, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage } from './slackAPI';
 
 export async function handlePromptCommand(event: PromptCommandPayload) {
+  console.log(`handlePromptCommand event ${util.inspect(event, false, null)}`);
   await _handlePromptCommand(event, getHistory, putHistory);
 }
 
@@ -38,6 +43,24 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     let history = await getHistoryFunction(event.user_id, threadTs);
     startChatParams.history = history;
     const chatSession = generativeModel.startChat(startChatParams);
+
+    // If there are any files included in the message, download them here
+    const slackBotToken = await getSecretValue('AIBot', 'slackBotToken');
+    const documentBucketName = await getSecretValue('AIBot', 'documentBucketName');
+    if(event.files) {
+      const gsUris: string[]  = [];
+      for(const file of event.files) {
+        try{
+          const gsUri = await transferFileToGCS(slackBotToken, documentBucketName, event.user_id, file);
+          gsUris.push(gsUri);
+        }
+        catch(error) {
+          console.error(util.inspect(error, false, null));
+          await postEphmeralErrorMessage(channelId, event.user_id, `Failed to upload file ${file.title} to Gemini`);
+        }
+      }
+    }
+    // TODO add file part stuff here.
 
     const textPart: TextPart = {
       text: event.text
@@ -101,3 +124,35 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     }
   }
 }
+
+async function transferFileToGCS(slackBotToken: string, documentBucketName: string, userId: string, file: File) {
+  if(!file.url_private) {
+    throw new Error("Missing url_private field");
+  }
+  const axiosRequestConfig: AxiosRequestConfig = {
+    responseType: 'stream',
+    headers: {
+      Authorization: `Bearer ${slackBotToken}`
+    },
+  };
+  const axiosResponse = await axios.get(file.url_private, axiosRequestConfig);
+  console.log(`axiosResponse: ${util.inspect(axiosResponse, false, null)}`);
+  // Extract the filename from the URL rather than use the name.
+  // Slack will have transformed any special chars etc.
+  const filename = path.basename(file.url_private);
+  // await stream.pipeline(axiosResponse.data, fs.createWriteStream(`/tmp/${filename}`));
+  // console.log(`Download of ${file.url_private_download} pipeline successful`);
+  
+  // We can stream the file directly from Slack to GCS (ie without writing to the filesystem here).
+  const storage = new Storage();
+  const dateFolderName = new Date().toISOString().substring(0, 10);
+  const gcsFilename = `${dateFolderName}/${userId}/${filename}`;
+  const documentBucket = storage.bucket(documentBucketName);
+  const bucketFile = documentBucket.file(gcsFilename);
+  const bucketFileStream = bucketFile.createWriteStream();
+  
+  await stream.pipeline(axiosResponse.data, bucketFileStream);
+  console.log(`Transferred ${file.url_private_download} to ${documentBucketName}->${gcsFilename}`);
+  return `gs://${documentBucketName}/${gcsFilename}`;
+}
+
