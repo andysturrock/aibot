@@ -1,6 +1,8 @@
 import { Storage } from '@google-cloud/storage';
 import {
   Content,
+  FileData,
+  FileDataPart,
   FunctionCall,
   Part,
   StartChatParams,
@@ -26,6 +28,7 @@ type PutHistoryFunction = (slackId: string, threadTs: string, history: Content[]
 export async function _handlePromptCommand(event: PromptCommandPayload,  getHistoryFunction: GetHistoryFunction, putHistoryFunction: PutHistoryFunction): Promise<void> {
   const responseUrl = event.response_url;
   const channelId = event.channel;
+
   try {
     // If we are in a thread we'll respond there.  If not then we'll start a thread for the response.
     const threadTs = event.thread_ts ?? event.event_ts;
@@ -47,12 +50,22 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     // If there are any files included in the message, download them here
     const slackBotToken = await getSecretValue('AIBot', 'slackBotToken');
     const documentBucketName = await getSecretValue('AIBot', 'documentBucketName');
+    const chatModel = await getSecretValue('AIBot', 'chatModel');
+    const fileDataArray: FileData[]  = [];
     if(event.files) {
-      const gsUris: string[]  = [];
       for(const file of event.files) {
         try{
-          const gsUri = await transferFileToGCS(slackBotToken, documentBucketName, event.user_id, file);
-          gsUris.push(gsUri);
+          if(!isSupportedMimeType(file.mimetype)) {
+            await postEphmeralErrorMessage(channelId, event.user_id, `${botName} using ${chatModel} does not support file type ${file.mimetype}`);  
+          }
+          else {
+            const gsUri = await transferFileToGCS(slackBotToken, documentBucketName, event.user_id, file);
+            const fileData: FileData = {
+              mimeType: file.mimetype,
+              fileUri: gsUri
+            };
+            fileDataArray.push(fileData);
+          }
         }
         catch(error) {
           console.error(util.inspect(error, false, null));
@@ -60,17 +73,23 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
         }
       }
     }
-    // TODO add file part stuff here.
+    let parts = new Array<Part>();
+    for(const fileData of fileDataArray) {
+      const fileDataPart: FileDataPart = {
+        fileData
+      };
+      parts.push(fileDataPart);
+    }
 
     const textPart: TextPart = {
       text: event.text
     };
-    let array = new Array<Part>();
-    array.push(textPart);
+    parts.push(textPart);
+
     let response: string | undefined = undefined;
     while(response == undefined) {
-      console.log(`array input to chat: ${util.inspect(array, false, null, true)}`);
-      const generateContentResult = await chatSession.sendMessage(array);
+      console.log(`array input to chat: ${util.inspect(parts, false, null, true)}`);
+      const generateContentResult = await chatSession.sendMessage(parts);
 
       const contentResponse = generateContentResult.response;
       console.log(`contentResponse: ${util.inspect(contentResponse, false, null, true)}`);
@@ -87,7 +106,7 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
           return functionCalls;
         }, functionCalls);
         console.log(`functionCalls: ${util.inspect(functionCalls, false, null, true)}`);
-        array = new Array<Part>();
+        parts = new Array<Part>();
         for (const functionCall of functionCalls) {
           console.log(`***** functionCall: ${util.inspect(functionCall, false, null, true)}`);
           const extraArgs = {
@@ -96,7 +115,7 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
           };
           const functionResponsePart = await callModelFunction(functionCall, extraArgs);
           console.log(`functionResponsePart: ${util.inspect(functionResponsePart, false, null, true)}`);
-          array.push(functionResponsePart);
+          parts.push(functionResponsePart);
         }
       }
     }
@@ -126,24 +145,22 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
 }
 
 async function transferFileToGCS(slackBotToken: string, documentBucketName: string, userId: string, file: File) {
-  if(!file.url_private) {
-    throw new Error("Missing url_private field");
+  if(!file.url_private_download) {
+    throw new Error("Missing url_private_download field");
   }
   const axiosRequestConfig: AxiosRequestConfig = {
     responseType: 'stream',
     headers: {
-      Authorization: `Bearer ${slackBotToken}`
+      Authorization: `Bearer ${slackBotToken}`,
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/5"
     },
   };
-  const axiosResponse = await axios.get(file.url_private, axiosRequestConfig);
-  console.log(`axiosResponse: ${util.inspect(axiosResponse, false, null)}`);
+  const axiosResponse = await axios.get(file.url_private_download, axiosRequestConfig);
   // Extract the filename from the URL rather than use the name.
   // Slack will have transformed any special chars etc.
-  const filename = path.basename(file.url_private);
-  // await stream.pipeline(axiosResponse.data, fs.createWriteStream(`/tmp/${filename}`));
-  // console.log(`Download of ${file.url_private_download} pipeline successful`);
+  const filename = path.basename(file.url_private_download);
   
-  // We can stream the file directly from Slack to GCS (ie without writing to the filesystem here).
+  // Stream the file directly from Slack to GCS (ie without writing to the filesystem here).
   const storage = new Storage();
   const dateFolderName = new Date().toISOString().substring(0, 10);
   const gcsFilename = `${dateFolderName}/${userId}/${filename}`;
@@ -156,3 +173,47 @@ async function transferFileToGCS(slackBotToken: string, documentBucketName: stri
   return `gs://${documentBucketName}/${gcsFilename}`;
 }
 
+function isSupportedMimeType(mimetype: string) {
+  const supported = supportedMimeTypes.find((supportedMimeType) => {
+    return supportedMimeType.toUpperCase() == mimetype.toUpperCase();
+  });
+  return supported != undefined;
+}
+const supportedMimeTypes = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+  'video/mp4',
+  'video/mpeg',
+  'video/mov',
+  'video/avi',
+  'video/x-flv',
+  'video/mpg',
+  'video/webm',
+  'video/wmv',
+  'video/3gpp',
+  'audio/wav',
+  'audio/mp3',
+  'audio/aiff',
+  'audio/aac',
+  'audio/ogg',
+  'audio/flac',
+  'text/plain',
+  'text/html',
+  'text/css',
+  'text/javascript',
+  'application/x-javascript',
+  'text/x-typescript',
+  'application/x-typescript',
+  'text/csv',
+  'text/markdown',
+  'text/x-python',
+  'application/x-python-code',
+  'application/json',
+  'text/xml',
+  'application/rtf',
+  'text/rtf',
+  'application/pdf',
+];
