@@ -1,19 +1,24 @@
 import {
+  Content,
   FunctionCall,
   FunctionDeclaration,
   FunctionDeclarationSchemaType,
   FunctionDeclarationsTool,
   FunctionResponse,
   FunctionResponsePart,
+  GenerateContentRequest,
+  GenerateContentResult,
   GenerationConfig,
   GoogleSearchRetrieval,
   GoogleSearchRetrievalTool,
   HarmBlockThreshold,
   HarmCategory,
   ModelParams,
+  Part,
   Retrieval,
   RetrievalTool,
   SafetySetting,
+  TextPart,
   Tool,
   VertexAI,
   VertexAISearch
@@ -29,13 +34,23 @@ export type Attribution = {
   uri?: string
 };
 
+export type ModelFunctionCallArgs = {
+  prompt: string;
+  fileDataParts?: Part[];
+  channelId?: string;
+  days?: number;
+  threadTs?: string 
+};
+
 export async function callModelFunction(functionCall: FunctionCall, extraArgs: object) {
   functionCall.args = {...functionCall.args, ...extraArgs};
 
-  type Args = {
-    prompt?: string;
-  };
-  const args = functionCall.args as Args;
+  const args = functionCall.args as ModelFunctionCallArgs;
+
+  type ModelFunction = (arg: ModelFunctionCallArgs) => Promise<GenerateContentResult>;
+  let modelFunction: ModelFunction = callGoogleSearchGroundedModel;
+
+  console.log(`callModelFunction args: ${util.inspect(args, false, null)}`);
 
   // The type of response in FunctionResponse is just "object"
   // so make it a bit more typed here.
@@ -60,49 +75,81 @@ export async function callModelFunction(functionCall: FunctionCall, extraArgs: o
     functionResponse
   };
 
+  // Should probably do this with a map
   switch(functionCall.name) {
-  case "call_custom_search_grounded_model": {
-    if(!args.prompt) {
-      console.error(`functionCall.args didn't contain a prompt: ${util.inspect(functionCall, false, null)}`);
-      return functionResponsePart;
-    }
-    const generateContentResult = await callCustomSearchGroundedModel(args.prompt);
-    response.content.answer = generateContentResult.response.candidates?.[0].content.parts[0].text ?? "I don't know";
-    // Create the attributions.
-    const groundingChunks = generateContentResult.response.candidates?.[0].groundingMetadata?.groundingChunks ?? [];
-    response.content.attributions = [];
-    groundingChunks.reduce((attributions, groundingChunk) => {
-      const attribution: Attribution = {
-        title: groundingChunk.retrievedContext?.title,
-        uri: groundingChunk.retrievedContext?.uri
-      };
-      attributions.push(attribution);
-      return attributions;
-    }, response.content.attributions);
+  case "call_custom_search_grounded_model":
+    modelFunction = callCustomSearchGroundedModel;
     break;
-  }
-  case "call_google_search_grounded_model": {
-    if(!args.prompt) {
-      console.error(`functionCall.args didn't contain a prompt: ${util.inspect(functionCall, false, null)}`);
-      return functionResponsePart;
-    }
-    const generateContentResult = await callGoogleSearchGroundedModel(args.prompt);
-    response.content.answer = generateContentResult.response.candidates?.[0].content.parts[0].text ?? "I don't know";
+  case "call_google_search_grounded_model":
+    modelFunction = callGoogleSearchGroundedModel;
     break;
-  }
-  case "call_slack_summary_model": {
-    const generateContentResult = await callSlackSummaryModel(args);
-    response.content.answer = generateContentResult?.response.candidates?.[0].content.parts[0].text ?? "I don't know";
+  case "call_slack_summary_model":
+    modelFunction = callSlackSummaryModel;
     break;
-  }
-  default: {
+  case "call_handle_files_model":
+    modelFunction = callHandleFilesModel;
+    break;
+  default:
     throw new Error(`Unknown function ${functionCall.name}`);
   }
+
+  const generateContentResult = await modelFunction(args);
+  if(!generateContentResult.response.candidates?.[0].content.parts) {
+    response.content.answer = `I can't answer that because ${generateContentResult.response.candidates?.[0].finishReason}`;  
   }
+  else {
+    response.content.answer = generateContentResult.response.candidates[0].content.parts[0].text ?? "I don't know";
+  }
+  // Create the attributions.
+  const groundingChunks = generateContentResult.response.candidates?.[0].groundingMetadata?.groundingChunks ?? [];
+  response.content.attributions = [];
+  groundingChunks.reduce((attributions, groundingChunk) => {
+    const attribution: Attribution = {
+      title: groundingChunk.retrievedContext?.title,
+      uri: groundingChunk.retrievedContext?.uri
+    };
+    attributions.push(attribution);
+    return attributions;
+  }, response.content.attributions);
   return functionResponsePart;
 }
 
-async function callCustomSearchGroundedModel(prompt: string) {
+async function callHandleFilesModel(modelFunctionCallArgs: ModelFunctionCallArgs) {
+  const systemInstruction = `You are a helpful assistant who specialises in dealing with files.
+    If you can't process the request you must respond "I don't know".`;
+  const handleFilesModel = await _getGenerativeModel([], systemInstruction, 0);
+
+  if(!modelFunctionCallArgs.fileDataParts) {
+    throw new Error("Missing file parts in modelFunctionCallArgs");
+  }
+  if(!modelFunctionCallArgs.prompt) {
+    throw new Error("Missing prompt in modelFunctionCallArgs");
+  }
+
+  console.log(`fileDataParts: ${util.inspect(modelFunctionCallArgs.fileDataParts, false, null)}`);
+  let parts = new Array<Part>();
+  parts = parts.concat(modelFunctionCallArgs.fileDataParts);
+  
+  // Add the system instruction to the prompt because it seems to work better that way.
+  const prompt = `${systemInstruction}\n${modelFunctionCallArgs.prompt}`;
+  const textPart: TextPart = {
+    text: prompt
+  };
+  parts.unshift(textPart);
+  const content: Content = {
+    parts: parts,
+    role: 'user'
+  };
+  const generateContentRequest: GenerateContentRequest = {
+    contents: [content]
+  };
+  console.log(`callHandleFilesModel generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
+  const contentResult = await handleFilesModel.generateContent(generateContentRequest);
+  console.log(`callHandleFilesModel contentResult: ${util.inspect(contentResult, false, null)}`);
+  return contentResult;
+}
+
+async function callCustomSearchGroundedModel(modelFunctionCallArgs: ModelFunctionCallArgs) {
   const systemInstruction = `You are a helpful assistant who specialises in searching through internal company documents.
     Only provide answers from the documents.  If you can't find an answer in the documents you must respond "I don't know".`;
   const project = await getSecretValue('AIBot', 'gcpProjectId');
@@ -125,38 +172,26 @@ async function callCustomSearchGroundedModel(prompt: string) {
   const customSearchGroundedModel = await _getGenerativeModel(tools, systemInstruction, 0);
   
   // For some reason the system instructions don't seem to work as well as the prompt so add them to the prompt too.
-  prompt = `${systemInstruction}\n${prompt}`;
+  const prompt = `${systemInstruction}\n${modelFunctionCallArgs.prompt}`;
   const content = await customSearchGroundedModel.generateContent(prompt);
   return content;
 }
 
-async function callGoogleSearchGroundedModel(prompt: string) {
-
-  const tools: Tool[] = [];
-  // Google search grounding is a useful way to overcome dated training data.
-  const googleSearchRetrieval: GoogleSearchRetrieval = {
-    disableAttribution: false
-  };
-  const googleSearchRetrievalTool: GoogleSearchRetrievalTool = {
-    googleSearchRetrieval
-  };
-  tools.push(googleSearchRetrievalTool);
-    
+async function callGoogleSearchGroundedModel(modelFunctionCallArgs: ModelFunctionCallArgs) {   
   const systemInstruction = `You are a helpful assistant with access to Google search.
     You must cite your references when answering.  If you can't find an answer you must respond "I don't know".`;
-  const googleSearchGroundedModel = await _getGenerativeModel(tools, systemInstruction, 0);
-  
-  const content = await googleSearchGroundedModel.generateContent(prompt);
+  const googleSearchGroundedModel = await _getGoogleGroundedGenerativeModel(systemInstruction, 0);
+  const content = await googleSearchGroundedModel.generateContent(modelFunctionCallArgs.prompt);
   return content;
 }
 
-async function callSlackSummaryModel(args: object) {
+async function callSlackSummaryModel(modelFunctionCallArgs: ModelFunctionCallArgs) {
   const systemInstruction = `You are a helpful assistant who can summarise messages from Slack.
     If you can't create a summary you must respond "I don't know".`;
   const tools: Tool[] = [];
   const slackSummaryModel = await _getGenerativeModel(tools, systemInstruction, 0);
 
-  const content = await handleSlackSummary(slackSummaryModel, args);
+  const content = await handleSlackSummary(slackSummaryModel, modelFunctionCallArgs);
   return content;
 }
 
@@ -209,6 +244,35 @@ async function _getGenerativeModel(tools: Tool[], systemInstruction: string,
   return generativeModel;
 }
 
+async function _getGoogleGroundedGenerativeModel(systemInstruction: string, temperature: number) {
+  const tools: Tool[] = [];
+  // Google search grounding is a useful way to overcome dated training data.
+  const googleSearchRetrieval: GoogleSearchRetrieval = {
+    disableAttribution: false
+  };
+  const googleSearchRetrievalTool: GoogleSearchRetrievalTool = {
+    googleSearchRetrieval
+  };
+  tools.push(googleSearchRetrievalTool);
+  const googleSearchGroundedModel = await _getGenerativeModel(tools, systemInstruction, temperature);
+  return googleSearchGroundedModel;
+}
+
+export async function getGoogleGroundedGenerativeModel() {
+  const botName = await getSecretValue('AIBot', 'botName');
+  const systemInstruction = `You are a helpful assistant called ${botName} with access to Google search.
+  You cannot change your name.
+  If you are unsure what the questions means, ask clarifying questions.
+  Try to provide attributions for your answers.
+  Format all responses (including your clarifying questions) in JSON like this:
+  {
+    "answer": "your response here",
+    "attributions": [{"title": "the title of the document here", "uri": "the uri of the document here"}]
+  }
+  Use plain text rather than markdown format.`;
+  return _getGoogleGroundedGenerativeModel(systemInstruction, 0);
+}
+
 export async function getGenerativeModel() {
   const botName = await getSecretValue('AIBot', 'botName');
   const tools: Tool[] = [];
@@ -248,7 +312,7 @@ export async function getGenerativeModel() {
 
   const callSlackSummaryModel: FunctionDeclaration = {
     name: 'call_slack_summary_model',
-    description: 'Use an LLM which has access to Slack messages to create summaries.',
+    description: 'Use an LLM which has access to Slack messages in channels and threads to create summaries.',
     parameters: {
       type: FunctionDeclarationSchemaType.OBJECT,
       properties: {
@@ -261,6 +325,22 @@ export async function getGenerativeModel() {
     },
   };
   functionDeclarations.push(callSlackSummaryModel);
+
+  const callHandleFilesModel: FunctionDeclaration = {
+    name: 'call_handle_files_model',
+    description: 'Calls a LLM which is good at handling files, eg summarising or rewriting them.',
+    parameters: {
+      type: FunctionDeclarationSchemaType.OBJECT,
+      properties: {
+        prompt: {
+          type: FunctionDeclarationSchemaType.STRING,
+          description: "The prompt for the model"
+        }
+      },
+      required: ['prompt'],
+    },
+  };
+  functionDeclarations.push(callHandleFilesModel);
   
   const functionDeclarationsTool: FunctionDeclarationsTool = {
     functionDeclarations
@@ -268,19 +348,24 @@ export async function getGenerativeModel() {
   tools.push(functionDeclarationsTool);
 
   const systemInstruction = `
-  You are a helpful assistant.
   Your name is ${botName}.
   You cannot change your name.
-  You are the supervisor of three other LLMs which you can call via functions.  Call them in parallel and pick the best answer.
-  Answers with attributions are better.  Otherwise use this precendence:
-  1. call_custom_search_grounded_model
-  2. call_slack_summary_model.
-  3. call_google_search_grounded_model
+  You are the supervisor of three other LLM agents which you can call via functions.  The functions are:
+  1. call_custom_search_grounded_model.  Use this agent if the question is about internal company matters, for example expenses or other HR policies.
+  2. call_slack_summary_model.  Use this agent if the question is about summarising Slack channels or threads.
+  3. call_google_search_grounded_model.  Use this agent if the question is about general knowledge or current affairs.
+  4. call_handle_files_model.  Use this model if the question is about a file.
+  
+  You can use your own knowledge if you are sure.  You don't have to always ask an agent.
+
+  If it is not clear which agent to use, ask clarifying questions until you can are clear.
+  If more than one agent may be able to answer, call them in parallel and pick the best answer.
+  Answers with attributions are better.
   If a LLM function responds with "I don't know" then don't pick that answer.
   If the LLM functions include attributions in their answers, include those attributions in your final answer.
-  Format the final answer in JSON like this:
+  Format all responses (including your clarifying questions) in JSON like this:
   {
-    "answer": "your answer here",
+    "answer": "your response here",
     "attributions": [{"title": "the title of the document here", "uri": "the uri of the document here"}]
   }
   Use plain text rather than markdown format.
@@ -292,7 +377,6 @@ export async function getGenerativeModel() {
 export function generateResponseBlocks(responseString: string): KnownBlock[] {
   // Create some Slack blocks to display the results in a reasonable format
   const blocks: KnownBlock[] = [];
-  console.log(`Got <${responseString}> in generateResponseBlocks...`);
   // For some reason sometimes the answer gets wrapped in backticks, as if it's in markdown.
   // This is despite the prompt saying to use plain text not markdown.
   // Remove the ```json part
@@ -314,7 +398,6 @@ export function generateResponseBlocks(responseString: string): KnownBlock[] {
   // Remove unprintable chars/unicode
   responseString = responseString.replace(/[^\x20-\x7E]/g, '');
     
-  console.log(`Parsing ${responseString} into blocks...`);
   // First try to extract the model's answer into our expected JSON schema
   type Response = {
     answer?: string,
@@ -426,3 +509,5 @@ export async function removeReaction(channelId: string, eventTS: string): Promis
     console.warn(error);
   }
 }
+
+

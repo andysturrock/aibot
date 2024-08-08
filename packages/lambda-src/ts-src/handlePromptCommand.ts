@@ -13,9 +13,9 @@ import path from 'node:path';
 import stream from 'node:stream/promises';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
-import { callModelFunction, generateResponseBlocks, getGenerativeModel, removeReaction } from './handleAICommon';
+import { callModelFunction, generateResponseBlocks, getGenerativeModel, ModelFunctionCallArgs, removeReaction } from './handleAICommon';
 import { getHistory, putHistory } from './historyTable';
-import { File, PromptCommandPayload, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage } from './slackAPI';
+import { File, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage, PromptCommandPayload } from './slackAPI';
 
 export async function handlePromptCommand(event: PromptCommandPayload) {
   console.log(`handlePromptCommand event ${util.inspect(event, false, null)}`);
@@ -41,13 +41,8 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
 
     const botName = await getSecretValue('AIBot', 'botName');
     const generativeModel = await getGenerativeModel();
-    
-    const startChatParams: StartChatParams = { };
-    let history = await getHistoryFunction(event.user_id, threadTs);
-    startChatParams.history = history;
-    const chatSession = generativeModel.startChat(startChatParams);
 
-    // If there are any files included in the message, download them here
+    // If there are any files included in the message, move them to GCP storage.
     const slackBotToken = await getSecretValue('AIBot', 'slackBotToken');
     const documentBucketName = await getSecretValue('AIBot', 'documentBucketName');
     const chatModel = await getSecretValue('AIBot', 'chatModel');
@@ -73,48 +68,94 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
         }
       }
     }
+    
+    // Create the text part with the prompt
     let parts = new Array<Part>();
+    const prompt = event.text;
+    const textPart: TextPart = {
+      text: prompt
+    };
+    parts.unshift(textPart);
+
+    // Load the history if we're in a thread so the model remembers its context.
+    const startChatParams: StartChatParams = { };
+    let history = await getHistoryFunction(event.user_id, threadTs);
+    startChatParams.history = history;
+    console.log(`history: ${util.inspect(history, false, null)}`);
+    
+    // Add the file parts if the user has supplied them in this message.
+    const fileDataParts = new Array<Part>();
     for(const fileData of fileDataArray) {
       const fileDataPart: FileDataPart = {
         fileData
       };
-      parts.push(fileDataPart);
+      fileDataParts.push(fileDataPart);
+    }
+    if(fileDataParts.length > 0) {
+      // Currently function calls only work with text prompts in Gemini.
+      // So rather than adding the file parts to the top level prompt we'll have to use a specific agent for working with files.
+      // Give an instruction to the supervisor agent to chose that agent.
+      // We'll add the file parts below when the supervisor agent asks us to call the files agent.
+      const fileUrisTextPart: TextPart = {
+        text: `This question is about one or more files, so use an agent which can work with files.`
+      };
+      parts.push(fileUrisTextPart);
     }
 
-    const textPart: TextPart = {
-      text: event.text
-    };
-    parts.push(textPart);
+    // Add any file parts from the history.  We'll keep track of what we've added so we don't get duplicates.
+    // Unfortunately JS Sets don't let you provide your own equality function so use a string set.
+    const fileUris = new Set<string>(fileDataParts.map((fileDataPart) => fileDataPart.fileData?.fileUri ?? ""));
+    console.log(`fileDataParts before history: ${util.inspect(fileDataParts, false, null)}`);
+    for(const content of history ?? []) {
+      for(const part of content.parts) {
+        if(part.fileData) {
+          if(!fileUris.has(part.fileData.fileUri)) {
+            fileUris.add(part.fileData.fileUri);
+            fileDataParts.push(part);
+          }
+        }
+        // File parts show up in the function call arguments because we add them below.
+        const modelFunctionCallArgs = part.functionCall?.args as ModelFunctionCallArgs | undefined;
+        for(const functionCallFileDataPart of modelFunctionCallArgs?.fileDataParts ?? []) {
+          if(functionCallFileDataPart.fileData && !fileUris.has(functionCallFileDataPart.fileData.fileUri)) {
+            fileUris.add(functionCallFileDataPart.fileData.fileUri);
+            fileDataParts.push(functionCallFileDataPart);
+          }
+        }
+      }
+    }
+    console.log(`fileDataParts after history: ${util.inspect(fileDataParts, false, null)}`);
+
+    const chatSession = generativeModel.startChat(startChatParams);
 
     let response: string | undefined = undefined;
     while(response == undefined) {
-      console.log(`array input to chat: ${util.inspect(parts, false, null, true)}`);
+      console.log(`Parts array input to chat: ${util.inspect(parts, false, null, true)}`);
       const generateContentResult = await chatSession.sendMessage(parts);
 
       const contentResponse = generateContentResult.response;
       console.log(`contentResponse: ${util.inspect(contentResponse, false, null, true)}`);
       response = contentResponse.candidates?.[0].content.parts[0].text;
 
-      // reply and function calls should be mutually exclusive, but if we have a reply
-      // then use that rather than call the functions.
+      // Response and function calls should be mutually exclusive, but check anyway.
+      // We'll only call the functions if we don't have a response.
       if(!response) {
         const functionCalls: FunctionCall[] = [];
+        // Gather all the function calls into one array.
         contentResponse.candidates?.[0].content.parts.reduce((functionCalls, part) => {
           if(part.functionCall) {
             functionCalls.push(part.functionCall);
           }
           return functionCalls;
         }, functionCalls);
-        console.log(`functionCalls: ${util.inspect(functionCalls, false, null, true)}`);
+        const extraArgs = {
+          channelId,
+          threadTs: event.thread_ts,
+          fileDataParts
+        };
         parts = new Array<Part>();
         for (const functionCall of functionCalls) {
-          console.log(`***** functionCall: ${util.inspect(functionCall, false, null, true)}`);
-          const extraArgs = {
-            channelId,
-            threadTs: event.thread_ts
-          };
           const functionResponsePart = await callModelFunction(functionCall, extraArgs);
-          console.log(`functionResponsePart: ${util.inspect(functionResponsePart, false, null, true)}`);
           parts.push(functionResponsePart);
         }
       }
