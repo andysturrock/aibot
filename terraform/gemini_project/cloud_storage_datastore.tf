@@ -3,7 +3,7 @@ resource "random_id" "bucket_name_suffix" {
   byte_length = 2
 }
 
-# Create a bucket
+# Create a bucket for the datastore
 resource "google_storage_bucket" "aibot_search_datastore" {
   location                    = "EU"
   name                        = "aibot_search_datastore_${random_id.bucket_name_suffix.hex}"
@@ -33,4 +33,13 @@ resource "google_discovery_engine_search_engine" "aibot" {
     search_tier    = "SEARCH_TIER_ENTERPRISE"
     search_add_ons = ["SEARCH_ADD_ON_LLM"]
   }
+}
+
+# Create a bucket for the datastore
+resource "google_storage_bucket" "aibot_documents" {
+  location                    = "EU"
+  name                        = "aibot_documents_${random_id.bucket_name_suffix.hex}"
+  force_destroy               = true
+  uniform_bucket_level_access = true
+  storage_class               = "STANDARD"
 }
