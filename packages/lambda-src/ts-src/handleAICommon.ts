@@ -139,8 +139,6 @@ async function callHandleFilesModel(modelFunctionCallArgs: ModelFunctionCallArgs
     throw new Error("Missing file parts in modelFunctionCallArgs");
   }
 
-  console.log(`fileDataParts: ${util.inspect(modelFunctionCallArgs.fileDataParts, false, null)}`);
-
   // Search backwards through the content until we find the most recent user part, which should be the prompt.
   // Then add the file data parts to that.
   const lastUserContent = generateContentRequest.contents.findLast(content => content.role == 'user');
@@ -149,9 +147,7 @@ async function callHandleFilesModel(modelFunctionCallArgs: ModelFunctionCallArgs
   }
   lastUserContent.parts = lastUserContent.parts.concat(modelFunctionCallArgs.fileDataParts);
 
-  console.log(`callHandleFilesModel generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
   const contentResult = await handleFilesModel.generateContent(generateContentRequest);
-  console.log(`callHandleFilesModel contentResult: ${util.inspect(contentResult, false, null)}`);
   return contentResult;
 }
 

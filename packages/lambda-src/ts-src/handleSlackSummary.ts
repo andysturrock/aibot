@@ -50,7 +50,7 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
         ${texts.join("\n")}`;
   }
   else {
-    throw new Error("Need channel or thread_ts field in event");
+    throw new Error("Need channel or thread_ts field in function call");
   }
 
   // Search backwards through the content until we find the most recent user part, which should be the original prompt.
