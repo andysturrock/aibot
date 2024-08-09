@@ -42,12 +42,12 @@ export type ModelFunctionCallArgs = {
   threadTs?: string 
 };
 
-export async function callModelFunction(functionCall: FunctionCall, extraArgs: object) {
+export async function callModelFunction(functionCall: FunctionCall, history: Content[], extraArgs: object) {
   functionCall.args = {...functionCall.args, ...extraArgs};
 
   const args = functionCall.args as ModelFunctionCallArgs;
 
-  type ModelFunction = (arg: ModelFunctionCallArgs) => Promise<GenerateContentResult>;
+  type ModelFunction = (args: ModelFunctionCallArgs, generateContentRequest: GenerateContentRequest) => Promise<GenerateContentResult>;
   let modelFunction: ModelFunction = callGoogleSearchGroundedModel;
 
   console.log(`callModelFunction args: ${util.inspect(args, false, null)}`);
@@ -93,7 +93,18 @@ export async function callModelFunction(functionCall: FunctionCall, extraArgs: o
     throw new Error(`Unknown function ${functionCall.name}`);
   }
 
-  const generateContentResult = await modelFunction(args);
+  const generateContentRequest: GenerateContentRequest = {
+    contents: history
+  };
+  const promptPart: TextPart = {
+    text: args.prompt
+  };
+  const promptContent: Content = {
+    parts: [promptPart],
+    role: 'user'
+  };
+  generateContentRequest.contents.push(promptContent);
+  const generateContentResult = await modelFunction(args, generateContentRequest);
   if(!generateContentResult.response.candidates?.[0].content.parts) {
     response.content.answer = `I can't answer that because ${generateContentResult.response.candidates?.[0].finishReason}`;
     console.warn(`generateContentResult had no content parts: ${util.inspect(generateContentResult, false, null)}`);
@@ -116,7 +127,7 @@ export async function callModelFunction(functionCall: FunctionCall, extraArgs: o
   return functionResponsePart;
 }
 
-async function callHandleFilesModel(modelFunctionCallArgs: ModelFunctionCallArgs) {
+async function callHandleFilesModel(modelFunctionCallArgs: ModelFunctionCallArgs, generateContentRequest: GenerateContentRequest) {
   const systemInstruction = `
     You are a helpful assistant who specialises in dealing with files.
     If you don't understand the request then ask clarifying questions.
@@ -127,34 +138,24 @@ async function callHandleFilesModel(modelFunctionCallArgs: ModelFunctionCallArgs
   if(!modelFunctionCallArgs.fileDataParts) {
     throw new Error("Missing file parts in modelFunctionCallArgs");
   }
-  if(!modelFunctionCallArgs.prompt) {
-    throw new Error("Missing prompt in modelFunctionCallArgs");
-  }
 
   console.log(`fileDataParts: ${util.inspect(modelFunctionCallArgs.fileDataParts, false, null)}`);
-  let parts = new Array<Part>();
-  parts = parts.concat(modelFunctionCallArgs.fileDataParts);
-  
-  // Add the system instruction to the prompt because it seems to work better that way.
-  const prompt = `${systemInstruction}\n${modelFunctionCallArgs.prompt}`;
-  const textPart: TextPart = {
-    text: prompt
-  };
-  parts.unshift(textPart);
-  const content: Content = {
-    parts: parts,
-    role: 'user'
-  };
-  const generateContentRequest: GenerateContentRequest = {
-    contents: [content]
-  };
+
+  // Search backwards through the content until we find the most recent user part, which should be the prompt.
+  // Then add the file data parts to that.
+  const lastUserContent = generateContentRequest.contents.findLast(content => content.role == 'user');
+  if(!lastUserContent) {
+    throw new Error(`Could not find user content in generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
+  }
+  lastUserContent.parts = lastUserContent.parts.concat(modelFunctionCallArgs.fileDataParts);
+
   console.log(`callHandleFilesModel generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
   const contentResult = await handleFilesModel.generateContent(generateContentRequest);
   console.log(`callHandleFilesModel contentResult: ${util.inspect(contentResult, false, null)}`);
   return contentResult;
 }
 
-async function callCustomSearchGroundedModel(modelFunctionCallArgs: ModelFunctionCallArgs) {
+async function callCustomSearchGroundedModel(modelFunctionCallArgs: ModelFunctionCallArgs, generateContentRequest: GenerateContentRequest) {
   const systemInstruction = `
     You are a helpful assistant who specialises in searching through internal company documents.
     Only provide answers from the documents.
@@ -181,13 +182,13 @@ async function callCustomSearchGroundedModel(modelFunctionCallArgs: ModelFunctio
   const model = await getSecretValue('AIBot', 'customSearchGroundedModel');
   const customSearchGroundedModel = await _getGenerativeModel(model, tools, systemInstruction, 0);
   
-  // For some reason the system instructions don't seem to work as well as the prompt so add them to the prompt too.
-  const prompt = `${systemInstruction}\n${modelFunctionCallArgs.prompt}`;
-  const content = await customSearchGroundedModel.generateContent(prompt);
+  generateContentRequest.systemInstruction = systemInstruction;
+
+  const content = await customSearchGroundedModel.generateContent(generateContentRequest);
   return content;
 }
 
-async function callGoogleSearchGroundedModel(modelFunctionCallArgs: ModelFunctionCallArgs) {   
+async function callGoogleSearchGroundedModel(modelFunctionCallArgs: ModelFunctionCallArgs, generateContentRequest: GenerateContentRequest) {   
   const systemInstruction = `
     You are a helpful assistant with access to Google search.
     You must cite your references when answering.
@@ -195,11 +196,12 @@ async function callGoogleSearchGroundedModel(modelFunctionCallArgs: ModelFunctio
     If you don't understand the request then ask clarifying questions.
   `;
   const googleSearchGroundedModel = await getGoogleGroundedGenerativeModel(systemInstruction, 0);
-  const content = await googleSearchGroundedModel.generateContent(modelFunctionCallArgs.prompt);
+  generateContentRequest.systemInstruction = systemInstruction;
+  const content = await googleSearchGroundedModel.generateContent(generateContentRequest);
   return content;
 }
 
-async function callSlackSummaryModel(modelFunctionCallArgs: ModelFunctionCallArgs) {
+async function callSlackSummaryModel(modelFunctionCallArgs: ModelFunctionCallArgs, generateContentRequest: GenerateContentRequest) {
   const systemInstruction = `
     You are a helpful assistant who can summarise messages from Slack.
     If you can't create a summary you must respond "I don't know".
@@ -209,7 +211,7 @@ async function callSlackSummaryModel(modelFunctionCallArgs: ModelFunctionCallArg
   const model = await getSecretValue('AIBot', 'slackSummaryModel');
   const slackSummaryModel = await _getGenerativeModel(model, tools, systemInstruction, 0);
 
-  const content = await handleSlackSummary(slackSummaryModel, modelFunctionCallArgs);
+  const content = await handleSlackSummary(slackSummaryModel, modelFunctionCallArgs, generateContentRequest);
   return content;
 }
 

@@ -78,9 +78,15 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     parts.unshift(textPart);
 
     // Load the history if we're in a thread so the model remembers its context.
-    const startChatParams: StartChatParams = { };
-    let history = await getHistoryFunction(event.user_id, threadTs);
-    startChatParams.history = history;
+    let history = await getHistoryFunction(event.user_id, threadTs) ?? [];
+    // Where we have Content with no parts add a dummy part.
+    // MIssing content parts causes us and the Vertex AI API problems.
+    // There really can be no parts to the content, despite the type system
+    // saying they are mandatory.
+    // This happens if we have hit a safety stop earlier in the conversation.
+    // The content just contains:
+    // { role: 'model' }
+    history = fixMissingContentParts(history);
     console.log(`history: ${util.inspect(history, false, null)}`);
     
     // Add the file parts if the user has supplied them in this message.
@@ -97,7 +103,12 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
       // Give an instruction to the supervisor agent that it should chose the files agent.
       // We'll add the file parts below when the supervisor agent asks us to call the files agent.
       const fileUrisTextPart: TextPart = {
-        text: `This request contains files.  Make sure you use the agent that can process files.`
+        text: `
+          This request contains files.
+          Make sure you call the file processing agent.
+          The agent will be provided with the file directly when the function is called.
+          Pass any requests directly to the file processing agent.
+        `
       };
       parts.push(fileUrisTextPart);
     }
@@ -106,7 +117,8 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     // Unfortunately JS Sets don't let you provide your own equality function so use a string set.
     const fileUris = new Set<string>(fileDataParts.map((fileDataPart) => fileDataPart.fileData?.fileUri ?? ""));
     console.log(`fileDataParts before history: ${util.inspect(fileDataParts, false, null)}`);
-    for(const content of history ?? []) {
+    for(const content of history) {
+      console.log(`content: ${util.inspect(content, false, null)}`);
       for(const part of content.parts) {
         if(part.fileData) {
           if(!fileUris.has(part.fileData.fileUri)) {
@@ -130,11 +142,13 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
       // This time just give a hint, because all though the history of the chat contains files,
       // this specific request might be for someone unrelated to the files.
       const fileUrisTextPart: TextPart = {
-        text: `This request contains files.`
+        text: `\nThis request contains files.`
       };
       parts.push(fileUrisTextPart);
     }
 
+    const startChatParams: StartChatParams = { };
+    startChatParams.history = history;
     const chatSession = generativeModel.startChat(startChatParams);
 
     let response: string | undefined = undefined;
@@ -144,7 +158,17 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
 
       const contentResponse = generateContentResult.response;
       console.log(`contentResponse: ${util.inspect(contentResponse, false, null, true)}`);
-      response = contentResponse.candidates?.[0].content.parts[0].text;
+      
+      // No response parts almost certainly means we've hit a safety stop.
+      if(!generateContentResult.response.candidates?.[0].content.parts) {
+        response = `{
+          "answer": "I can't answer that because ${generateContentResult.response.candidates?.[0].finishReason}"
+        }`;
+        console.warn(`generateContentResult had no content parts: ${util.inspect(generateContentResult, false, null)}`);
+      }
+      else {
+        response = contentResponse.candidates?.[0].content.parts[0].text;
+      }
 
       // Response and function calls should be mutually exclusive, but check anyway.
       // We'll only call the functions if we don't have a response.
@@ -164,12 +188,14 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
         };
         parts = new Array<Part>();
         for (const functionCall of functionCalls) {
-          const functionResponsePart = await callModelFunction(functionCall, extraArgs);
+          const functionResponsePart = await callModelFunction(functionCall, history, extraArgs);
           parts.push(functionResponsePart);
         }
       }
     }
     history = await chatSession.getHistory();
+    // See above for why we add the blank content.
+    history = fixMissingContentParts(history);
     await putHistoryFunction(event.user_id, threadTs, history);
     const formattedResponse = formatResponse(response);
     const blocks = generateResponseBlocks(formattedResponse);
@@ -271,3 +297,16 @@ const supportedMimeTypes = [
   'text/rtf',
   'application/pdf',
 ];
+
+function fixMissingContentParts(history: Content[]) {
+  return history.map(content => {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    if (!content.parts) {
+      content.parts = [{
+        // This is probably true but doesn't really matter if not.
+        text: "Stopped due to SAFETY"
+      }];
+    }
+    return content;
+  });
+}

@@ -1,8 +1,12 @@
-import { GenerativeModel, GenerativeModelPreview } from '@google-cloud/vertexai';
+import { GenerateContentRequest, GenerativeModel, GenerativeModelPreview, TextPart } from '@google-cloud/vertexai';
+import util from 'util';
 import { ModelFunctionCallArgs } from './handleAICommon';
 import { getChannelMessages, getThreadMessages } from './slackAPI';
 
-export async function handleSlackSummary(slackSummaryModel: GenerativeModel | GenerativeModelPreview, modelFunctionCallArgs: ModelFunctionCallArgs) {
+export async function handleSlackSummary(slackSummaryModel: GenerativeModel | GenerativeModelPreview,
+  modelFunctionCallArgs: ModelFunctionCallArgs,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  generateContentRequest: GenerateContentRequest) {
   if(!modelFunctionCallArgs.channelId) {
     throw new Error("Missing channelId parameter");
   }
@@ -15,14 +19,14 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
 
   // If the event has a thread_ts field we'll summarise the thread.
   // Else we'll summarise the channel.
-  let request = "";
+  let prompt = "";
   if(modelFunctionCallArgs.threadTs && modelFunctionCallArgs.channelId) {
     const messages = await getThreadMessages(modelFunctionCallArgs.channelId, modelFunctionCallArgs.threadTs);
     const texts: string[] = [];
     for(const message of messages) {
       texts.push(`${message.date ? message.date.toISOString() : "unknown"} - ${message.user}: ${message.text}`);
     }
-    request = `This is a collection of messages in a thread in a Slack channel in the format "date - user: message".
+    prompt = `This is a collection of messages in a thread in a Slack channel in the format "date - user: message".
         When you see a string like <@XYZ123> that is a user id.
         Refer to the user by that user id in your answer.  Keep the < and the > characters around the user id.
         Try to include dates in your answer.
@@ -39,7 +43,7 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
     for(const message of messages) {
       texts.push(`${message.date ? message.date.toISOString() : "unknown"} - ${message.user}: ${message.text}`);
     }
-    request = `This is a collection of messages in a Slack channel in the format "date - user: message".
+    prompt = `This is a collection of messages in a Slack channel in the format "date - user: message".
         When you see a string like <@XYZ123> that is a user id.
         Refer to the user by that user id in your answer.  Keep the < and the > characters around the user id.
         Try to include dates in your answer.
@@ -49,5 +53,17 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
   else {
     throw new Error("Need channel or thread_ts field in event");
   }
-  return await slackSummaryModel.generateContent(request);
+
+  // Search backwards through the content until we find the most recent user part, which should be the original prompt.
+  // Then add a text part to that with all the detail above.
+  const lastUserContent = generateContentRequest.contents.findLast(content => content.role == 'user');
+  if(!lastUserContent) {
+    throw new Error(`Could not find user content in generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
+  }
+  const promptPart: TextPart = {
+    text: prompt
+  };
+  lastUserContent.parts.push(promptPart);
+  console.log(`handleSlackSummary generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
+  return await slackSummaryModel.generateContent(generateContentRequest);
 }
