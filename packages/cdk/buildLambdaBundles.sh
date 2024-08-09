@@ -22,6 +22,7 @@ for lambda in ${lambdas}
 do
   echo "Bundling ${lambda}..."
   # The enclosing in () means "execute in subshell", so this script doesn't change directory itself
+  # Get some weird errors from Axios re "Expected signal to be an instanceof AbortSignal" without --keep-names
   ( cd ../lambda-src && \
     esbuild ./ts-src/${lambda}.ts \
     --bundle \
@@ -32,6 +33,7 @@ do
     --target=node18 \
     --tree-shaking=true \
     --minify \
+    --keep-names \
     --outdir=./dist/${lambda}
   )
 done

@@ -1,5 +1,6 @@
 import { AppHomeOpenedEvent, EnvelopedEvent, GenericMessageEvent } from '@slack/bolt';
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
+import util from 'util';
 import { getSecretValue, invokeLambda } from './awsAPI';
 import { PromptCommandPayload, addReaction, getBotId } from './slackAPI';
 import { verifySlackRequest } from './verifySlackRequest';
@@ -57,6 +58,8 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
         console.debug(`Ignoring message from self ${myId.bot_id} or ${myId.bot_user_id}`);
         return result;
       }
+
+      console.log(`handleEventsEndpoint genericMessageEvent: ${util.inspect(genericMessageEvent, false, null)}`);
 
       // We need to respond within 3000ms so add an eyes emoji to the user's message to show we are looking it.
       // Then call the AIBot-handlePromptCommandLambda asynchronously.

@@ -3,6 +3,7 @@ dotenv.config();
 
 import { StackProps } from 'aws-cdk-lib';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 
 /**
@@ -23,6 +24,8 @@ export function getEnv(name: string, optional = false): string | undefined {
 }
 
 export type LambdaStackProps = {
+  readonly vpc: ec2.Vpc;
+  readonly securityGroups: Map<string, ec2.SecurityGroup>;
   readonly historyTable: dynamodb.Table;
   readonly aiBotSecret: secretsmanager.ISecret;
   readonly lambdaVersion: string;

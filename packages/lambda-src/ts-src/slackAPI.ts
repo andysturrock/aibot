@@ -1,5 +1,16 @@
-import { Block, HomeView, KnownBlock } from "@slack/bolt";
-import { BotsInfoArguments, ChatDeleteArguments, ConversationsHistoryArguments, ConversationsRepliesArguments, LogLevel, ReactionsAddArguments, ReactionsRemoveArguments, ViewsPublishArguments, WebClient } from "@slack/web-api";
+import { Block, GenericMessageEvent, HomeView, KnownBlock } from "@slack/bolt";
+import {
+  BotsInfoArguments,
+  ChatDeleteArguments,
+  ConversationsHistoryArguments,
+  ConversationsRepliesArguments,
+  LogLevel,
+  ReactionsAddArguments,
+  ReactionsRemoveArguments,
+  UsersInfoArguments,
+  ViewsPublishArguments,
+  WebClient
+} from "@slack/web-api";
 import axios from 'axios';
 import { getSecretValue } from './awsAPI';
 
@@ -223,6 +234,15 @@ export async function getChannelMessages(channelId: string, oldest? : string | u
   }
 }
 
+export async function getUserRealName(userId: string) {
+  const client = await createClient();
+  const usersInfoArguments: UsersInfoArguments = {
+    user: userId
+  };
+  const usersInfoResponse = await client.users.info(usersInfoArguments);
+  return usersInfoResponse.user?.real_name;
+}
+
 export type PromptCommandPayload = {
   response_url?: string,
   channel?: string,
@@ -233,8 +253,16 @@ export type PromptCommandPayload = {
   thread_ts?: string,
   bot_id: string,
   bot_user_id: string,
-  team_id: string
-};
+  team_id: string,
+} & GenericMessageEvent;
+
+// The File type is not exported from node_modules/@slack/bolt/dist/types/events/message-events.d.ts
+// So use some Typescript type trickery here to extract it and export it.
+type ArrayElement<ArrayType extends readonly unknown[]> = 
+  ArrayType extends readonly (infer ElementType)[] ? ElementType : never;
+type FilesArray = NonNullable<GenericMessageEvent['files']>;
+export type File = ArrayElement<FilesArray>;
+
 
 export type Action = {
   action_id: string,

@@ -1,6 +1,7 @@
 import { Duration, Stack } from 'aws-cdk-lib';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
@@ -17,6 +18,11 @@ export class LambdaStack extends Stack {
     // so replace the dots with underscores first.
     const lambdaVersionIdForURL = props.lambdaVersion.replace(/\./g, '_');
 
+    const noInboundAllOutboundSecurityGroup = props.securityGroups.get("noInboundAllOutboundSecurityGroup");
+    if(!noInboundAllOutboundSecurityGroup) {
+      throw new Error("Cannot find security group noInboundAllOutboundSecurityGroup");
+    }
+
     // Common props for all lambdas, so define them once here.
     const allLambdaProps = {
       environment: {
@@ -25,6 +31,11 @@ export class LambdaStack extends Stack {
       logRetention: logs.RetentionDays.THREE_DAYS,
       runtime: lambda.Runtime.NODEJS_20_X,
       timeout: Duration.seconds(30),
+      vpc: props.vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
+      securityGroups: [noInboundAllOutboundSecurityGroup]
     };
 
     // The lambda for handling the callback for the Slack install

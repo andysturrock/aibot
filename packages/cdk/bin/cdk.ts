@@ -4,6 +4,7 @@ import 'source-map-support/register';
 import { getEnv } from '../lib/common';
 import { DynamoDBStack } from '../lib/dynamodb-stack';
 import { LambdaStack } from '../lib/lambda-stack';
+import { NetworkStack } from '../lib/network-stack';
 import { SecretsManagerStack } from '../lib/secretsmanager-stack';
 
 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -28,8 +29,14 @@ const secretsManagerStack = new SecretsManagerStack(app, 'AIBotSecretsManagerSta
   customDomainName,
 });
 
+const networkStack = new NetworkStack(app, 'AIBotNetworkStack', {
+  env: {region}
+});
+
 new LambdaStack(app, 'AIBotLambdaStack', {
   env: {region},
+  vpc: networkStack.vpc,
+  securityGroups: networkStack.securityGroups,
   historyTable: dynamoDBStack.historyTable,
   aiBotSecret: secretsManagerStack.aiBotSecret,
   lambdaVersion,
