@@ -1,17 +1,24 @@
+import { Storage } from '@google-cloud/storage';
 import {
   Content,
+  FileData,
+  FileDataPart,
   FunctionCall,
   Part,
   StartChatParams,
   TextPart
 } from '@google-cloud/vertexai';
+import axios, { AxiosRequestConfig } from 'axios';
+import path from 'node:path';
+import stream from 'node:stream/promises';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
-import { callModelFunction, generateResponseBlocks, getGenerativeModel, removeReaction } from './handleAICommon';
+import { callModelFunction, formatResponse, generateResponseBlocks, getGenerativeModel, ModelFunctionCallArgs, removeReaction } from './handleAICommon';
 import { getHistory, putHistory } from './historyTable';
-import { PromptCommandPayload, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage } from './slackAPI';
+import { File, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage, PromptCommandPayload } from './slackAPI';
 
 export async function handlePromptCommand(event: PromptCommandPayload) {
+  console.log(`handlePromptCommand event ${util.inspect(event, false, null)}`);
   await _handlePromptCommand(event, getHistory, putHistory);
 }
 
@@ -21,6 +28,7 @@ type PutHistoryFunction = (slackId: string, threadTs: string, history: Content[]
 export async function _handlePromptCommand(event: PromptCommandPayload,  getHistoryFunction: GetHistoryFunction, putHistoryFunction: PutHistoryFunction): Promise<void> {
   const responseUrl = event.response_url;
   const channelId = event.channel;
+
   try {
     // If we are in a thread we'll respond there.  If not then we'll start a thread for the response.
     const threadTs = event.thread_ts ?? event.event_ts;
@@ -33,58 +41,146 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
 
     const botName = await getSecretValue('AIBot', 'botName');
     const generativeModel = await getGenerativeModel();
+
+    // If there are any files included in the message, move them to GCP storage.
+    const slackBotToken = await getSecretValue('AIBot', 'slackBotToken');
+    const documentBucketName = await getSecretValue('AIBot', 'documentBucketName');
+    const handleFilesModel = await getSecretValue('AIBot', 'handleFilesModel');
+    const fileDataArray: FileData[]  = [];
+    if(event.files) {
+      for(const file of event.files) {
+        try{
+          if(!isSupportedMimeType(file.mimetype)) {
+            await postEphmeralErrorMessage(channelId, event.user_id, `${botName} using ${handleFilesModel} does not support file type ${file.mimetype}`);  
+          }
+          else {
+            const gsUri = await transferFileToGCS(slackBotToken, documentBucketName, event.user_id, file);
+            const fileData: FileData = {
+              mimeType: file.mimetype,
+              fileUri: gsUri
+            };
+            fileDataArray.push(fileData);
+          }
+        }
+        catch(error) {
+          console.error(util.inspect(error, false, null));
+          await postEphmeralErrorMessage(channelId, event.user_id, `Failed to upload file ${file.title} to Gemini`);
+        }
+      }
+    }
     
+    // Create the text part with the prompt
+    let parts = new Array<Part>();
+    const prompt = event.text;
+    const textPart: TextPart = {
+      text: prompt
+    };
+    parts.unshift(textPart);
+
+    // Load the history if we're in a thread so the model remembers its context.
     const startChatParams: StartChatParams = { };
     let history = await getHistoryFunction(event.user_id, threadTs);
     startChatParams.history = history;
+    console.log(`history: ${util.inspect(history, false, null)}`);
+    
+    // Add the file parts if the user has supplied them in this message.
+    const fileDataParts = new Array<Part>();
+    for(const fileData of fileDataArray) {
+      const fileDataPart: FileDataPart = {
+        fileData
+      };
+      fileDataParts.push(fileDataPart);
+    }
+    if(fileDataParts.length > 0) {
+      // Currently function calls only work with text prompts in Gemini.
+      // So rather than adding the file parts to the top level prompt we'll have to use a specific agent for working with files.
+      // Give an instruction to the supervisor agent that it should chose the files agent.
+      // We'll add the file parts below when the supervisor agent asks us to call the files agent.
+      const fileUrisTextPart: TextPart = {
+        text: `This request contains files.  Make sure you use the agent that can process files.`
+      };
+      parts.push(fileUrisTextPart);
+    }
+
+    // Add any file parts from the history.  We'll keep track of what we've added so we don't get duplicates.
+    // Unfortunately JS Sets don't let you provide your own equality function so use a string set.
+    const fileUris = new Set<string>(fileDataParts.map((fileDataPart) => fileDataPart.fileData?.fileUri ?? ""));
+    console.log(`fileDataParts before history: ${util.inspect(fileDataParts, false, null)}`);
+    for(const content of history ?? []) {
+      for(const part of content.parts) {
+        if(part.fileData) {
+          if(!fileUris.has(part.fileData.fileUri)) {
+            fileUris.add(part.fileData.fileUri);
+            fileDataParts.push(part);
+          }
+        }
+        // File parts show up in the function call arguments because we add them below.
+        const modelFunctionCallArgs = part.functionCall?.args as ModelFunctionCallArgs | undefined;
+        for(const functionCallFileDataPart of modelFunctionCallArgs?.fileDataParts ?? []) {
+          if(functionCallFileDataPart.fileData && !fileUris.has(functionCallFileDataPart.fileData.fileUri)) {
+            fileUris.add(functionCallFileDataPart.fileData.fileUri);
+            fileDataParts.push(functionCallFileDataPart);
+          }
+        }
+      }
+    }
+    console.log(`fileDataParts after history: ${util.inspect(fileDataParts, false, null)}`);
+    if(fileDataParts.length > 0) {
+      // See above for why we need to do this.
+      // This time just give a hint, because all though the history of the chat contains files,
+      // this specific request might be for someone unrelated to the files.
+      const fileUrisTextPart: TextPart = {
+        text: `This request contains files.`
+      };
+      parts.push(fileUrisTextPart);
+    }
+
     const chatSession = generativeModel.startChat(startChatParams);
 
-    const textPart: TextPart = {
-      text: event.text
-    };
-    let array = new Array<Part>();
-    array.push(textPart);
     let response: string | undefined = undefined;
     while(response == undefined) {
-      console.log(`array input to chat: ${util.inspect(array, false, null, true)}`);
-      const generateContentResult = await chatSession.sendMessage(array);
+      console.log(`Parts array input to chat: ${util.inspect(parts, false, null, true)}`);
+      const generateContentResult = await chatSession.sendMessage(parts);
 
       const contentResponse = generateContentResult.response;
       console.log(`contentResponse: ${util.inspect(contentResponse, false, null, true)}`);
       response = contentResponse.candidates?.[0].content.parts[0].text;
 
-      // reply and function calls should be mutually exclusive, but if we have a reply
-      // then use that rather than call the functions.
+      // Response and function calls should be mutually exclusive, but check anyway.
+      // We'll only call the functions if we don't have a response.
       if(!response) {
         const functionCalls: FunctionCall[] = [];
+        // Gather all the function calls into one array.
         contentResponse.candidates?.[0].content.parts.reduce((functionCalls, part) => {
           if(part.functionCall) {
             functionCalls.push(part.functionCall);
           }
           return functionCalls;
         }, functionCalls);
-        console.log(`functionCalls: ${util.inspect(functionCalls, false, null, true)}`);
-        array = new Array<Part>();
+        const extraArgs = {
+          channelId,
+          threadTs: event.thread_ts,
+          fileDataParts
+        };
+        parts = new Array<Part>();
         for (const functionCall of functionCalls) {
-          console.log(`***** functionCall: ${util.inspect(functionCall, false, null, true)}`);
-          const extraArgs = {
-            channelId,
-            threadTs: event.thread_ts
-          };
           const functionResponsePart = await callModelFunction(functionCall, extraArgs);
-          console.log(`functionResponsePart: ${util.inspect(functionResponsePart, false, null, true)}`);
-          array.push(functionResponsePart);
+          parts.push(functionResponsePart);
         }
       }
     }
     history = await chatSession.getHistory();
     await putHistoryFunction(event.user_id, threadTs, history);
-    const blocks = generateResponseBlocks(response);
+    const formattedResponse = formatResponse(response);
+    const blocks = generateResponseBlocks(formattedResponse);
         
     if(channelId && event.event_ts) {
       // Remove the eyes emoji from the original message so we don't have eyes littered everywhere.
       await removeReaction(channelId, event.event_ts);
-      await postMessage(channelId, `${botName} response`, blocks, event.event_ts);
+      // Slack recommends truncating the text field to 4000 chars.
+      // See https://api.slack.com/methods/chat.postMessage#truncating
+      const text = formattedResponse.answer.slice(0, 3997) + "...";
+      await postMessage(channelId, text, blocks, event.event_ts);
     }
     else {
       console.warn(`Could not post response ${util.inspect(blocks, false, null)}`);
@@ -101,3 +197,77 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     }
   }
 }
+
+async function transferFileToGCS(slackBotToken: string, documentBucketName: string, userId: string, file: File) {
+  if(!file.url_private_download) {
+    throw new Error("Missing url_private_download field");
+  }
+  const axiosRequestConfig: AxiosRequestConfig = {
+    responseType: 'stream',
+    headers: {
+      Authorization: `Bearer ${slackBotToken}`,
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/5"
+    },
+  };
+  const axiosResponse = await axios.get(file.url_private_download, axiosRequestConfig);
+  // Extract the filename from the URL rather than use the name.
+  // Slack will have transformed any special chars etc.
+  const filename = path.basename(file.url_private_download);
+  
+  // Stream the file directly from Slack to GCS (ie without writing to the filesystem here).
+  const storage = new Storage();
+  const dateFolderName = new Date().toISOString().substring(0, 10);
+  const gcsFilename = `${dateFolderName}/${userId}/${filename}`;
+  const documentBucket = storage.bucket(documentBucketName);
+  const bucketFile = documentBucket.file(gcsFilename);
+  const bucketFileStream = bucketFile.createWriteStream();
+  
+  await stream.pipeline(axiosResponse.data, bucketFileStream);
+  console.log(`Transferred ${file.url_private_download} to ${documentBucketName}->${gcsFilename}`);
+  return `gs://${documentBucketName}/${gcsFilename}`;
+}
+
+function isSupportedMimeType(mimetype: string) {
+  const supported = supportedMimeTypes.find((supportedMimeType) => {
+    return supportedMimeType.toUpperCase() == mimetype.toUpperCase();
+  });
+  return supported != undefined;
+}
+const supportedMimeTypes = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+  'video/mp4',
+  'video/mpeg',
+  'video/mov',
+  'video/avi',
+  'video/x-flv',
+  'video/mpg',
+  'video/webm',
+  'video/wmv',
+  'video/3gpp',
+  'audio/wav',
+  'audio/mp3',
+  'audio/aiff',
+  'audio/aac',
+  'audio/ogg',
+  'audio/flac',
+  'text/plain',
+  'text/html',
+  'text/css',
+  'text/javascript',
+  'application/x-javascript',
+  'text/x-typescript',
+  'application/x-typescript',
+  'text/csv',
+  'text/markdown',
+  'text/x-python',
+  'application/x-python-code',
+  'application/json',
+  'text/xml',
+  'application/rtf',
+  'text/rtf',
+  'application/pdf',
+];
