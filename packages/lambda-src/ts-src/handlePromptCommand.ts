@@ -116,9 +116,7 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     // Add any file parts from the history.  We'll keep track of what we've added so we don't get duplicates.
     // Unfortunately JS Sets don't let you provide your own equality function so use a string set.
     const fileUris = new Set<string>(fileDataParts.map((fileDataPart) => fileDataPart.fileData?.fileUri ?? ""));
-    console.log(`fileDataParts before history: ${util.inspect(fileDataParts, false, null)}`);
     for(const content of history) {
-      console.log(`content: ${util.inspect(content, false, null)}`);
       for(const part of content.parts) {
         if(part.fileData) {
           if(!fileUris.has(part.fileData.fileUri)) {
@@ -136,7 +134,6 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
         }
       }
     }
-    console.log(`fileDataParts after history: ${util.inspect(fileDataParts, false, null)}`);
     if(fileDataParts.length > 0) {
       // See above for why we need to do this.
       // This time just give a hint, because all though the history of the chat contains files,
@@ -249,7 +246,6 @@ async function transferFileToGCS(slackBotToken: string, documentBucketName: stri
   const bucketFileStream = bucketFile.createWriteStream();
   
   await stream.pipeline(axiosResponse.data, bucketFileStream);
-  console.log(`Transferred ${file.url_private_download} to ${documentBucketName}->${gcsFilename}`);
   return `gs://${documentBucketName}/${gcsFilename}`;
 }
 
