@@ -13,7 +13,7 @@ import path from 'node:path';
 import stream from 'node:stream/promises';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
-import { callModelFunction, generateResponseBlocks, getGenerativeModel, ModelFunctionCallArgs, removeReaction } from './handleAICommon';
+import { callModelFunction, formatResponse, generateResponseBlocks, getGenerativeModel, ModelFunctionCallArgs, removeReaction } from './handleAICommon';
 import { getHistory, putHistory } from './historyTable';
 import { File, postEphmeralErrorMessage, postErrorMessageToResponseUrl, postMessage, PromptCommandPayload } from './slackAPI';
 
@@ -45,13 +45,13 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     // If there are any files included in the message, move them to GCP storage.
     const slackBotToken = await getSecretValue('AIBot', 'slackBotToken');
     const documentBucketName = await getSecretValue('AIBot', 'documentBucketName');
-    const chatModel = await getSecretValue('AIBot', 'chatModel');
+    const handleFilesModel = await getSecretValue('AIBot', 'handleFilesModel');
     const fileDataArray: FileData[]  = [];
     if(event.files) {
       for(const file of event.files) {
         try{
           if(!isSupportedMimeType(file.mimetype)) {
-            await postEphmeralErrorMessage(channelId, event.user_id, `${botName} using ${chatModel} does not support file type ${file.mimetype}`);  
+            await postEphmeralErrorMessage(channelId, event.user_id, `${botName} using ${handleFilesModel} does not support file type ${file.mimetype}`);  
           }
           else {
             const gsUri = await transferFileToGCS(slackBotToken, documentBucketName, event.user_id, file);
@@ -94,10 +94,10 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     if(fileDataParts.length > 0) {
       // Currently function calls only work with text prompts in Gemini.
       // So rather than adding the file parts to the top level prompt we'll have to use a specific agent for working with files.
-      // Give an instruction to the supervisor agent to chose that agent.
+      // Give an instruction to the supervisor agent that it should chose the files agent.
       // We'll add the file parts below when the supervisor agent asks us to call the files agent.
       const fileUrisTextPart: TextPart = {
-        text: `This question is about one or more files, so use an agent which can work with files.`
+        text: `This request contains files.  Make sure you use the agent that can process files.`
       };
       parts.push(fileUrisTextPart);
     }
@@ -125,6 +125,15 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
       }
     }
     console.log(`fileDataParts after history: ${util.inspect(fileDataParts, false, null)}`);
+    if(fileDataParts.length > 0) {
+      // See above for why we need to do this.
+      // This time just give a hint, because all though the history of the chat contains files,
+      // this specific request might be for someone unrelated to the files.
+      const fileUrisTextPart: TextPart = {
+        text: `This request contains files.`
+      };
+      parts.push(fileUrisTextPart);
+    }
 
     const chatSession = generativeModel.startChat(startChatParams);
 
@@ -162,12 +171,16 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     }
     history = await chatSession.getHistory();
     await putHistoryFunction(event.user_id, threadTs, history);
-    const blocks = generateResponseBlocks(response);
+    const formattedResponse = formatResponse(response);
+    const blocks = generateResponseBlocks(formattedResponse);
         
     if(channelId && event.event_ts) {
       // Remove the eyes emoji from the original message so we don't have eyes littered everywhere.
       await removeReaction(channelId, event.event_ts);
-      await postMessage(channelId, `${botName} response`, blocks, event.event_ts);
+      // Slack recommends truncating the text field to 4000 chars.
+      // See https://api.slack.com/methods/chat.postMessage#truncating
+      const text = formattedResponse.answer.slice(0, 3997) + "...";
+      await postMessage(channelId, text, blocks, event.event_ts);
     }
     else {
       console.warn(`Could not post response ${util.inspect(blocks, false, null)}`);
