@@ -5,7 +5,6 @@ import { getChannelMessages, getThreadMessages } from './slackAPI';
 
 export async function handleSlackSummary(slackSummaryModel: GenerativeModel | GenerativeModelPreview,
   modelFunctionCallArgs: ModelFunctionCallArgs,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   generateContentRequest: GenerateContentRequest) {
   if(!modelFunctionCallArgs.channelId) {
     throw new Error("Missing channelId parameter");

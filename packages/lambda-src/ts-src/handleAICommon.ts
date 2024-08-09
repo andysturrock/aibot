@@ -321,12 +321,16 @@ export async function getGenerativeModel() {
     parameters: {
       type: FunctionDeclarationSchemaType.OBJECT,
       properties: {
+        prompt: {
+          type: FunctionDeclarationSchemaType.STRING,
+          description: "The prompt for the model"
+        },
         days: {
           type: FunctionDeclarationSchemaType.INTEGER,
           description: "The number of days of Slack messages to summarise"
         }
       },
-      required: ['days'],
+      required: ['prompt', 'days'],
     },
   };
   functionDeclarations.push(callSlackSummaryModel);
