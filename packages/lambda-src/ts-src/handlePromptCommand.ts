@@ -178,6 +178,13 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
           }
           return functionCalls;
         }, functionCalls);
+        // TODO - this isn't quite right because we're sending a threadTs even though the
+        // question might be about the main channel.  Eg if in a thread the user asks
+        // "summarise the last 7 days of this channel" they are only going to get the summary
+        // of the thread.
+        // We could have two agents, one for summarising channels and one for summarising threads.
+        // Or maybe do some prompt engineering around passing threadTs in the model args only if the
+        // request is specifically about threads.
         const extraArgs = {
           channelId,
           threadTs: event.thread_ts,
