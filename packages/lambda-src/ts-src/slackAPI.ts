@@ -2,6 +2,7 @@ import { Block, HomeView, KnownBlock } from "@slack/bolt";
 import { BotsInfoArguments, ChatDeleteArguments, ConversationsHistoryArguments, ConversationsRepliesArguments, LogLevel, ReactionsAddArguments, ReactionsRemoveArguments, ViewsPublishArguments, WebClient } from "@slack/web-api";
 import axios from 'axios';
 import { getSecretValue } from './awsAPI';
+import { getAccessToken } from "./tokensTable";
 
 async function createClient() {
   const slackBotToken = await getSecretValue('AIBot', 'slackBotToken');
@@ -11,8 +12,8 @@ async function createClient() {
   });
 }
 
-async function createUserClient() {
-  const slackBotUserToken = await getSecretValue('AIBot', 'slackBotUserToken');
+async function createUserClient(slackId: string) {
+  const slackBotUserToken = await getAccessToken(slackId);
 
   return new WebClient(slackBotUserToken, {
     logLevel: LogLevel.INFO
@@ -159,9 +160,9 @@ function tsToDate(ts: string) {
   return ts ? new Date(Number.parseInt(seconds) * 1000) : undefined;
 }
 
-export async function getThreadMessages(channelId: string, threadTs: string) {
+export async function getThreadMessages(slackId: string, channelId: string, threadTs: string) {
   // Note requires user token. See https://api.slack.com/methods/conversations.replies.
-  const client = await createUserClient();
+  const client = await createUserClient(slackId);
   const conversationsRepliesArguments: ConversationsRepliesArguments = {
     channel: channelId,
     ts: threadTs
@@ -180,7 +181,7 @@ export async function getThreadMessages(channelId: string, threadTs: string) {
   return messages;
 }
 
-export async function getChannelMessages(channelId: string, oldest? : string | undefined, includeThreads = true) {
+export async function getChannelMessages(slackId: string, channelId: string, oldest? : string | undefined, includeThreads = true) {
   const client = await createClient();
   const conversationsHistoryArguments: ConversationsHistoryArguments = {
     channel: channelId,
@@ -193,7 +194,7 @@ export async function getChannelMessages(channelId: string, oldest? : string | u
     const messages: Message[] = [];
     for(const message of history.messages ?? []) {
       if(message.reply_count && message.reply_count > 0 && message.ts) {
-        const threadMessages = await getThreadMessages(channelId, message.ts);
+        const threadMessages = await getThreadMessages(slackId, channelId, message.ts);
         // Reverse the order of the thread messages because they are returned oldest first
         // whereas channel messages returned newest first.
         messages.push(...threadMessages.reverse());

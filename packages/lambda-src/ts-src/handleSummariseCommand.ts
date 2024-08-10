@@ -17,7 +17,7 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
     // Else we'll summarise the channel.
     let request = "";
     if(event.thread_ts && event.channel) {
-      const messages = await getThreadMessages(event.channel, event.thread_ts);
+      const messages = await getThreadMessages(event.user_id, event.channel, event.thread_ts);
       const texts: string[] = [];
       for(const message of messages) {
         texts.push(`${message.date ? message.date.toISOString() : "unknown"} - ${message.user}: ${message.text}`);
@@ -33,7 +33,7 @@ export async function handleSummariseCommand(event: PromptCommandPayload): Promi
     else if(event.channel) {
       const thirtyDaysAgo = new Date(new Date().getTime() - (30 * 24 * 60 * 60 * 1000));
       // Slack's timestamps are in seconds rather than ms.
-      const messages = await getChannelMessages(event.channel, `${thirtyDaysAgo.getTime() / 1000}`, true);
+      const messages = await getChannelMessages(event.user_id, event.channel, `${thirtyDaysAgo.getTime() / 1000}`, true);
       // Messages are returned most recent at the start of the array, so swap that round.
       messages.reverse();
       const texts: string[] = [];
