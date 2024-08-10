@@ -188,7 +188,8 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
         const extraArgs = {
           channelId,
           threadTs: event.thread_ts,
-          fileDataParts
+          fileDataParts,
+          slackId: event.user_id
         };
         parts = new Array<Part>();
         for (const functionCall of functionCalls) {

@@ -6,6 +6,9 @@ import { getChannelMessages, getThreadMessages } from './slackAPI';
 export async function handleSlackSummary(slackSummaryModel: GenerativeModel | GenerativeModelPreview,
   modelFunctionCallArgs: ModelFunctionCallArgs,
   generateContentRequest: GenerateContentRequest) {
+  if(!modelFunctionCallArgs.slackId) {
+    throw new Error("Missing slackId parameter");
+  }
   if(!modelFunctionCallArgs.channelId) {
     throw new Error("Missing channelId parameter");
   }
@@ -20,7 +23,7 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
   // Else we'll summarise the channel.
   let prompt = "";
   if(modelFunctionCallArgs.threadTs && modelFunctionCallArgs.channelId) {
-    const messages = await getThreadMessages(modelFunctionCallArgs.channelId, modelFunctionCallArgs.threadTs);
+    const messages = await getThreadMessages(modelFunctionCallArgs.slackId, modelFunctionCallArgs.channelId, modelFunctionCallArgs.threadTs);
     const texts: string[] = [];
     for(const message of messages) {
       texts.push(`${message.date ? message.date.toISOString() : "unknown"} - ${message.user}: ${message.text}`);
@@ -35,7 +38,7 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
   else if(modelFunctionCallArgs.channelId) {
     const xDaysAgo = new Date(new Date().getTime() - (modelFunctionCallArgs.days * 24 * 60 * 60 * 1000));
     // Slack's timestamps are in seconds rather than ms.
-    const messages = await getChannelMessages(modelFunctionCallArgs.channelId, `${xDaysAgo.getTime() / 1000}`, true);
+    const messages = await getChannelMessages(modelFunctionCallArgs.slackId, modelFunctionCallArgs.channelId, `${xDaysAgo.getTime() / 1000}`, true);
     // Messages are returned most recent at the start of the array, so swap that round.
     messages.reverse();
     const texts: string[] = [];

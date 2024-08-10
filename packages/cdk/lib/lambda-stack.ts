@@ -47,6 +47,8 @@ export class LambdaStack extends Stack {
     });
     // Allow read access to the secret it needs
     props.aiBotSecret.grantRead(handleSlackAuthRedirectLambda);
+    // And access to the tokens table
+    props.tokensTable.grantReadWriteData(handleSlackAuthRedirectLambda);
 
     // Create the lambda for handling events, including DMs from the Messages tab
     const handleEventsEndpointLambda = new lambda.Function(this, "handleEventsEndpointLambda", {
@@ -79,6 +81,8 @@ export class LambdaStack extends Stack {
     handlePromptCommandLambda.grantInvoke(handleEventsEndpointLambda);
     // Allow access to the DynamoDB tables
     props.historyTable.grantReadWriteData(handlePromptCommandLambda);
+    // And access to the tokens table
+    props.tokensTable.grantReadData(handlePromptCommandLambda);
     // Allow read access to the secret it needs
     props.aiBotSecret.grantRead(handlePromptCommandLambda);
     // Set the name to something short otherwise the GCP workload federation stuff doesn't work.
