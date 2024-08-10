@@ -24,6 +24,7 @@ export function getEnv(name: string, optional = false): string | undefined {
 
 export type LambdaStackProps = {
   readonly historyTable: dynamodb.Table;
+  readonly tokensTable: dynamodb.Table;
   readonly aiBotSecret: secretsmanager.ISecret;
   readonly lambdaVersion: string;
   readonly customDomainName: string;

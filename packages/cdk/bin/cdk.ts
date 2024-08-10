@@ -31,6 +31,7 @@ const secretsManagerStack = new SecretsManagerStack(app, 'AIBotSecretsManagerSta
 new LambdaStack(app, 'AIBotLambdaStack', {
   env: {region},
   historyTable: dynamoDBStack.historyTable,
+  tokensTable: dynamoDBStack.tokensTable,
   aiBotSecret: secretsManagerStack.aiBotSecret,
   lambdaVersion,
   customDomainName,

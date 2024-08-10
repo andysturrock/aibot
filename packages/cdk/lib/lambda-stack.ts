@@ -36,6 +36,8 @@ export class LambdaStack extends Stack {
     });
     // Allow read access to the secret it needs
     props.aiBotSecret.grantRead(handleSlackAuthRedirectLambda);
+    // And access to the tokens table
+    props.tokensTable.grantReadWriteData(handleSlackAuthRedirectLambda);
 
     // Create the lambda for handling events, including DMs from the Messages tab
     const handleEventsEndpointLambda = new lambda.Function(this, "handleEventsEndpointLambda", {
@@ -97,6 +99,8 @@ export class LambdaStack extends Stack {
     // Set the name to something short otherwise the GCP workload federation stuff doesn't work.
     const handleSummariseCommandLambdaRole = handleSummariseCommandLambda.role?.node.defaultChild as iam.CfnRole;
     handleSummariseCommandLambdaRole.roleName = 'handleSummariseCommandLambdaRole';
+    // And access to the tokens table
+    props.tokensTable.grantReadData(handleSummariseCommandLambda);
 
     // Create the lambda for handling Slack interactions.
     const handleInteractiveEndpointLambda = new lambda.Function(this, "handleInteractiveEndpointLambda", {
