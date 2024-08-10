@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import axios, { AxiosRequestConfig } from "axios";
 import querystring from 'querystring';
 import { getSecretValue } from "./awsAPI";
+import { putAccessToken } from "./tokensTable";
 
 export async function handleSlackAuthRedirect(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   try {
@@ -34,7 +35,10 @@ export async function handleSlackAuthRedirect(event: APIGatewayProxyEvent): Prom
     type SlackResponse = {
       ok: boolean,
       app_id: string,
-      authed_user: {id: string},
+      authed_user: {
+        id: string,
+        access_token: string
+      },
       scope: string,
       token_type: string,
       access_token: string,
@@ -50,6 +54,7 @@ export async function handleSlackAuthRedirect(event: APIGatewayProxyEvent): Prom
       throw new Error(`Failed to exchange token: ${data.error}`);
     }
 
+    await putAccessToken(data.authed_user.id, data.authed_user.access_token);
     let successText = `Successfully installed AIBot in workspace`;
     if(data.team?.name) {
       successText = `Successfully installed AIBot in workspace ${data.team.name}`;

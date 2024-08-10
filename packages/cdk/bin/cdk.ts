@@ -38,6 +38,7 @@ new LambdaStack(app, 'AIBotLambdaStack', {
   vpc: networkStack.vpc,
   securityGroups: networkStack.securityGroups,
   historyTable: dynamoDBStack.historyTable,
+  tokensTable: dynamoDBStack.tokensTable,
   aiBotSecret: secretsManagerStack.aiBotSecret,
   lambdaVersion,
   customDomainName,
