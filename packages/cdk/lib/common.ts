@@ -27,6 +27,7 @@ export type LambdaStackProps = {
   readonly vpc: ec2.Vpc;
   readonly securityGroups: Map<string, ec2.SecurityGroup>;
   readonly historyTable: dynamodb.Table;
+  readonly tokensTable: dynamodb.Table;
   readonly aiBotSecret: secretsmanager.ISecret;
   readonly lambdaVersion: string;
   readonly customDomainName: string;

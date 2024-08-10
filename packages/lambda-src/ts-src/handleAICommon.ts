@@ -40,6 +40,7 @@ export type ModelFunctionCallArgs = {
   channelId?: string;
   days?: number;
   threadTs?: string 
+  slackId?: string
 };
 
 export async function callModelFunction(functionCall: FunctionCall, history: Content[], extraArgs: object) {
