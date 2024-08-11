@@ -119,6 +119,8 @@ export class LambdaStack extends Stack {
     handleHomeTabEventLambda.grantInvoke(handleEventsEndpointLambda);
     // Allow read access to the secret it needs
     props.aiBotSecret.grantRead(handleHomeTabEventLambda);
+    // And access to the tokens table
+    props.tokensTable.grantReadData(handleHomeTabEventLambda);
 
     // Get hold of the hosted zone which has previously been created
     const zone = route53.HostedZone.fromHostedZoneAttributes(this, 'R53Zone', {

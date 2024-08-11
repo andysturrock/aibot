@@ -1,7 +1,7 @@
-import { BlockAction } from '@slack/bolt';
+import { BlockAction, KnownBlock, MrkdwnElement, SectionBlock } from "@slack/bolt";
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
-import util from 'util';
 import { getSecretValue } from './awsAPI';
+import { publishHomeView } from "./slackAPI";
 import { verifySlackRequest } from './verifySlackRequest';
 
 /**
@@ -23,8 +23,18 @@ export async function handleInteractiveEndpoint(event: APIGatewayProxyEvent): Pr
     // For some reason the body parses to "payload= {...}"
     // so remove the bit outside the JSON
     body = body.replace('payload=', '');
-    const payload = JSON.parse(body) as BlockAction;
-    console.log(`payload: ${util.inspect(payload, false, null,)}`);
+    type ActionType = {
+      type: string
+    };
+    const payload = JSON.parse(body) as ActionType;
+
+    switch(payload.type) {
+    case "block_actions": {
+      const blockAction: BlockAction = payload as BlockAction;
+      await handleBlockAction(blockAction);
+      break;
+    }
+    }
 
     const result: APIGatewayProxyResult = {
       body: JSON.stringify({msg: "ok"}),
@@ -40,5 +50,22 @@ export async function handleInteractiveEndpoint(event: APIGatewayProxyEvent): Pr
       statusCode: 200 // 200 because we received the event, just couldn't deal with it properly.
     };
     return result;
+  }
+}
+
+async function handleBlockAction(blockAction: BlockAction) {
+  // Update the Home tab to say we are authorising
+  if(blockAction.actions[0].action_id === "authButton") {
+    const blocks: KnownBlock[] = [];
+    const mrkdwnElement: MrkdwnElement = {
+      type: 'mrkdwn',
+      text: "Authorising..."
+    };
+    const sectionBlock: SectionBlock = {
+      type: 'section',
+      text: mrkdwnElement
+    };
+    blocks.push(sectionBlock);
+    await publishHomeView(blockAction.user.id, blocks);
   }
 }

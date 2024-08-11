@@ -1,7 +1,9 @@
+import { KnownBlock, MrkdwnElement, SectionBlock } from "@slack/bolt";
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import axios, { AxiosRequestConfig } from "axios";
 import querystring from 'querystring';
 import { getSecretValue } from "./awsAPI";
+import { publishHomeView } from "./slackAPI";
 import { putAccessToken } from "./tokensTable";
 
 export async function handleSlackAuthRedirect(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
@@ -61,7 +63,21 @@ export async function handleSlackAuthRedirect(event: APIGatewayProxyEvent): Prom
     }
     else if(data.enterprise?.name) {
       successText = `Successfully installed AIBot in organisation ${data.enterprise.name}`;
-    } 
+    }
+
+    // Update the Home tab to say we are authorised.
+    const botName = await getSecretValue('AIBot', 'botName');
+    const blocks: KnownBlock[] = [];
+    const mrkdwnElement: MrkdwnElement = {
+      type: 'mrkdwn',
+      text: `You are authorised with ${botName}`
+    };
+    const sectionBlock: SectionBlock = {
+      type: 'section',
+      text: mrkdwnElement
+    };
+    blocks.push(sectionBlock);
+    await publishHomeView(data.authed_user.id, blocks);
 
     const html = `
 <!DOCTYPE html>
