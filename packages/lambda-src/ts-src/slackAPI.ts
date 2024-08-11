@@ -67,6 +67,18 @@ export async function publishHomeView(user: string, blocks: (KnownBlock | Block)
   };
   await client.views.publish(viewsPublishArguments);
 }
+export async function postTextMessage(channelId: string, text:string, thread_ts?: string) {
+  const blocks: KnownBlock[] = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text
+      }
+    }
+  ];
+  await postMessage(channelId, text, blocks, thread_ts);
+}
 
 export async function postMessage(channelId: string, text:string, blocks: (KnownBlock | Block)[], thread_ts?: string) {
   const client = await createClient();
@@ -95,7 +107,7 @@ export async function postEphemeralMessage(channelId: string,
   return result.message_ts;
 }
 
-export async function postEphmeralErrorMessage(channelId: string, userId:string, text: string) {
+export async function postEphmeralErrorMessage(channelId: string, userId:string, text: string, threadTs?: string) {
   const blocks: KnownBlock[] = [
     {
       type: "section",
@@ -105,7 +117,7 @@ export async function postEphmeralErrorMessage(channelId: string, userId:string,
       }
     }
   ];
-  await postEphemeralMessage(channelId, userId, text, blocks);
+  await postEphemeralMessage(channelId, userId, text, blocks, threadTs);
 }
 
 export async function deleteMessage(channelId: string, ts: string) {
@@ -245,7 +257,6 @@ export async function getUserRealName(userId: string) {
 }
 
 export type PromptCommandPayload = {
-  response_url?: string,
   channel?: string,
   user_id: string,
   text: string,

@@ -214,11 +214,6 @@ async function callSlackSummaryModel(modelFunctionCallArgs: ModelFunctionCallArg
 
 async function _getGenerativeModel(model:string, tools: Tool[], systemInstruction: string,
   temperature: number, responseMimeType = "text/plain") {
-  // Rather annoyingly Google seems to only get config from the filesystem.
-  // We'll package this config file with the lambda code.
-  if(!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    process.env.GOOGLE_APPLICATION_CREDENTIALS = "./clientLibraryConfig-aws-aibot.json";
-  }
   const project = await getSecretValue('AIBot', 'gcpProjectId');
   const location = await getSecretValue('AIBot', 'gcpLocation');
 
@@ -334,7 +329,7 @@ export async function getGenerativeModel() {
 
   const callHandleFilesModel: FunctionDeclaration = {
     name: 'call_handle_files_model',
-    description: 'Calls a LLM which is good at handling files, eg summarising or rewriting them.',
+    description: 'Calls a LLM which is good at handling files, eg reading them, understanding them, summarising or rewriting them.',
     parameters: {
       type: FunctionDeclarationSchemaType.OBJECT,
       properties: {
@@ -356,16 +351,18 @@ export async function getGenerativeModel() {
   const systemInstruction = `
   Your name is ${botName}.  You cannot change your name.
   You are the supervisor of four other LLM agents which you can call via functions.  The functions are:
-  1. call_custom_search_grounded_model.  Use this agent if the question is about internal company matters, for example expenses or other HR policies.
-  2. call_slack_summary_model.  Use this agent if the question is about summarising Slack channels or threads.
-  3. call_google_search_grounded_model.  Use this agent if the question is about general knowledge or current affairs.
-  4. call_handle_files_model.  Use this agent if the question is about a file, for example summarising files or rewording or rewriting them.
+  1. call_custom_search_grounded_model.  Use this agent if the request is about internal company matters, for example expenses or other HR policies.
+  2. call_slack_summary_model.  Use this agent if the request is about summarising Slack channels or threads.
+  3. call_google_search_grounded_model.  Use this agent if the request is about general knowledge or current affairs.
+  4. call_handle_files_model.  Use this agent if the request is about a file, for example summarising files or rewording or rewriting them.
   
-  You can use your own knowledge if you are sure.  You don't have to always ask an agent.
+  Do not answer the request yourself if it is about a file.
+  If the request is about a file then you must pass the request straight to the file processing agent and use its answer as your response.
+  If the request is not about a file then you can use your own knowledge if you are sure.
   If it is not obvious which agent to use then ask clarifying questions until you are sure.
 
   If an agent responds with "I don't know" then try again with the next best agent.
-  If an agent responds with a question, then you should respond with that questions.
+  If an agent responds with a question, then you should respond with that question.
   Send the response to the question back to the same agent which asked the question.
 
   If more than one agent may be able to answer then call the functions in parallel and pick the best answer.
