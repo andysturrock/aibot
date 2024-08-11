@@ -147,7 +147,21 @@ async function callHandleFilesModel(modelFunctionCallArgs: ModelFunctionCallArgs
     throw new Error(`Could not find user content in generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
   }
   lastUserContent.parts = lastUserContent.parts.concat(modelFunctionCallArgs.fileDataParts);
+  // gemini-1.5-flash-001 doesn't seem to understand the data parts but it does seem to understand gs:// URIs.
+  // So add the file URIs to the prompt.
+  const fileURIList: string[] = [];
+  modelFunctionCallArgs.fileDataParts.reduce((fileURIList, fileDataPart) => {
+    if(fileDataPart.fileData?.fileUri) {
+      fileURIList.push(fileDataPart.fileData.fileUri);
+    }
+    return fileURIList;
+  }, fileURIList);
+  const promptPart: TextPart = {
+    text: `The files are available at ${fileURIList.join(",")}`
+  };
+  lastUserContent.parts.push(promptPart);
 
+  console.log(`handleFilesModel generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
   const contentResult = await handleFilesModel.generateContent(generateContentRequest);
   return contentResult;
 }
