@@ -32,6 +32,8 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
         When you see a string like <@XYZ123> that is a user id.
         Refer to the user by that user id in your answer.  Keep the < and the > characters around the user id.
         Try to include dates in your answer.
+        Split your answer into a separate line for each date.
+        Make each line of your answer less than 2500 characters long.
         Please summarise the messages below.
         ${texts.join("\n")}`;
   }
@@ -49,6 +51,8 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
         When you see a string like <@XYZ123> that is a user id.
         Refer to the user by that user id in your answer.  Keep the < and the > characters around the user id.
         Try to include dates in your answer.
+        Split your answer into a separate line for each date.
+        Make each line of your answer less than 2500 characters long.
         Please summarise the messages below.
         ${texts.join("\n")}`;
   }

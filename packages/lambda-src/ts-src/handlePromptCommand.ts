@@ -124,7 +124,7 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
       const fileUrisTextPart: TextPart = {
         text: `
           This request contains one or more files.
-          You must pass this request to the file processing agent by calling the call_handle_files_model function.
+          You must pass this request to the file processing agent.
           The agent will be provided with the files directly when the function is called.
           Pass any requests directly to the file processing agent.
           Do not answer requests about the files yourself.  You must pass all requests to the file processing agent.
@@ -161,7 +161,7 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
         text: `
           The conversation earlier was about one or more files.
           Those files were provided directly to the file processing agent.
-          If this request is about the files then pass this request to the file processing agent by calling the call_handle_files_model function.
+          If this request is about the files then pass this request to the file processing agent.
           If you pass a futher request to the file processing agent it will be provided with the files again.
           Do not answer requests about the files yourself.  You must pass all requests to the file processing agent.
         `
