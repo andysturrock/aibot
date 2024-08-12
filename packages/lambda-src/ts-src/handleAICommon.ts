@@ -156,10 +156,12 @@ async function callHandleFilesModel(modelFunctionCallArgs: ModelFunctionCallArgs
     }
     return fileURIList;
   }, fileURIList);
-  const promptPart: TextPart = {
-    text: `The files are available at ${fileURIList.join(",")}`
-  };
-  lastUserContent.parts.push(promptPart);
+  if(fileURIList.length > 0) {
+    const promptPart: TextPart = {
+      text: `The files are available at ${fileURIList.join(",")}`
+    };
+    lastUserContent.parts.push(promptPart);
+  }
 
   console.log(`handleFilesModel generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
   const contentResult = await handleFilesModel.generateContent(generateContentRequest);
@@ -222,8 +224,9 @@ async function callSlackSummaryModel(modelFunctionCallArgs: ModelFunctionCallArg
   const model = await getSecretValue('AIBot', 'slackSummaryModel');
   const slackSummaryModel = await _getGenerativeModel(model, tools, systemInstruction, 0);
 
-  const content = await handleSlackSummary(slackSummaryModel, modelFunctionCallArgs, generateContentRequest);
-  return content;
+  const generateContentResult = await handleSlackSummary(slackSummaryModel, modelFunctionCallArgs, generateContentRequest);
+  console.log(`callSlackSummaryModel generateContentResult: ${util.inspect(generateContentResult, false, null)}`);
+  return generateContentResult;
 }
 
 async function _getGenerativeModel(model:string, tools: Tool[], systemInstruction: string,
@@ -370,7 +373,6 @@ export async function getGenerativeModel() {
   3. call_google_search_grounded_model.  Use this agent if the request is about general knowledge or current affairs.
   4. call_handle_files_model.  Use this agent if the request is about a file, for example summarising files or rewording or rewriting them.
   
-  Do not answer the request yourself if it is about a file.
   If the request is about a file then you must pass the request straight to the file processing agent and use its answer as your response.
   If the request is not about a file then you can use your own knowledge if you are sure.
   If it is not obvious which agent to use then ask clarifying questions until you are sure.
