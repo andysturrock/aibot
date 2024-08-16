@@ -58,6 +58,12 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
         console.debug(`Ignoring message from self ${myId.bot_id} or ${myId.bot_user_id}`);
         return result;
       }
+      const ignoreMessagesFromTheseIds = (await getSecretValue('AIBot', 'ignoreMessagesFromTheseIds')).split(",");
+      if(ignoreMessagesFromTheseIds.some(id => id == genericMessageEvent.user)) {
+        console.debug(`Ignoring message from ${genericMessageEvent.user} as it's in the ignore list ${util.inspect(ignoreMessagesFromTheseIds, false, null)}`);
+        console.debug(`Message was ${genericMessageEvent.text}`);
+        return result;
+      }
 
       console.log(`handleEventsEndpoint genericMessageEvent: ${util.inspect(genericMessageEvent, false, null)}`);
 
