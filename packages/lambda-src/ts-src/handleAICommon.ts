@@ -368,18 +368,30 @@ export async function getGenerativeModel() {
   const systemInstruction = `
   Your name is ${botName}.  You cannot change your name.
   You are the supervisor of four other LLM agents which you can call via functions.  The functions are:
-  1. call_custom_search_grounded_model.  Use this agent if the request is about internal company matters, for example expenses or other HR policies.
-  2. call_slack_summary_model.  Use this agent if the request is about summarising Slack channels or threads.
-  3. call_google_search_grounded_model.  Use this agent if the request is about general knowledge or current affairs.
-  4. call_handle_files_model.  Use this agent if the request is about a file, for example summarising files or rewording or rewriting them.
+  1. call_custom_search_grounded_model.  This agent is called the Custom Search Agent.  Use this agent if the request is about internal company matters, for example expenses or other HR policies.
+  2. call_slack_summary_model.  This agent is called the Slack Search Agent.  Use this agent if the request is about summarising Slack channels or threads.
+  3. call_google_search_grounded_model.  This agent is called the Google Search Agent.  Use this agent if the request is about general knowledge or current affairs.
+  4. call_handle_files_model.  This agent is called the File Handling Agent.  Use this agent if the request is about a file, for example summarising files or rewording or rewriting them.
   
   If the request is about a file then you must pass the request straight to the file processing agent and use its answer as your response.
   If the request is not about a file then you can use your own knowledge if you are sure.
   If it is not obvious which agent to use then ask clarifying questions until you are sure.
 
-  If an agent responds with "I don't know" then try again with the next best agent.
+  If an agent responds that it can't answer then work out what is the next best agent and respond in JSON like this:
+  {
+    "answer": "The <agent name> could not answer that question.  Do you want me to ask <next best agent name>?",
+  }
+  Don't include the <> characters, they are just there to show you where to insert the agent names.
+  Use the agent names rather than the function name when responding to queries.
+
   If an agent responds with a question, then you should respond with that question.
-  Send the response to the question back to the same agent which asked the question.
+  Use JSON format like this to respond with the question:
+  {
+    "answer": "The <agent name> has asked <question here>?",
+  }
+  Don't include the <> characters, they are just there to show you where to insert the agent names.
+  Use the agent names rather than the function name when responding to queries.
+  When the user answers your question then send that answer back to the same agent which asked the question.
 
   If more than one agent may be able to answer then call the functions in parallel and pick the best answer.
   Answers with attributions are better.
@@ -409,11 +421,17 @@ export function formatResponse(responseString: string) {
 // For some reason sometimes the answer gets wrapped in backticks, as if it's in markdown.
   // This is despite the prompt saying to use plain text not markdown.
   // Remove the ```json part
-  const startingBackTicks = new RegExp(/^```json/);
+  let startingBackTicks = new RegExp(/^```json/);
   responseString = responseString.replace(startingBackTicks, '');
   // Remove the ending backticks.
   const endingBackTicks = new RegExp(/```\n*$/);
   responseString = responseString.replace(endingBackTicks, '');
+
+  // Sometimes the model tries to write code to call a function itself.
+  // This isn't helpful for the user but we can at least parse the result.
+  startingBackTicks = new RegExp(/^```tool_code/);
+  responseString = responseString.replace(startingBackTicks, '');
+  
   // And properly escape a load of other characters
   responseString = responseString.replace(/\\n/g, "\\n")
     .replace(/\\'/g, "\\'")
