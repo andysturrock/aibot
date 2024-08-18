@@ -75,6 +75,7 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
               fileUri: gsUri
             };
             fileDataArray.push(fileData);
+            await postTextMessage(channelId, `I have stored the file at ${gsUri}.  You can refer to this URI when talking to me in future.`, parentThreadTs);
           }
         }
         catch(error) {

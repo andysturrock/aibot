@@ -49,6 +49,8 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
     case "message":
     case "app_mention": {
       const genericMessageEvent = envelopedEvent.event as GenericMessageEvent;
+      console.log(`handleEventsEndpoint genericMessageEvent: ${util.inspect(genericMessageEvent, false, null)}`);
+
       // Get our own user ID and ignore messages we have posted, otherwise we'll get into an infinite loop.
       const myId = await getBotId();
       if(!myId.bot_id || !myId.bot_user_id) {
@@ -64,8 +66,6 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
         console.debug(`Message was ${genericMessageEvent.text}`);
         return result;
       }
-
-      console.log(`handleEventsEndpoint genericMessageEvent: ${util.inspect(genericMessageEvent, false, null)}`);
 
       // We need to respond within 3000ms so add an eyes emoji to the user's message to show we are looking it.
       // Then call the AIBot-handlePromptCommandLambda asynchronously.
