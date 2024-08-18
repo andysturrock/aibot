@@ -14,7 +14,7 @@ import stream from 'node:stream/promises';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
 import { callModelFunction, formatResponse, generateResponseBlocks, getGenerativeModel, ModelFunctionCallArgs, removeReaction } from './handleAICommon';
-import { getHistory, putHistory } from './historyTable';
+import { getHistory, GetHistoryFunction, putHistory, PutHistoryFunction } from './historyTable';
 import { File, postEphmeralErrorMessage, postMessage, postTextMessage, PromptCommandPayload } from './slackAPI';
 
 export async function handlePromptCommand(event: PromptCommandPayload) {
@@ -23,8 +23,6 @@ export async function handlePromptCommand(event: PromptCommandPayload) {
 }
 
 // The getHistoryFunction and putHistoryFunction args make this is easier to test.
-type GetHistoryFunction = (slackId: string, threadTs: string) => Promise<Content[] | undefined>;
-type PutHistoryFunction = (slackId: string, threadTs: string, history: Content[]) => Promise<void>;
 export async function _handlePromptCommand(event: PromptCommandPayload,  getHistoryFunction: GetHistoryFunction, putHistoryFunction: PutHistoryFunction): Promise<void> {
   // Rather annoyingly Google seems to only get config from the filesystem.
   // We'll package this config file with the lambda code.
@@ -75,7 +73,7 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
               fileUri: gsUri
             };
             fileDataArray.push(fileData);
-            await postTextMessage(channelId, `I have stored the file at ${gsUri}.  You can refer to this URI when talking to me in future.`, parentThreadTs);
+            await postTextMessage(channelId, `I have stored the file at ${gsUri}.`, parentThreadTs);
           }
         }
         catch(error) {
@@ -97,7 +95,7 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     parts.unshift(textPart);
 
     // Load the history if we're in a thread so the model remembers its context.
-    let history = await getHistoryFunction(event.user_id, parentThreadTs) ?? [];
+    let history = await getHistoryFunction(event.channel, parentThreadTs, "supervisor") ?? [];
     // Where we have Content with no parts add a dummy part.
     // Missing content parts causes us and the Vertex AI API problems.
     // There really can be no parts to the content, despite the type system
@@ -107,7 +105,6 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     // { role: 'model' }
     // so this function adds some content parts.
     history = fixMissingContentParts(history);
-    console.log(`history: ${util.inspect(history, false, null)}`);
     
     // Add the file parts if the user has supplied them in this message.
     let fileDataParts = new Array<Part>();
@@ -178,11 +175,11 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
 
     let response: string | undefined = undefined;
     while(response == undefined) {
-      console.log(`Parts array input to chat: ${util.inspect(parts, false, null, true)}`);
+      console.log(`Parts array input to supervisor chat: ${util.inspect(parts, false, null, true)}`);
       const generateContentResult = await chatSession.sendMessage(parts);
 
       const contentResponse = generateContentResult.response;
-      console.log(`contentResponse: ${util.inspect(contentResponse, false, null, true)}`);
+      console.log(`supervisor contentResponse: ${util.inspect(contentResponse, false, null, true)}`);
       
       // No response parts almost certainly means we've hit a safety stop.
       if(!generateContentResult.response.candidates?.[0].content.parts) {
@@ -213,15 +210,16 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
         // We could have two agents, one for summarising channels and one for summarising threads.
         // Or maybe do some prompt engineering around passing threadTs in the model args only if the
         // request is specifically about threads.
-        const extraArgs = {
+        const extraArgs: ModelFunctionCallArgs = {
           channelId,
-          threadTs: event.thread_ts,
+          parentThreadTs,
           fileDataParts,
-          slackId: event.user_id
+          slackId: event.user_id,
+          threadTs: event.thread_ts
         };
         parts = new Array<Part>();
         for (const functionCall of functionCalls) {
-          const functionResponsePart = await callModelFunction(functionCall, history, extraArgs);
+          const functionResponsePart = await callModelFunction(functionCall, extraArgs, getHistoryFunction, putHistoryFunction);
           parts.push(functionResponsePart);
         }
       }
@@ -229,7 +227,7 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     history = await chatSession.getHistory();
     // See above for why we add the blank content.
     history = fixMissingContentParts(history);
-    await putHistoryFunction(event.user_id, parentThreadTs, history);
+    await putHistoryFunction(event.channel, parentThreadTs, history, "supervisor");
     const formattedResponse = formatResponse(response);
     const blocks = generateResponseBlocks(formattedResponse);
 
