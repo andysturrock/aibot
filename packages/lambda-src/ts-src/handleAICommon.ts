@@ -27,6 +27,7 @@ import { KnownBlock, RichTextBlock, RichTextLink, RichTextList, RichTextSection,
 import util from 'util';
 import { getSecretValue } from './awsAPI';
 import { handleSlackSummary } from './handleSlackSummary';
+import { GetHistoryFunction, PutHistoryFunction } from './historyTable';
 import * as slackAPI from './slackAPI';
 
 export type Attribution = {
@@ -35,23 +36,29 @@ export type Attribution = {
 };
 
 export type ModelFunctionCallArgs = {
-  prompt: string;
+  prompt?: string,
+  channelId: string;
+  parentThreadTs: string,
   fileDataParts?: Part[];
-  channelId?: string;
   days?: number;
-  threadTs?: string 
+  threadTs?: string,
   slackId?: string
 };
 
-export async function callModelFunction(functionCall: FunctionCall, history: Content[], extraArgs: object) {
-  functionCall.args = {...functionCall.args, ...extraArgs};
+export async function callModelFunction(functionCall: FunctionCall,
+  extraArgs: object,
+  getHistoryFunction: GetHistoryFunction,
+  putHistoryFunction: PutHistoryFunction) {
 
-  const args = functionCall.args as ModelFunctionCallArgs;
+  const args = {...extraArgs, ...functionCall.args} as ModelFunctionCallArgs;
+  // All our function calls contain the prompt for the agent.
+  // If it is missing then something has gone wrong and we can't continue.
+  if(!args.prompt) {
+    throw new Error("functionCall.args did not contain a prompt field.");
+  }
 
   type ModelFunction = (args: ModelFunctionCallArgs, generateContentRequest: GenerateContentRequest) => Promise<GenerateContentResult>;
   let modelFunction: ModelFunction = callGoogleSearchGroundedModel;
-
-  console.log(`callModelFunction args: ${util.inspect(args, false, null)}`);
 
   // The type of response in FunctionResponse is just "object"
   // so make it a bit more typed here.
@@ -68,6 +75,7 @@ export async function callModelFunction(functionCall: FunctionCall, history: Con
       answer: "I don't know"
     }
   };
+  // These are Vertex AI types that we will construct using the response above.
   const functionResponse: FunctionResponse = {
     name: functionCall.name,
     response
@@ -94,6 +102,7 @@ export async function callModelFunction(functionCall: FunctionCall, history: Con
     throw new Error(`Unknown function ${functionCall.name}`);
   }
 
+  const history = await getHistoryFunction(args.channelId, args.parentThreadTs, functionCall.name) ?? [];
   const generateContentRequest: GenerateContentRequest = {
     contents: history
   };
@@ -105,15 +114,30 @@ export async function callModelFunction(functionCall: FunctionCall, history: Con
     role: 'user'
   };
   generateContentRequest.contents.push(promptContent);
+
+  //console.log(`callModelFunction generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
   const generateContentResult = await modelFunction(args, generateContentRequest);
+  //console.log(`callModelFunction generateContentResult: ${util.inspect(generateContentResult, false, null)}`);
+  // If there are no content parts it's because something has gone wrong, eg hit a safety stop.
+  // The finishReason has the reason for the unexpected stop so tell the user that.
   if(!generateContentResult.response.candidates?.[0].content.parts) {
     response.content.answer = `I can't answer that because ${generateContentResult.response.candidates?.[0].finishReason}`;
     console.warn(`generateContentResult had no content parts: ${util.inspect(generateContentResult, false, null)}`);
   }
   else {
     response.content.answer = generateContentResult.response.candidates[0].content.parts[0].text ?? "I don't know";
-    console.log(`${functionCall.name} response ${util.inspect(response, false, null)}`);
   }
+  // Add the agent's response to the history for this agent in this thread
+  const responsePart: TextPart = {
+    text: response.content.answer
+  };
+  const responseContent: Content = {
+    parts: [responsePart],
+    role: "model"
+  };
+  history.push(responseContent);
+  await putHistoryFunction(args.channelId, args.parentThreadTs, history, functionCall.name);
+
   // Create the attributions.
   const groundingChunks = generateContentResult.response.candidates?.[0].groundingMetadata?.groundingChunks ?? [];
   response.content.attributions = [];
@@ -162,8 +186,6 @@ async function callHandleFilesModel(modelFunctionCallArgs: ModelFunctionCallArgs
     };
     lastUserContent.parts.push(promptPart);
   }
-
-  console.log(`handleFilesModel generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
   const contentResult = await handleFilesModel.generateContent(generateContentRequest);
   return contentResult;
 }
@@ -225,7 +247,6 @@ async function callSlackSummaryModel(modelFunctionCallArgs: ModelFunctionCallArg
   const slackSummaryModel = await _getGenerativeModel(model, tools, systemInstruction, 0);
 
   const generateContentResult = await handleSlackSummary(slackSummaryModel, modelFunctionCallArgs, generateContentRequest);
-  console.log(`callSlackSummaryModel generateContentResult: ${util.inspect(generateContentResult, false, null)}`);
   return generateContentResult;
 }
 

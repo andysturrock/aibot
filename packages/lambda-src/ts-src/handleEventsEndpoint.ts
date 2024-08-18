@@ -49,7 +49,7 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
     case "message":
     case "app_mention": {
       const genericMessageEvent = envelopedEvent.event as GenericMessageEvent;
-      console.log(`handleEventsEndpoint genericMessageEvent: ${util.inspect(genericMessageEvent, false, null)}`);
+      //console.log(`handleEventsEndpoint genericMessageEvent: ${util.inspect(genericMessageEvent, false, null)}`);
 
       // Get our own user ID and ignore messages we have posted, otherwise we'll get into an infinite loop.
       const myId = await getBotId();
