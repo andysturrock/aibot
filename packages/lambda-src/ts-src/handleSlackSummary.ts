@@ -31,13 +31,13 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
     Please summarise the messages below.
   `;
   const texts: string[] = [];
-  if(modelFunctionCallArgs.threadTs && modelFunctionCallArgs.channelId) {
-    const messages = await getThreadMessages(modelFunctionCallArgs.slackId, modelFunctionCallArgs.channelId, modelFunctionCallArgs.threadTs);
+  if(modelFunctionCallArgs.threadTs) {
+    const messages = await getThreadMessages(modelFunctionCallArgs.slackId, modelFunctionCallArgs.channelId, modelFunctionCallArgs.parentThreadTs);
     for(const message of messages) {
       texts.push(`${message.date ? message.date.toISOString() : "unknown"} - ${message.user}: ${message.text}`);
     }
   }
-  else if(modelFunctionCallArgs.channelId) {
+  else {
     const xDaysAgo = new Date(new Date().getTime() - (modelFunctionCallArgs.days * 24 * 60 * 60 * 1000));
     // Slack's timestamps are in seconds rather than ms.
     const messages = await getChannelMessages(modelFunctionCallArgs.slackId, modelFunctionCallArgs.channelId, `${xDaysAgo.getTime() / 1000}`, true);
@@ -46,9 +46,6 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
     for(const message of messages) {
       texts.push(`${message.date ? message.date.toISOString() : "unknown"} - ${message.user}: ${message.text}`);
     }
-  }
-  else {
-    throw new Error("Need channel or thread_ts field in function call");
   }
   prompt = prompt + texts.join("\n");
 
@@ -62,6 +59,5 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
     text: prompt
   };
   lastUserContent.parts.push(promptPart);
-  console.log(`handleSlackSummary generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
   return await slackSummaryModel.generateContent(generateContentRequest);
 }
