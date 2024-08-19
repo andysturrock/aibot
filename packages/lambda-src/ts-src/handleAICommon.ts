@@ -171,7 +171,24 @@ async function callHandleFilesModel(modelFunctionCallArgs: ModelFunctionCallArgs
     throw new Error(`Could not find user content in generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
   }
   lastUserContent.parts = lastUserContent.parts.concat(modelFunctionCallArgs.fileDataParts);
-  // gemini-1.5-flash-001 doesn't seem to understand the data parts but it does seem to understand gs:// URIs.
+  // The models don't seem to check back through their history for FileDataParts.
+  // So search through our history for FileDataParts and add those to the current part.
+  // The Set below is to keep track so we don't get duplicates.
+  const fileUris = new Set<string>(modelFunctionCallArgs.fileDataParts.map((fileDataPart) => fileDataPart.fileData?.fileUri ?? ""));
+  const historyFileDataParts = new Array<Part>();
+  for(const content of generateContentRequest.contents) {
+    for(const part of content.parts) {
+      if(part.fileData) {
+        if(!fileUris.has(part.fileData.fileUri)) {
+          fileUris.add(part.fileData.fileUri);
+          historyFileDataParts.push(part);
+        }
+      }
+    }
+  }
+  lastUserContent.parts = lastUserContent.parts.concat(historyFileDataParts);
+  
+  // gemini-1.5-flash-001 doesn't seem to understand FileDataParts but it does seem to understand gs:// URIs.
   // So add the file URIs to the prompt.
   const fileURIList: string[] = [];
   modelFunctionCallArgs.fileDataParts.reduce((fileURIList, fileDataPart) => {
