@@ -50,75 +50,34 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
       throw new Error("Missing channel in event");
     }
 
-    const botName = await getSecretValue('AIBot', 'botName');
-
     // If there are any files included in the message, move them to GCP storage.
-    const slackBotToken = await getSecretValue('AIBot', 'slackBotToken');
-    const documentBucketName = await getSecretValue('AIBot', 'documentBucketName');
-    const handleFilesModel = await getSecretValue('AIBot', 'handleFilesModel');
-    const fileDataArray: FileData[]  = [];
-    if(event.files) {
-      for(const file of event.files) {
-        try{
-          if(!isSupportedMimeType(file.mimetype)) {
-            // Remove the eyes emoji from the original message so we don't have eyes littered everywhere.
-            await removeReaction(channelId, event.ts);
-            await postTextMessage(channelId, `${botName} using ${handleFilesModel} does not support file type ${file.mimetype}`, parentThreadTs);
-            return;
-          }
-          else {
-            const gsUri = await transferFileToGCS(slackBotToken, documentBucketName, event.user_id, file);
-            const fileData: FileData = {
-              mimeType: file.mimetype,
-              fileUri: gsUri
-            };
-            fileDataArray.push(fileData);
-            await postTextMessage(channelId, `I have stored the file at ${gsUri}.`, parentThreadTs);
-          }
-        }
-        catch(error) {
-          console.error(util.inspect(error, false, null));
-          // Remove the eyes emoji from the original message so we don't have eyes littered everywhere.
-          await removeReaction(channelId, event.ts);
-          await postTextMessage(channelId, `Failed to upload file ${file.title} to Gemini`, parentThreadTs);
-          return;
-        }
-      }
+    let fileDataArray: FileData[];
+    try {
+      fileDataArray = await transferFilesToGCS(event, parentThreadTs);
     }
-    
-    // Create the text part with the prompt
-    let parts = new Array<Part>();
-    const prompt = event.text;
-    const textPart: TextPart = {
-      text: prompt
-    };
-    parts.unshift(textPart);
-
-    // Load the history if we're in a thread so the model remembers its context.
-    let history = await getHistoryFunction(event.channel, parentThreadTs, "supervisor") ?? [];
-    // Where we have Content with no parts add a dummy part.
-    // Missing content parts causes us and the Vertex AI API problems.
-    // There really can be no parts to the content, despite the type system
-    // saying they are mandatory.
-    // This happens if we have hit a safety stop earlier in the conversation.
-    // The content just contains:
-    // { role: 'model' }
-    // so this function adds some content parts.
-    history = fixMissingContentParts(history);
-    
-    // Add the file parts if the user has supplied them in this message.
-    let fileDataParts = new Array<Part>();
+    catch(error) {
+      // Remove the eyes emoji from the original message so we don't have eyes littered everywhere.
+      await removeReaction(event.channel, event.event_ts);
+      const text = (error instanceof Error) ? error.message : "Failed to transfer files to GCS";
+      await postTextMessage(event.channel, text, parentThreadTs);
+      return;
+    }
+    // Create file parts to supply to the File Agent later.
+    const fileDataParts = new Array<Part>();
     for(const fileData of fileDataArray) {
       const fileDataPart: FileDataPart = {
         fileData
       };
       fileDataParts.push(fileDataPart);
     }
-    if(fileDataParts.length > 0) {
-      // Currently function calls only work with text prompts in Gemini.
-      // So rather than adding the file parts to the top level prompt we'll have to use a specific agent for working with files.
-      // Give an instruction to the supervisor agent that it should chose the files agent.
-      // We'll add the file parts below when the supervisor agent asks us to call the files agent.
+    let parts = new Array<Part>();
+    // Currently function calls only work with text prompts in Gemini.
+    // So rather than adding the file parts to the top level prompt we'll have to
+    // use a specific agent for working with files.
+    // If we have file parts then add some additional prompting.
+    // Otherwise the supervisor seems reluctant to actually call the File Processing agent
+    // We'll pass the file parts to the Files agent below when the supervisor agent asks us to call it.
+    if(fileDataParts.length > 0) {      
       const fileUrisTextPart: TextPart = {
         text: `
           This request contains one or more files.
@@ -131,42 +90,24 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
       parts.push(fileUrisTextPart);
     }
 
-    // Add any file parts from the history.  We'll keep track of what we've added so we don't get duplicates.
-    // Unfortunately JS Sets don't let you provide your own equality function so use a string set.
-    const fileUris = new Set<string>(fileDataParts.map((fileDataPart) => fileDataPart.fileData?.fileUri ?? ""));
-    const historyFileDataParts = new Array<Part>();
-    for(const content of history) {
-      for(const part of content.parts) {
-        if(part.fileData) {
-          if(!fileUris.has(part.fileData.fileUri)) {
-            fileUris.add(part.fileData.fileUri);
-            historyFileDataParts.push(part);
-          }
-        }
-        // File parts show up in the function call arguments because we add them below.
-        const modelFunctionCallArgs = part.functionCall?.args as ModelFunctionCallArgs | undefined;
-        for(const functionCallFileDataPart of modelFunctionCallArgs?.fileDataParts ?? []) {
-          if(functionCallFileDataPart.fileData && !fileUris.has(functionCallFileDataPart.fileData.fileUri)) {
-            fileUris.add(functionCallFileDataPart.fileData.fileUri);
-            historyFileDataParts.push(functionCallFileDataPart);
-          }
-        }
-      }
-    }
-    if(historyFileDataParts.length > 0) {
-      // See above for why we need to do this.
-      const fileUrisTextPart: TextPart = {
-        text: `
-          The conversation earlier was about one or more files.
-          Those files were provided directly to the file processing agent.
-          If this request is about the files then pass this request to the file processing agent.
-          If you pass a futher request to the file processing agent it will be provided with the files again.
-          Do not answer requests about the files yourself.  You must pass all requests to the file processing agent.
-        `
-      };
-      parts.push(fileUrisTextPart);
-    }
-    fileDataParts = fileDataParts.concat(historyFileDataParts);
+    // Create a text part with the prompt
+    const prompt = event.text;
+    const textPart: TextPart = {
+      text: prompt
+    };
+    // Add it as the first part of the content.
+    parts.unshift(textPart);
+
+    // Load the history if we're in a thread so the model remembers its context.
+    let history = await getHistoryFunction(event.channel, parentThreadTs, "supervisor") ?? [];
+    // There really can be no Parts to the Content, despite the type system
+    // saying they are mandatory.
+    // This happens if we have hit a safety stop earlier in the conversation.
+    // The Content just contains:
+    // { role: 'model' }
+    // Missing Content Parts causes us and the Vertex AI API problems,
+    // so this function adds some dummy Parts to the Content.
+    history = fixMissingContentParts(history);
 
     const startChatParams: StartChatParams = { };
     startChatParams.history = history;
@@ -248,6 +189,43 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     console.error(util.inspect(error, false, null));
     await postEphmeralErrorMessage(channelId, event.user_id, "Error calling AI API", parentThreadTs);
   }
+}
+
+/**
+ * Transfer files to GCP.
+ * @param event 
+ * @param parentThreadTs 
+ * @returns Array of FileData (empty if there were no files).
+ * @throws Error if the file type is not supported or a problem saving to GCS.
+ */
+async function transferFilesToGCS(event: PromptCommandPayload, parentThreadTs: string) {
+  // If there are any files included in the message, move them to GCP storage.
+  const slackBotToken = await getSecretValue('AIBot', 'slackBotToken');
+  const documentBucketName = await getSecretValue('AIBot', 'documentBucketName');
+  const handleFilesModel = await getSecretValue('AIBot', 'handleFilesModel');
+  const botName = await getSecretValue('AIBot', 'botName');
+  const fileDataArray: FileData[]  = [];
+  for(const file of event.files ?? []) {
+    if(!isSupportedMimeType(file.mimetype)) {
+      throw new Error(`${botName} using ${handleFilesModel} does not support file type ${file.mimetype}`);
+    }
+    else {
+      try {
+        const gsUri = await transferFileToGCS(slackBotToken, documentBucketName, event.user_id, file);
+        const fileData: FileData = {
+          mimeType: file.mimetype,
+          fileUri: gsUri
+        };
+        fileDataArray.push(fileData);
+        await postTextMessage(event.channel, `I have stored the file at ${gsUri}.`, parentThreadTs);
+      }
+      catch(error) {
+        console.error(util.inspect(error, false, null));
+        throw new Error(`Failed to upload file ${file.title} to Gemini`);
+      }
+    }
+  }
+  return fileDataArray;
 }
 
 async function transferFileToGCS(slackBotToken: string, documentBucketName: string, userId: string, file: File) {
