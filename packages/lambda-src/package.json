@@ -11,6 +11,7 @@
     "@tsconfig/node18": "^18.2.2",
     "@types/aws-lambda": "^8.10.119",
     "@types/jest": "^29.5.7",
+    "@types/luxon": "^3.4.2",
     "@types/node": "^20.14.9",
     "bun": "^1.1.20",
     "google-gax": "^4.3.7",
@@ -18,12 +19,14 @@
     "ts-jest": "^29.1.1"
   },
   "dependencies": {
+    "@google-cloud/aiplatform": "^3.27.0",
     "@google-cloud/language": "^6.4.0",
     "@google-cloud/storage": "^7.12.0",
     "@google-cloud/vertexai": "^1.4.0",
     "@slack/bolt": "^3.19.0",
     "axios": "^1.7.2",
     "dotenv": "^16.4.5",
+    "luxon": "^3.5.0",
     "util": "^0.12.5"
   }
 }

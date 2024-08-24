@@ -3,6 +3,7 @@ import {
   BotsInfoArguments,
   ChatDeleteArguments,
   ConversationsHistoryArguments,
+  ConversationsListArguments,
   ConversationsRepliesArguments,
   LogLevel,
   ReactionsAddArguments,
@@ -24,9 +25,19 @@ async function createClient() {
 }
 
 async function createUserClient(slackId: string) {
-  const slackBotUserToken = await getAccessToken(slackId);
+  const slackUserToken = await getAccessToken(slackId);
+  
+  if(!slackUserToken) {
+    throw new Error("Cannot get Slack user token from table.");
+  }
 
-  return new WebClient(slackBotUserToken, {
+  return new WebClient(slackUserToken, {
+    logLevel: LogLevel.INFO
+  });
+}
+
+function createUserClientFromToken(slackUserToken: string) {
+  return new WebClient(slackUserToken, {
     logLevel: LogLevel.INFO
   });
 }
@@ -175,7 +186,8 @@ export async function postErrorMessageToResponseUrl(responseUrl: string, text: s
 export type Message = {
   user: string,
   text: string,
-  date?: Date
+  date?: Date,
+  ts: string
 };
 
 function tsToDate(ts: string) {
@@ -183,12 +195,18 @@ function tsToDate(ts: string) {
   return ts ? new Date(Number.parseInt(seconds) * 1000) : undefined;
 }
 
-export async function getThreadMessages(slackId: string, channelId: string, threadTs: string) {
-  // Note requires user token. See https://api.slack.com/methods/conversations.replies.
+export async function getThreadMessages(slackId: string, channelId: string, threadTs: string, oldest?: string, latest?: string) {
   const client = await createUserClient(slackId);
+  return await _getThreadMessages(client, channelId, threadTs, oldest, latest);
+}
+
+async function _getThreadMessages(client: WebClient, channelId: string, threadTs: string, oldest?: string, latest?: string) {
   const conversationsRepliesArguments: ConversationsRepliesArguments = {
     channel: channelId,
-    ts: threadTs
+    ts: threadTs,
+    oldest,
+    latest,
+    inclusive: true
   };
   const replies = await client.conversations.replies(conversationsRepliesArguments);
   
@@ -198,17 +216,29 @@ export async function getThreadMessages(slackId: string, channelId: string, thre
     return {
       user: message.user ?? "",
       text: message.text ?? "",
-      date
+      date,
+      ts: message.ts ?? ""
     };
   });
   return messages;
 }
 
-export async function getChannelMessages(slackId: string, channelId: string, oldest? : string | undefined, includeThreads = true) {
+export async function getChannelMessagesUsingToken(slackUserToken: string, channelId: string, oldest?: string, latest?: string, includeThreads?: boolean) {
+  const client = createUserClientFromToken(slackUserToken);
+  return await _getChannelMessages(client, channelId, oldest,latest, includeThreads);
+}
+
+export async function getChannelMessages(slackId: string, channelId: string, oldest?: string, latest?: string, includeThreads = true) {
   const client = await createUserClient(slackId);
+  return await _getChannelMessages(client, channelId, oldest, latest, includeThreads);
+}
+
+async function _getChannelMessages(client: WebClient, channelId: string, oldest?: string, latest?: string, includeThreads = true) {
   const conversationsHistoryArguments: ConversationsHistoryArguments = {
     channel: channelId,
-    oldest
+    oldest,
+    latest,
+    inclusive: true
   };
   const history = await client.conversations.history(conversationsHistoryArguments);
   
@@ -217,7 +247,7 @@ export async function getChannelMessages(slackId: string, channelId: string, old
     const messages: Message[] = [];
     for(const message of history.messages ?? []) {
       if(message.reply_count && message.reply_count > 0 && message.ts) {
-        const threadMessages = await getThreadMessages(slackId, channelId, message.ts);
+        const threadMessages = await _getThreadMessages(client, channelId, message.ts);
         // Reverse the order of the thread messages because they are returned oldest first
         // whereas channel messages returned newest first.
         messages.push(...threadMessages.reverse());
@@ -227,7 +257,8 @@ export async function getChannelMessages(slackId: string, channelId: string, old
         messages.push({
           user: message.user ?? "",
           text: message.text ?? "",
-          date
+          date,
+          ts: message.ts ?? ""
         });
       }
     }
@@ -256,6 +287,31 @@ export async function getUserRealName(userId: string) {
   return usersInfoResponse.user?.real_name;
 }
 
+export async function getPublicChannelsUsingToken(slackUserToken: string, team_id: string) {
+  const client = createUserClientFromToken(slackUserToken);
+  return await _getPublicChannels(client, team_id);
+}
+
+export async function getPublicChannels(team_id: string) {
+  const client = await createClient();
+  return await _getPublicChannels(client, team_id);
+}
+
+async function _getPublicChannels(client: WebClient, team_id: string) {
+  const conversationsListArguments: ConversationsListArguments = {
+    types: "public_channel",
+    team_id
+  };
+  const conversationsListResponse = await client.conversations.list(conversationsListArguments);
+  return conversationsListResponse.channels;
+}
+
+export async function getTeams() {
+  const client = await createClient();
+  const authTeamsListResponse = await client.auth.teams.list();
+  return authTeamsListResponse.teams;
+}
+
 export type PromptCommandPayload = {
   channel?: string,
   user_id: string,
@@ -275,6 +331,9 @@ type ArrayElement<ArrayType extends readonly unknown[]> =
 type FilesArray = NonNullable<GenericMessageEvent['files']>;
 export type File = ArrayElement<FilesArray>;
 
+// Channel is exported from @slack/web-api/dist/response/ConversationsListResponse
+// But that's a bit weird for other files to import, so just re-export it here
+export type { Channel } from '@slack/web-api/dist/response/ConversationsListResponse';
 
 export type Action = {
   action_id: string,

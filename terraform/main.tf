@@ -51,7 +51,9 @@ module "gemini_project" {
     google      = google.gemini_project
     google-beta = google-beta.gemini_project_beta
   }
+  gcp_region                  = var.gcp_region
   gcp_gemini_project_id       = var.gcp_gemini_project_id
+  gcp_gemini_project_number   = var.gcp_gemini_project_number
   gcp_identity_project_number = var.gcp_identity_project_number
   aws_account_id              = var.aws_account_id
   workload_identity_pool_id   = module.identity_project.workload_identity_pool_id

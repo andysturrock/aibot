@@ -1,0 +1,5 @@
+functions-framework==3.*
+python-dotenv
+vertexai
+grpcio==1.64.0
+grpcio-status==1.64.0
