@@ -12,8 +12,14 @@ def http(request):
         Response object using `make_response`
         <https://flask.palletsprojects.com/en/1.1.x/api/#flask.make_response>.
     """
+    if request.headers.get('X-CloudScheduler') != 'true':
+        print("Request not authenticated as coming from Cloud Scheduler.")
+        # return "Request not authenticated as coming from Cloud Scheduler.", 403
+
     request_json = request.get_json(silent=True)
     request_args = request.args
+
+    print(f"*****\nrequest: {request}\n*****\n")
 
     if request_json and 'name' in request_json:
         name = request_json['name']
@@ -21,4 +27,4 @@ def http(request):
         name = request_args['name']
     else:
         name = 'World'
-    return 'Hello {}!'.format(name)
+    return f"Hello {name}!"

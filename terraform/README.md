@@ -26,6 +26,7 @@ roles/Service Usage Admin
 roles/Artifact Registry Writer
 cloudfunctions.functions.create
 cloudfunctions.functions.delete
+cloudfunctions.functions.update
 cloudfunctions.operations.get
 cloudfunctions.functions.get
 cloudfunctions.functions.getIamPolicy
@@ -33,6 +34,9 @@ cloudscheduler.jobs.create
 cloudscheduler.jobs.enable
 cloudscheduler.jobs.get
 cloudscheduler.jobs.delete
+cloudscheduler.jobs.update
+run.services.getIamPolicy
+run.services.setIamPolicy
 iam.roles.create
 iam.roles.delete
 iam.roles.get
