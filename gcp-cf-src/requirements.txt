@@ -3,3 +3,8 @@ python-dotenv
 vertexai
 grpcio==1.64.0
 grpcio-status==1.64.0
+boto3
+slack_sdk
+dataclasses
+google-cloud-secret-manager
+jsonpickle

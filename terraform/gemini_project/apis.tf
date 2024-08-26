@@ -29,3 +29,11 @@ resource "google_project_service" "cloudrun_api" {
   // Don't disable this API when we run tf destroy.
   disable_on_destroy = false
 }
+
+# Enable the Secret Manager API
+resource "google_project_service" "secretmanager_api" {
+  project = var.gcp_gemini_project_id
+  service = "secretmanager.googleapis.com"
+  // Don't disable this API when we run tf destroy.
+  disable_on_destroy = false
+}

@@ -1,3 +1,9 @@
+resource "google_storage_bucket" "aibot_slack_messages" {
+  name                        = "aibot_slack_messages_${random_id.name_suffix.hex}"
+  location                    = "EU"
+  uniform_bucket_level_access = true
+}
+
 resource "google_storage_bucket" "aibot_gcf_source" {
   name                        = "aibot_gcf_source_${random_id.name_suffix.hex}"
   location                    = "EU"
@@ -12,9 +18,9 @@ resource "google_storage_bucket_object" "collect_slack_messages_source_zip" {
   # The timestamp() in the name forces a rebuild.  Without it even if the source code changes the function won't be updated.
   # It's overly cautious as it will still rebuild the function even if the code hasn't changed, but
   # better cautious and slightly slow than not deploy changed functionality.
-  name           = "collect_slack_messages.${timestamp()}.zip"
+  name           = "handle_collect_slack_messages.${timestamp()}.zip"
   bucket         = google_storage_bucket.aibot_gcf_source.name
-  source         = "${path.root}/dist/collect_slack_messages.zip"
+  source         = "${path.root}/dist/handle_collect_slack_messages.zip"
   detect_md5hash = true
 }
 
@@ -28,7 +34,7 @@ resource "google_cloudfunctions2_function" "collect_slack_messages" {
 
   build_config {
     runtime     = "python312"
-    entry_point = "http"
+    entry_point = "handle_collect_slack_messages"
     source {
       storage_source {
         bucket = google_storage_bucket.aibot_gcf_source.name
@@ -61,6 +67,8 @@ data "google_iam_policy" "collect_slack_messages" {
 }
 
 resource "google_cloud_run_service_iam_policy" "collect_slack_messages" {
+  # This is the bit where we need the cloud function name and cloud run service name to match.
+  # Note we use the function name in the service section and this is a google_cloud_run_service_iam_policy resource.
   service = google_cloudfunctions2_function.collect_slack_messages.name
   policy_data = data.google_iam_policy.collect_slack_messages.policy_data
   depends_on = [google_cloudfunctions2_function.collect_slack_messages]
@@ -69,23 +77,6 @@ resource "google_cloud_run_service_iam_policy" "collect_slack_messages" {
     replace_triggered_by = [google_cloudfunctions2_function.collect_slack_messages]
   }
 }
-
-# IAM Binding for the generated cloud run service.
-# resource "google_cloud_run_service_iam_binding" "collect_slack_messages" {
-#   # It's here that we need the Cloud Run service name to equal the function name.
-#   # See https://github.com/hashicorp/terraform-provider-google/issues/15264#issuecomment-2000050883
-#   service = google_cloudfunctions2_function.collect_slack_messages.name
-#   role    = "roles/run.invoker"
-#   members = [
-#     "serviceAccount:${google_service_account.collect_slack_messages.email}",
-#   ]
-
-#   depends_on = [google_cloudfunctions2_function.collect_slack_messages]
-
-#   lifecycle {
-#     replace_triggered_by = [google_cloudfunctions2_function.collect_slack_messages]
-#   }
-# }
 
 resource "google_cloud_scheduler_job" "collect_slack_messages" {
   name        = "invoke-collect-slack-messages"
@@ -99,7 +90,6 @@ resource "google_cloud_scheduler_job" "collect_slack_messages" {
     uri         = google_cloudfunctions2_function.collect_slack_messages.service_config[0].uri
     http_method = "POST"
     oidc_token {
-      # audience              = "${google_cloudfunctions2_function.collect_slack_messages.service_config[0].uri}"
       service_account_email = google_service_account.collect_slack_messages.email
     }
   }
