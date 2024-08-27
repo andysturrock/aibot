@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from gcp_api import get_secret_value
 
 from slack_sdk import WebClient
+# See https://slack.dev/python-slack-sdk/web/index.html#retryhandler
+from slack_sdk.http_retry.builtin_handlers import RateLimitErrorRetryHandler
+rate_limit_handler = RateLimitErrorRetryHandler(max_retry_count=5)
 
 
 def create_bot_client():
@@ -22,6 +25,7 @@ def create_client_for_token(user_token):
     """Create a web client using the given token.
     """
     client = WebClient(token=user_token)
+    client.retry_handlers.append(rate_limit_handler)
     return client
 
 
@@ -105,7 +109,7 @@ def _get_channel_messages(client: WebClient,
         for message in history.data.get("messages", []):
             if message.get("reply_count", 0) > 0 and message.get("ts"):
                 thread_messages = _get_thread_messages(
-                    client, channel_id, oldest, latest)
+                    client, channel_id, message.get("ts"), oldest, latest)
                 # Thread messages are returned oldest first, channel messages newest first.
                 # So reverse the thread messages to match the channel message ordering.
                 messages.extend(reversed(thread_messages))

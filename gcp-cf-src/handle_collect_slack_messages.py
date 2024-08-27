@@ -1,7 +1,6 @@
 """ Module containing code to collect Slack messages from public channels.
     They are stored in a GCP Bucket for use by RAG search etc.
 """
-import os
 import json
 from typing import List, Dict
 from datetime import datetime, timedelta, timezone
@@ -10,15 +9,16 @@ from dotenv import load_dotenv
 
 from google.cloud import storage
 from google.cloud.storage.retry import DEFAULT_RETRY
-from google.api_core.client_options import ClientOptions
 
 import jsonpickle
 
 from gcp_api import get_secret_value
 from slack_api import get_public_channels, get_channel_messages_using_token, Message
 
-modified_retry = DEFAULT_RETRY.with_deadline(500.0)
-modified_retry = modified_retry.with_delay(multiplier=10)
+# Change the default retry settings so we don't get 429 errors.
+# modified_retry = DEFAULT_RETRY.with_deadline(500.0)
+# modified_retry = modified_retry.with_delay(multiplier=10)
+modified_retry = DEFAULT_RETRY.with_delay(multiplier=5)
 
 
 def handle_collect_slack_messages(request):
@@ -56,7 +56,7 @@ def download_slack_content():
         'AIBot', 'slackSearchBucketName')
 
     now = datetime.now(timezone.utc)
-    end_of_today = datetime(now.year, now.month, now.day, 23, 59, 59, 999999)
+    end_of_today = create_end_of_day_date(now)
     start_of_tomorrow = end_of_today + timedelta(milliseconds=1)
 
     storage_client = storage.Client()
@@ -76,14 +76,21 @@ def download_slack_content():
                 messages = get_messages_for_day(
                     slack_user_token, public_channel, current_day_to_get_messages)
 
-                channel_bucket_metadata.last_download_date = current_day_to_get_messages.replace(
-                    hour=23, minute=59, second=59, microsecond=999999)
+                # We have got messages for the entire day, so set the last_download_date
+                # to reflect that.
+                channel_bucket_metadata.last_download_date = create_end_of_day_date(
+                    current_day_to_get_messages)
                 put_messages(slack_search_bucket,
                              channel_bucket_metadata, messages)
                 put_channel_bucket_metadata(
                     slack_search_bucket, channel_bucket_metadata)
                 current_day_to_get_messages += timedelta(days=1)
 
+            # For "today" the last download date won't be end of day today,
+            # because that hasn't happened yet.  So set the last_download_date to now.
+            # This doesn't make any difference to the application logic
+            # as we always get a full day, but it might be confusing if someone
+            # looks at the metadata file.
             channel_bucket_metadata.last_download_date = now
             put_channel_bucket_metadata(
                 slack_search_bucket, channel_bucket_metadata)
@@ -93,12 +100,15 @@ def create_start_of_day_date(day: datetime) -> datetime:
     return day.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+def create_end_of_day_date(day: datetime) -> datetime:
+    return day.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+
 def get_messages_for_day(slack_user_token: str, channel: Dict, day: datetime) -> List[Dict]:
     if not channel.get('id'):
         raise ValueError("channel.id is missing")
     start_of_day = create_start_of_day_date(day)
-    end_of_day = start_of_day.replace(
-        hour=23, minute=59, second=59, microsecond=999999)
+    end_of_day = create_end_of_day_date(day)
     print(f"Getting messages for {channel.get('name', 'Unknown')} ({channel['id']}) between {
           start_of_day.isoformat()} and {end_of_day.isoformat()}...")
     messages = get_channel_messages_using_token(slack_user_token,
@@ -135,12 +145,13 @@ def get_channel_bucket_metadata(slack_search_bucket: storage.Bucket, channel: Di
     if not channel.get('created'):
         raise ValueError("channel.created is missing")
 
-    created_date = datetime.fromtimestamp(channel['created'])
+    # Default version if the file doesn't exist.
+    created_date = datetime.fromtimestamp(channel['created'], tz=timezone.utc)
     channel_bucket_metadata = ChannelBucketMetadata(
         channel['id'],
         channel['name'],
-        created_date,
-        created_date
+        created_date=created_date,
+        last_download_date=created_date
     )
 
     channel_bucket_metadata_file_name = f"{channel['id']}/metadata.json"
@@ -149,6 +160,11 @@ def get_channel_bucket_metadata(slack_search_bucket: storage.Bucket, channel: Di
     if channel_bucket_metadata_file.exists():
         channel_bucket_metadata = ChannelBucketMetadata.from_dict(
             json.loads(channel_bucket_metadata_file.download_as_string()))
+        # Make the dates timezone aware.  Everything is in GMT so just use that.
+        channel_bucket_metadata.created_date = channel_bucket_metadata.created_date.replace(
+            tzinfo=timezone.utc)
+        channel_bucket_metadata.last_download_date = channel_bucket_metadata.last_download_date.replace(
+            tzinfo=timezone.utc)
 
     return channel_bucket_metadata
 
