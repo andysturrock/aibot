@@ -22,7 +22,8 @@ modified_retry = DEFAULT_RETRY.with_delay(multiplier=5)
 
 
 def handle_collect_slack_messages(request):
-    return f"Hello {request}!"
+    print(f"handle_collect_slack_messages: {request}!")
+    return "OK"
 
 
 class ChannelBucketMetadata:

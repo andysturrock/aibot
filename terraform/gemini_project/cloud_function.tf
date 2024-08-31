@@ -2,12 +2,14 @@ resource "google_storage_bucket" "aibot_slack_messages" {
   name                        = "aibot_slack_messages_${random_id.name_suffix.hex}"
   location                    = "EU"
   uniform_bucket_level_access = true
+  force_destroy               = true
 }
 
 resource "google_storage_bucket" "aibot_gcf_source" {
   name                        = "aibot_gcf_source_${random_id.name_suffix.hex}"
   location                    = "EU"
   uniform_bucket_level_access = true
+  force_destroy               = true
 }
 
 # The zip files must have been created before running tf apply.
@@ -59,7 +61,7 @@ resource "google_service_account" "collect_slack_messages" {
 
 data "google_iam_policy" "collect_slack_messages" {
   binding {
-    role = "roles/viewer"
+    role = "roles/run.invoker"
     members = [
       "serviceAccount:${google_service_account.collect_slack_messages.email}"
     ]
@@ -69,9 +71,9 @@ data "google_iam_policy" "collect_slack_messages" {
 resource "google_cloud_run_service_iam_policy" "collect_slack_messages" {
   # This is the bit where we need the cloud function name and cloud run service name to match.
   # Note we use the function name in the service section and this is a google_cloud_run_service_iam_policy resource.
-  service = google_cloudfunctions2_function.collect_slack_messages.name
+  service     = google_cloudfunctions2_function.collect_slack_messages.name
   policy_data = data.google_iam_policy.collect_slack_messages.policy_data
-  depends_on = [google_cloudfunctions2_function.collect_slack_messages]
+  depends_on  = [google_cloudfunctions2_function.collect_slack_messages]
 
   lifecycle {
     replace_triggered_by = [google_cloudfunctions2_function.collect_slack_messages]
@@ -87,10 +89,19 @@ resource "google_cloud_scheduler_job" "collect_slack_messages" {
   region      = google_cloudfunctions2_function.collect_slack_messages.location
 
   http_target {
-    uri         = google_cloudfunctions2_function.collect_slack_messages.service_config[0].uri
+    uri = "https://collect-slack-messages-${var.gcp_gemini_project_number}.${var.gcp_region}.run.app"
     http_method = "POST"
     oidc_token {
       service_account_email = google_service_account.collect_slack_messages.email
     }
   }
+
+  # Needs this otherwise the function is replaced (changing its URL) and this doesn't get updated to match.
+  depends_on = [google_cloudfunctions2_function.collect_slack_messages]
+  lifecycle {
+    replace_triggered_by = [google_cloudfunctions2_function.collect_slack_messages]
+  }
 }
+
+
+
