@@ -105,3 +105,83 @@ resource "google_cloud_scheduler_job" "collect_slack_messages" {
 
 
 
+resource "google_bigquery_dataset" "aibot_slack_messages" {
+  dataset_id                  = "aibot_slack_messages"
+  friendly_name               = "AI Bot Slack Messages"
+  description                 = "Slack messages for search by AI Bot"
+  location                    = "EU"
+}
+
+resource "google_bigquery_table" "slack_content" {
+  dataset_id = google_bigquery_dataset.aibot_slack_messages.dataset_id
+  table_id   = "slack_content"
+
+  schema = <<EOF
+[
+  {
+    "name": "workspace",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Slack workspace id"
+  },
+  {
+    "name": "channel",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Slack channel id"
+  },
+  {
+    "name": "ts",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Slack timestamp of the message"
+  },
+  {
+    "name": "text",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Text of Slack message"
+  },
+  {
+    "name": "embeddings",
+    "type": "FLOAT",
+    "mode": "REPEATED",
+    "description": "Embeddings for content"
+  }
+]
+EOF
+}
+
+resource "google_bigquery_table" "slack_content_metadata" {
+  dataset_id = google_bigquery_dataset.aibot_slack_messages.dataset_id
+  table_id   = "slack_content_metadata"
+
+  schema = <<EOF
+[
+  {
+    "name": "channel_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Slack channel id"
+  },
+  {
+    "name": "channel_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Slack channel name"
+  },
+  {
+    "name": "created_datetime",
+    "type": "DATETIME",
+    "mode": "REQUIRED",
+    "description": "Datetime channel was created"
+  },
+  {
+    "name": "last_download_datetime",
+    "type": "DATETIME",
+    "mode": "REQUIRED",
+    "description": "Last time channel content was downloaded"
+  }
+]
+EOF
+}
