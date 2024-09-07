@@ -132,7 +132,7 @@ resource "google_bigquery_table" "slack_content" {
   },
   {
     "name": "ts",
-    "type": "STRING",
+    "type": "FLOAT",
     "mode": "REQUIRED",
     "description": "Slack timestamp of the message"
   },
