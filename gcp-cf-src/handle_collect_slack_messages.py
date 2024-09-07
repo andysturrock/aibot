@@ -19,9 +19,11 @@ CONTENT_TABLE_NAME = "slack_content"
 METADATA_TABLE_NAME = "slack_content_metadata"
 
 
-def handle_collect_slack_messages(request):
-    print(f"handle_collect_slack_messages: {request}!")
-    return "OK"
+class MessageWithEmbeddings(Message):
+    embeddings: List[float]
+
+    def __init__(self, message: Message):
+        super().__init__(message.user, message.text, message.date, message.ts)
 
 
 @dataclass
@@ -112,14 +114,6 @@ def download_slack_content():
                 bigquery_client, channel_bucket_metadata)
 
 
-# @dataclass
-class MessageWithEmbeddings(Message):
-    embeddings: List[float]
-
-    def __init__(self, message: Message):
-        super().__init__(message.user, message.text, message.date, message.ts)
-
-
 def create_message_embeddings(messages: List[Message]) -> List[MessageWithEmbeddings]:
     task = "RETRIEVAL_QUERY"
     output_dimensionality = 256
@@ -187,6 +181,7 @@ def put_messages(bigquery_client: bigquery.Client, team_id: str, channel_id: str
 def put_channel_bucket_metadata(bigquery_client: bigquery.Client, channel_bucket_metadata: ChannelBucketMetadata):
     # Use query jobs rather than insert_rows so we bypass the streaming buffer.
     # Otherwise we can't delete the old rows for 90 mins.
+    # TODO migrate to https://cloud.google.com/bigquery/docs/write-api-streaming#exactly-once
     query = f"""
     INSERT INTO {DATASET_NAME}.{METADATA_TABLE_NAME} (
         channel_id,
@@ -263,7 +258,7 @@ def create_embeddings_for_query(text: str):
 
 def vector_search(bigquery_client: bigquery.Client, search_embeddings: List[float]):
     query = f"""
-    SELECT base.workspace, base.channel, base.ts, base.text, distance
+    SELECT distinct base.workspace, base.channel, base.ts, base.text, distance
         FROM VECTOR_SEARCH(
         TABLE `aibot_slack_messages.slack_content`,
         'embeddings',
@@ -284,10 +279,39 @@ def vector_search(bigquery_client: bigquery.Client, search_embeddings: List[floa
         print(f"result: {result}")
 
 
-if __name__ == "__main__":
+def handle_collect_slack_messages(request):
+    """Entry point when called as a GCP Cloud Function
+    """
+    print(f"handle_collect_slack_messages: {request}!")
+    return "OK"
+
+
+def main():
+    """Entry point for local testing.
+    """
     load_dotenv()
-    # download_slack_content()
+    download_slack_content()
     embeddings = create_embeddings_for_query(
-        "Who joined a channel?")
+        "Everything is just so Easy to do with atom")
     bigquery_client = bigquery.Client()
     vector_search(bigquery_client, embeddings)
+
+
+if __name__ == "__main__":
+    main()
+
+# Query to delete duplicates from slack_content table
+# TODO schedule this on a timer
+# delete from aibot_slack_messages.slack_content as content
+# where exists (
+#   select content.workspace, content.channel, content.ts, content.text
+#   from (
+#     select count(ts) as count, workspace, channel, ts, text from aibot_slack_messages.slack_content
+#       group by workspace, channel, ts, text
+#       having count(ts) > 1
+#   ) as dups
+#   where content.workspace = dups.workspace
+#   and content.channel = dups.channel
+#   and content.ts = dups.ts
+#   and content.text = dups.text
+#   and TIMESTAMP_SECONDS(cast(content.ts as INT64)) < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 MINUTE))
