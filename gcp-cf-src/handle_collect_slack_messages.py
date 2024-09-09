@@ -292,7 +292,7 @@ def main():
     load_dotenv()
     download_slack_content()
     embeddings = create_embeddings_for_query(
-        "Everything is just so Easy to do with atom")
+        "Good reviews about Atom")
     bigquery_client = bigquery.Client()
     vector_search(bigquery_client, embeddings)
 

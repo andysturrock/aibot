@@ -7,7 +7,8 @@ resource "google_project_iam_custom_role" "aibot_role" {
     "aiplatform.endpoints.predict",
     "discoveryengine.servingConfigs.search",
     "storage.objects.create",
-    "storage.objects.delete"
+    "storage.objects.delete",
+    "bigquery.tables.getData"
   ]
 }
 
