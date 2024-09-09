@@ -1,6 +1,6 @@
 import { helpers, PredictionServiceClient } from '@google-cloud/aiplatform';
 import { google } from '@google-cloud/aiplatform/build/protos/protos';
-import { BigQuery } from '@google-cloud/bigquery';
+import { BigQuery, BigQueryOptions } from '@google-cloud/bigquery';
 import { GenerateContentRequest, GenerativeModel, GenerativeModelPreview, TextPart } from '@google-cloud/vertexai';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
@@ -59,7 +59,15 @@ export async function handleSlackSearch(slackSummaryModel: GenerativeModel | Gen
   console.log(`Generating embeddings...`);
   const searchEmbeddings  = await generateEmbeddings(modelFunctionCallArgs.prompt);
   console.log(`searchEmbeddings: ${util.inspect(searchEmbeddings, false, null)}`);
-  const bigQuery = new BigQuery();
+  const project = await getSecretValue('AIBot', 'gcpProjectId');
+  // Region is something like eu-west2, multi-region is when you can specify "eu" or "us"
+  const location = await getSecretValue('AIBot', 'gcpMultiRegion');
+  const bigQueryOptions: BigQueryOptions = {
+    projectId: project,
+    location,
+    scopes: ['https://www.googleapis.com/auth/bigquery']
+  };
+  const bigQuery = new BigQuery(bigQueryOptions);
 
   const query = `
     SELECT distinct base.workspace, base.channel, base.ts, base.text, distance

@@ -12,9 +12,25 @@ resource "google_project_iam_custom_role" "aibot_role" {
   ]
 }
 
-resource "google_project_iam_binding" "aibot_binding" {
+resource "google_project_iam_binding" "aibot_lambda_custom_role_binding" {
   project = var.gcp_gemini_project_id
   role    = "projects/${var.gcp_gemini_project_id}/roles/${google_project_iam_custom_role.aibot_role.role_id}"
+  members = [
+    "principal://iam.googleapis.com/projects/${var.gcp_identity_project_number}/locations/global/workloadIdentityPools/${var.workload_identity_pool_id}/subject/arn:aws:sts::${var.aws_account_id}:assumed-role/handlePromptCommandLambdaRole/AIBot-handlePromptCommandLambda",
+  ]
+}
+
+resource "google_project_iam_binding" "aibot_lambda_bigquery_data_viewer" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/bigquery.dataViewer"
+  members = [
+    "principal://iam.googleapis.com/projects/${var.gcp_identity_project_number}/locations/global/workloadIdentityPools/${var.workload_identity_pool_id}/subject/arn:aws:sts::${var.aws_account_id}:assumed-role/handlePromptCommandLambdaRole/AIBot-handlePromptCommandLambda",
+  ]
+}
+
+resource "google_project_iam_binding" "aibot_lambda_bigquery_job_user" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/bigquery.jobUser"
   members = [
     "principal://iam.googleapis.com/projects/${var.gcp_identity_project_number}/locations/global/workloadIdentityPools/${var.workload_identity_pool_id}/subject/arn:aws:sts::${var.aws_account_id}:assumed-role/handlePromptCommandLambdaRole/AIBot-handlePromptCommandLambda",
   ]
