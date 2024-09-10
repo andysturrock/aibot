@@ -1,10 +1,3 @@
-resource "google_storage_bucket" "aibot_slack_messages" {
-  name                        = "aibot_slack_messages_${random_id.name_suffix.hex}"
-  location                    = "EU"
-  uniform_bucket_level_access = true
-  force_destroy               = true
-}
-
 resource "google_storage_bucket" "aibot_gcf_source" {
   name                        = "aibot_gcf_source_${random_id.name_suffix.hex}"
   location                    = "EU"
