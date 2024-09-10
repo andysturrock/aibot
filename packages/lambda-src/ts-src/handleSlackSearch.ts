@@ -1,11 +1,12 @@
 import { helpers, PredictionServiceClient } from '@google-cloud/aiplatform';
 import { google } from '@google-cloud/aiplatform/build/protos/protos';
 import { BigQuery, BigQueryOptions } from '@google-cloud/bigquery';
-import { GenerateContentRequest, GenerativeModel, GenerativeModelPreview, TextPart } from '@google-cloud/vertexai';
+import { Citation, CitationMetadata, GenerateContentRequest, GenerativeModel, GenerativeModelPreview, TextPart } from '@google-cloud/vertexai';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
 import { ModelFunctionCallArgs } from './handleAICommon';
-// import { helpers } from '@google-cloud/aiplatform';
+import { getPermaLink } from './slackAPI';
+// Makes util.inspect print large structures (eg embeddings arrays) in full rather than truncating.
 util.inspect.defaultOptions.maxArrayLength = null;
 
 async function generateEmbeddings(text: string) {
@@ -58,7 +59,6 @@ export async function handleSlackSearch(slackSummaryModel: GenerativeModel | Gen
   }
   console.log(`Generating embeddings...`);
   const searchEmbeddings  = await generateEmbeddings(modelFunctionCallArgs.prompt);
-  console.log(`searchEmbeddings: ${util.inspect(searchEmbeddings, false, null)}`);
   const project = await getSecretValue('AIBot', 'gcpProjectId');
   // Region is something like eu-west2, multi-region is when you can specify "eu" or "us"
   const location = await getSecretValue('AIBot', 'gcpMultiRegion');
@@ -92,14 +92,19 @@ export async function handleSlackSearch(slackSummaryModel: GenerativeModel | Gen
 
   console.log(`Doing vector query ${query}...`);
   const [job] = await bigQuery.createQueryJob(options);
-  console.log(`Getting query results...`);
-  const [rows] = await job.getQueryResults();
-  console.log('Rows:');
-  rows.forEach(row => { console.log(row); });
+  type Row = {
+    workspace: string,
+    channel: string,
+    ts: number,
+    text: string,
+    distance: number
+  };
+  const queryRowsResponse = await job.getQueryResults();
+  const rows = queryRowsResponse[0] as Row[];
   
   const prompt = `
     The data below is a set of Slack messages.  The messages have been pre-selected to contain relevant content about the question.
-    Using the content below, respond to the request "${modelFunctionCallArgs.prompt}"
+    Using the content below, respond to the request "${modelFunctionCallArgs.prompt}".
     ${util.inspect(rows, false, null)}
   `;
   console.log(`prompt: ${prompt}`);
@@ -114,5 +119,29 @@ export async function handleSlackSearch(slackSummaryModel: GenerativeModel | Gen
     text: prompt
   };
   lastUserContent.parts.push(promptPart);
-  return await slackSummaryModel.generateContent(generateContentRequest);
+
+  const content = await slackSummaryModel.generateContent(generateContentRequest);
+  // Add the original set of messages in as Citations
+  const citations: Citation[] = [];
+  for(const row of rows) {
+    // Slack has a handy API for getting a permalink to a message given its channel and timestamp
+    const uri = await getPermaLink(row.channel, `${row.ts}`);
+    const citation: Citation = {
+      uri,
+      title: row.text
+    };
+    citations.push(citation);
+  }
+  if(content.response.candidates?.[0]) {
+    if(content.response.candidates[0].citationMetadata) {
+      content.response.candidates[0].citationMetadata.citations = citations;
+    }
+    else {
+      const citationMetadata: CitationMetadata = {
+        citations
+      };
+      content.response.candidates[0].citationMetadata = citationMetadata;
+    }
+  }
+  return content;
 }

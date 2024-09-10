@@ -119,9 +119,7 @@ export async function callModelFunction(functionCall: FunctionCall,
   };
   generateContentRequest.contents.push(promptContent);
 
-  //console.log(`callModelFunction generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
   const generateContentResult = await modelFunction(args, generateContentRequest);
-  //console.log(`callModelFunction generateContentResult: ${util.inspect(generateContentResult, false, null)}`);
   // If there are no content parts it's because something has gone wrong, eg hit a safety stop.
   // The finishReason has the reason for the unexpected stop so tell the user that.
   if(!generateContentResult.response.candidates?.[0].content.parts) {
@@ -142,13 +140,24 @@ export async function callModelFunction(functionCall: FunctionCall,
   history.push(responseContent);
   await putHistoryFunction(args.channelId, args.parentThreadTs, history, functionCall.name);
 
-  // Create the attributions.
-  const groundingChunks = generateContentResult.response.candidates?.[0].groundingMetadata?.groundingChunks ?? [];
+  // Create the attributions
   response.content.attributions = [];
+  // First from groundings.
+  const groundingChunks = generateContentResult.response.candidates?.[0].groundingMetadata?.groundingChunks ?? [];
   groundingChunks.reduce((attributions, groundingChunk) => {
     const attribution: Attribution = {
       title: groundingChunk.retrievedContext?.title,
       uri: groundingChunk.retrievedContext?.uri
+    };
+    attributions.push(attribution);
+    return attributions;
+  }, response.content.attributions);
+  // Or from Citations
+  const citations = generateContentResult.response.candidates?.[0].citationMetadata?.citations ?? [];
+  citations.reduce((attributions, citation) => {
+    const attribution: Attribution = {
+      title: citation.title,
+      uri: citation.uri
     };
     attributions.push(attribution);
     return attributions;

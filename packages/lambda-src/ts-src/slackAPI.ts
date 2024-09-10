@@ -2,6 +2,7 @@ import { Block, GenericMessageEvent, HomeView, KnownBlock } from "@slack/bolt";
 import {
   BotsInfoArguments,
   ChatDeleteArguments,
+  ChatGetPermalinkArguments,
   ConversationsHistoryArguments,
   ConversationsListArguments,
   ConversationsRepliesArguments,
@@ -310,6 +311,16 @@ export async function getTeams() {
   const client = await createClient();
   const authTeamsListResponse = await client.auth.teams.list();
   return authTeamsListResponse.teams;
+}
+
+export async function getPermaLink(channelId: string, ts: string) {
+  const client = await createClient();
+  const chatGetPermalinkArguments: ChatGetPermalinkArguments = {
+    channel: channelId,
+    message_ts: ts
+  };
+  const chatGetPermalinkResponse = await client.chat.getPermalink(chatGetPermalinkArguments);
+  return chatGetPermalinkResponse.permalink;
 }
 
 export type PromptCommandPayload = {
