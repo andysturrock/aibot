@@ -178,3 +178,10 @@ resource "google_bigquery_table" "slack_content_metadata" {
 ]
 EOF
 }
+
+resource "google_bigquery_job" "vector_index" {
+  job_id     = "create_vector_index"
+  query {
+    query = "CREATE VECTOR INDEX embeddings ON ${google_bigquery_dataset.aibot_slack_messages.dataset_id}.${google_bigquery_table.slack_content.id}(embeddings) OPTIONS(index_type = 'IVF')"
+  }
+}
