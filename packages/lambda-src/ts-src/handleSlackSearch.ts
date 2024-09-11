@@ -17,10 +17,8 @@ async function generateEmbeddings(text: string) {
   const model = "text-embedding-004";
   const endpoint = `projects/${gcpProjectId}/locations/${gcpLocation}/publishers/google/models/${model}`;
   const taskType = "RETRIEVAL_QUERY";
-  const outputDimensionality = 256;
 
   const instances = [helpers.toValue({content: text, task_type: taskType})] as google.protobuf.IValue[];
-  const parameters = helpers.toValue({outputDimensionality: outputDimensionality});
   
   // From @google-cloud/aiplatform/build/protos/protos.d.ts
   type IPredictRequest = {
@@ -28,7 +26,7 @@ async function generateEmbeddings(text: string) {
     instances?: (google.protobuf.IValue[]|null);
     parameters?: (google.protobuf.IValue|null);
   };
-  const request: IPredictRequest = {endpoint, instances, parameters};
+  const request: IPredictRequest = {endpoint, instances};
   const client = new PredictionServiceClient(clientOptions);
   const [response] = await client.predict(request);
   const predictions = response.predictions;

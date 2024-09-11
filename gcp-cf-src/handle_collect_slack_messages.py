@@ -116,15 +116,13 @@ def download_slack_content():
 
 def create_message_embeddings(messages: List[Message]) -> List[MessageWithEmbeddings]:
     task = "RETRIEVAL_QUERY"
-    output_dimensionality = 256
     model = TextEmbeddingModel.from_pretrained("text-embedding-004")
 
     messages_with_embeddings: List[MessageWithEmbeddings] = list()
     for message in messages:
         message_with_embeddings = MessageWithEmbeddings(message)
         inputs = [TextEmbeddingInput(message_with_embeddings.text, task)]
-        embeddings = model.get_embeddings(
-            inputs, output_dimensionality=output_dimensionality)
+        embeddings = model.get_embeddings(inputs)
 
         message_with_embeddings.embeddings = embeddings[0].values
         messages_with_embeddings.append(message_with_embeddings)
