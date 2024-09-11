@@ -82,7 +82,7 @@ resource "google_cloud_scheduler_job" "collect_slack_messages" {
   region      = google_cloudfunctions2_function.collect_slack_messages.location
 
   http_target {
-    uri = "https://collect-slack-messages-${var.gcp_gemini_project_number}.${var.gcp_region}.run.app"
+    uri         = "https://collect-slack-messages-${var.gcp_gemini_project_number}.${var.gcp_region}.run.app"
     http_method = "POST"
     oidc_token {
       service_account_email = google_service_account.collect_slack_messages.email
@@ -99,10 +99,10 @@ resource "google_cloud_scheduler_job" "collect_slack_messages" {
 
 
 resource "google_bigquery_dataset" "aibot_slack_messages" {
-  dataset_id                  = "aibot_slack_messages"
-  friendly_name               = "AI Bot Slack Messages"
-  description                 = "Slack messages for search by AI Bot"
-  location                    = "EU"
+  dataset_id    = "aibot_slack_messages"
+  friendly_name = "AI Bot Slack Messages"
+  description   = "Slack messages for search by AI Bot"
+  location      = "EU"
 }
 
 resource "google_bigquery_table" "slack_content" {
@@ -179,9 +179,12 @@ resource "google_bigquery_table" "slack_content_metadata" {
 EOF
 }
 
-resource "google_bigquery_job" "vector_index" {
-  job_id     = "create_vector_index"
-  query {
-    query = "CREATE VECTOR INDEX embeddings ON ${google_bigquery_dataset.aibot_slack_messages.dataset_id}.${google_bigquery_table.slack_content.id}(embeddings) OPTIONS(index_type = 'IVF')"
-  }
-}
+# Uncomment this when there are over 5000 rows in the table.  BQ won't let you create indexes on empty tables.
+# resource "google_bigquery_job" "vector_index" {
+#   job_id = "create_vector_index_${random_id.name_suffix.hex}"
+#   query {
+#     query          = "CREATE VECTOR INDEX embeddings ON ${google_bigquery_dataset.aibot_slack_messages.dataset_id}.${google_bigquery_table.slack_content.id}(embeddings) OPTIONS(index_type = 'IVF')"
+#     use_legacy_sql = false
+#   }
+#   location = "EU"
+# }
