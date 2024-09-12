@@ -536,6 +536,10 @@ export function formatResponse(responseString: string) {
   responseString = responseString.replace(/[^\x20-\x7E]/g, '');
   // Remove octal escape sequences
   responseString = responseString.replace(/\\[0-7]{3}/g, '');
+  // Remove bullet point character
+  responseString = responseString.replace(/\u2022/g, '');
+  // Remove everything outside normal ASCII range
+  responseString = responseString.replace(/[^ -~]/g, '');
     
   // First try to extract the model's answer into our expected JSON schema
   let response: Response;
