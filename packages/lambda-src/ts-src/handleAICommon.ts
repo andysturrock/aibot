@@ -531,13 +531,15 @@ export function formatResponse(responseString: string) {
     .replace(/\\t/g, "\\t")
     .replace(/\\b/g, "\\b")
     .replace(/\\f/g, "\\f");
-
+  
   // Remove unprintable chars/unicode
   responseString = responseString.replace(/[^\x20-\x7E]/g, '');
   // Remove octal escape sequences
   responseString = responseString.replace(/\\[0-7]{3}/g, '');
   // Remove bullet point character
   responseString = responseString.replace(/\u2022/g, '');
+  // Remove rightwards arrow character
+  responseString = responseString.replace(/\u27B5/g, '');
   // Remove everything outside normal ASCII range
   responseString = responseString.replace(/[^ -~]/g, '');
     

@@ -4,6 +4,7 @@ import {
   ChatDeleteArguments,
   ChatGetPermalinkArguments,
   ConversationsHistoryArguments,
+  ConversationsInfoArguments,
   ConversationsListArguments,
   ConversationsRepliesArguments,
   LogLevel,
@@ -185,15 +186,22 @@ export async function postErrorMessageToResponseUrl(responseUrl: string, text: s
 }
 
 export type Message = {
+  channel: string,
   user: string,
   text: string,
   date?: Date,
-  ts: string
+  ts: string,
+  threadTs?: string
 };
 
 function tsToDate(ts: string) {
   const seconds = ts.split('.')[0];
   return ts ? new Date(Number.parseInt(seconds) * 1000) : undefined;
+}
+
+export async function getThreadMessagesUsingToken(slackUserToken: string, channelId: string, threadTs: string, oldest?: string, latest?: string) {
+  const client = createUserClientFromToken(slackUserToken);
+  return await _getThreadMessages(client, channelId, threadTs, oldest, latest);
 }
 
 export async function getThreadMessages(slackId: string, channelId: string, threadTs: string, oldest?: string, latest?: string) {
@@ -215,10 +223,12 @@ async function _getThreadMessages(client: WebClient, channelId: string, threadTs
   const messages: Message[] = messageReplies.map(message => {
     const date = message.ts ? tsToDate(message.ts) : undefined;
     return {
+      channel: channelId,
       user: message.user ?? "",
       text: message.text ?? "",
       date,
-      ts: message.ts ?? ""
+      ts: message.ts ?? "",
+      threadTs: message.thread_ts
     };
   });
   return messages;
@@ -256,6 +266,7 @@ async function _getChannelMessages(client: WebClient, channelId: string, oldest?
       else if(message.type == "message" && message.text && message.text.length > 0) {
         const date = message.ts ? tsToDate(message.ts) : undefined;
         messages.push({
+          channel: channelId,
           user: message.user ?? "",
           text: message.text ?? "",
           date,
@@ -270,6 +281,7 @@ async function _getChannelMessages(client: WebClient, channelId: string, oldest?
     const messageReplies = history.messages?.filter(message => message.type == "message") ?? [];
     const messages: Message[] = messageReplies.map(message => {
       return {
+        channel: channelId,
         user: message.user ?? "",
         text: message.text ?? "",
         ts: message.ts ?? ""
@@ -321,6 +333,27 @@ export async function getPermaLink(channelId: string, ts: string) {
   };
   const chatGetPermalinkResponse = await client.chat.getPermalink(chatGetPermalinkArguments);
   return chatGetPermalinkResponse.permalink;
+}
+
+export async function getChannelName(channelId: string) {
+  const client = await createClient();
+  const conversationsInfoArguments: ConversationsInfoArguments = {
+    channel: channelId,
+  };
+  const conversationsInfoResponse = await client.conversations.info(conversationsInfoArguments);
+  return conversationsInfoResponse.channel?.name;
+}
+
+export async function getMessageTextUsingToken(slackUserToken:string, channelId: string, ts: string) {
+  const client = createUserClientFromToken(slackUserToken);
+  const conversationsHistoryArguments: ConversationsHistoryArguments = {
+    channel: channelId,
+    latest: ts,
+    inclusive: true,
+    limit: 1
+  };
+  const conversationsHistoryResponse = await client.conversations.history(conversationsHistoryArguments);
+  return conversationsHistoryResponse.messages?.[0].text;
 }
 
 export type PromptCommandPayload = {
