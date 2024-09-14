@@ -27,7 +27,7 @@ class MessageWithEmbeddings(Message):
 
 
 @dataclass
-class ChannelBucketMetadata:
+class ChannelMetadata:
     """Metadata about the data downloaded from a channel.
     """
     channel_id: str
@@ -67,9 +67,9 @@ def download_slack_content():
         public_channels = get_public_channels(team_id) or []
         for public_channel in public_channels:
 
-            channel_bucket_metadata = get_channel_bucket_metadata(
+            channel_metadata = get_channel_metadata(
                 bigquery_client, public_channel)
-            current_day_to_get_messages = channel_bucket_metadata.last_download_datetime
+            current_day_to_get_messages = channel_metadata.last_download_datetime
 
             count = 0
             while current_day_to_get_messages < start_of_tomorrow:
@@ -84,34 +84,35 @@ def download_slack_content():
                     print("Generating embeddings...")
                     messages = create_message_embeddings(messages)
                     print("Saving messages...")
-                    put_messages(bigquery_client, team_id,
-                                 public_channel['id'], messages)
+                    put_channel_messages(
+                        bigquery_client, public_channel['id'], messages)
                 else:
                     print("No messages on day")
 
                 # We have got messages for the entire day, so set the last_download_date
                 # to reflect that.
-                channel_bucket_metadata.last_download_datetime = create_end_of_day_date(
+                channel_metadata.last_download_datetime = create_end_of_day_date(
                     current_day_to_get_messages)
                 # Saving the metadata is quite slow so only save periodically.
                 # It's not a big deal if we end up with duplicate message data
                 if count == 100:
                     count = 0
                     print("Saving metadata...")
-                    put_channel_bucket_metadata(
-                        bigquery_client, channel_bucket_metadata)
+                    put_channel_metadata(
+                        bigquery_client, channel_metadata)
 
                 current_day_to_get_messages += timedelta(days=1)
-                print("Done.")
 
             # For "today" the last download datetime won't be end of day today,
             # because that hasn't happened yet.  So set the last_download_datetime to now.
             # This doesn't make any difference to the application logic
             # as we always get a full day, but it might be confusing if someone
             # looks at the metadata directly.
-            channel_bucket_metadata.last_download_datetime = now
-            put_channel_bucket_metadata(
-                bigquery_client, channel_bucket_metadata)
+            print("Saving metadata...")
+            channel_metadata.last_download_datetime = now
+            put_channel_metadata(
+                bigquery_client, channel_metadata)
+            print("Done.")
 
 
 def create_message_embeddings(messages: List[Message]) -> List[MessageWithEmbeddings]:
@@ -150,21 +151,19 @@ def get_messages_for_day(slack_user_token: str, channel: Dict, day: datetime) ->
     return messages
 
 
-def put_messages(bigquery_client: bigquery.Client, team_id: str, channel_id: str, messages: List[MessageWithEmbeddings]):
+def put_channel_messages(bigquery_client: bigquery.Client, channel_id: str, messages: List[MessageWithEmbeddings]):
     if messages:
         @dataclass
         class BQRow:
             """Use this to marshall data into the right form for the BQ table
             """
-            workspace: str
             channel: str
             ts: datetime
-            text: str
             embeddings: List
         bq_rows = []
         for message in messages:
-            row = BQRow(team_id, channel_id, message.ts,
-                        message.text, message.embeddings)
+            row = BQRow(channel_id, message.ts,
+                        message.embeddings)
             bq_rows.append(vars(row))
         table = bigquery_client.get_table(
             f"{DATASET_NAME}.{CONTENT_TABLE_NAME}")
@@ -176,7 +175,7 @@ def put_messages(bigquery_client: bigquery.Client, team_id: str, channel_id: str
             print(f"put_messages result = {result}")
 
 
-def put_channel_bucket_metadata(bigquery_client: bigquery.Client, channel_bucket_metadata: ChannelBucketMetadata):
+def put_channel_metadata(bigquery_client: bigquery.Client, channel_metadata: ChannelMetadata):
     # Use query jobs rather than insert_rows so we bypass the streaming buffer.
     # Otherwise we can't delete the old rows for 90 mins.
     # TODO migrate to https://cloud.google.com/bigquery/docs/write-api-streaming#exactly-once
@@ -188,10 +187,10 @@ def put_channel_bucket_metadata(bigquery_client: bigquery.Client, channel_bucket
         last_download_datetime
     )
     VALUES (
-        "{channel_bucket_metadata.channel_id}",
-        "{channel_bucket_metadata.channel_name}",
-        DATETIME(TIMESTAMP("{channel_bucket_metadata.created_datetime}")),
-        DATETIME(TIMESTAMP("{channel_bucket_metadata.last_download_datetime}"))
+        "{channel_metadata.channel_id}",
+        "{channel_metadata.channel_name}",
+        DATETIME(TIMESTAMP("{channel_metadata.created_datetime}")),
+        DATETIME(TIMESTAMP("{channel_metadata.last_download_datetime}"))
     )
     """
     query_job = bigquery_client.query(query)
@@ -201,14 +200,14 @@ def put_channel_bucket_metadata(bigquery_client: bigquery.Client, channel_bucket
     query = f"""
     DELETE FROM
       {DATASET_NAME}.{METADATA_TABLE_NAME}
-        WHERE channel_id = "{channel_bucket_metadata.channel_id}"
-        and last_download_datetime <> DATETIME(TIMESTAMP("{channel_bucket_metadata.last_download_datetime}"))
+        WHERE channel_id = "{channel_metadata.channel_id}"
+        and last_download_datetime <> DATETIME(TIMESTAMP("{channel_metadata.last_download_datetime}"))
     """
     query_job = bigquery_client.query(query)
     query_job.result()
 
 
-def get_channel_bucket_metadata(bigquery_client: bigquery.Client, channel: Dict) -> ChannelBucketMetadata:
+def get_channel_metadata(bigquery_client: bigquery.Client, channel: Dict) -> ChannelMetadata:
     # The query uses max to deal with the case of multiple rows of metadata for the same channel.
     # This shouldn't really happen but best to be defensive anyway.
     query = f"""
@@ -223,16 +222,16 @@ def get_channel_bucket_metadata(bigquery_client: bigquery.Client, channel: Dict)
         print(f"Returning default metadata for {channel["name"]}")
         created_datetime = datetime.fromtimestamp(
             channel['created'], tz=timezone.utc)
-        channel_bucket_metadata = ChannelBucketMetadata(
+        channel_metadata = ChannelMetadata(
             channel_id=channel['id'],
             channel_name=channel['name'],
             created_datetime=created_datetime,
             last_download_datetime=created_datetime
         )
-        return channel_bucket_metadata
+        return channel_metadata
 
     for row in rows:
-        channel_bucket_metadata = ChannelBucketMetadata(
+        channel_metadata = ChannelMetadata(
             channel_id=row['channel_id'],
             channel_name=row['channel_name'],
             created_datetime=row['created_datetime'].replace(
@@ -240,41 +239,7 @@ def get_channel_bucket_metadata(bigquery_client: bigquery.Client, channel: Dict)
             last_download_datetime=row['last_download_datetime'].replace(
                 tzinfo=timezone.utc)
         )
-        return channel_bucket_metadata
-
-
-def create_embeddings_for_query(text: str):
-    task = "RETRIEVAL_QUERY"
-    output_dimensionality = 256
-    model = TextEmbeddingModel.from_pretrained("text-embedding-004")
-
-    inputs = [TextEmbeddingInput(text, task)]
-    query_embeddings = model.get_embeddings(
-        inputs, output_dimensionality=output_dimensionality)
-    return query_embeddings[0].values
-
-
-def vector_search(bigquery_client: bigquery.Client, search_embeddings: List[float]):
-    query = f"""
-    SELECT distinct base.workspace, base.channel, base.ts, base.text, distance
-        FROM VECTOR_SEARCH(
-        TABLE `aibot_slack_messages.slack_content`,
-        'embeddings',
-        (
-           select {search_embeddings} as search_embeddings
-        ),
-        query_column_to_search => 'search_embeddings',
-        top_k => 15,
-        options => '{{"fraction_lists_to_search": 1.0}}'
-        )
-        order by distance
-    """
-    # options => '{{"fraction_lists_to_search": 0.01}}'
-    print(query)
-    query_job = bigquery_client.query(query)
-    results = query_job.result()
-    for result in results:
-        print(f"result: {result}")
+        return channel_metadata
 
 
 def handle_collect_slack_messages(request):
@@ -289,27 +254,7 @@ def main():
     """
     load_dotenv()
     download_slack_content()
-    embeddings = create_embeddings_for_query(
-        "Good reviews about Atom")
-    bigquery_client = bigquery.Client()
-    vector_search(bigquery_client, embeddings)
 
 
 if __name__ == "__main__":
     main()
-
-# Query to delete duplicates from slack_content table
-# TODO schedule this on a timer
-# delete from aibot_slack_messages.slack_content as content
-# where exists (
-#   select content.workspace, content.channel, content.ts, content.text
-#   from (
-#     select count(ts) as count, workspace, channel, ts, text from aibot_slack_messages.slack_content
-#       group by workspace, channel, ts, text
-#       having count(ts) > 1
-#   ) as dups
-#   where content.workspace = dups.workspace
-#   and content.channel = dups.channel
-#   and content.ts = dups.ts
-#   and content.text = dups.text
-#   and TIMESTAMP_SECONDS(cast(content.ts as INT64)) < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 MINUTE))

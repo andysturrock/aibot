@@ -112,12 +112,6 @@ resource "google_bigquery_table" "slack_content" {
   schema = <<EOF
 [
   {
-    "name": "workspace",
-    "type": "STRING",
-    "mode": "REQUIRED",
-    "description": "Slack workspace id"
-  },
-  {
     "name": "channel",
     "type": "STRING",
     "mode": "REQUIRED",
@@ -130,16 +124,10 @@ resource "google_bigquery_table" "slack_content" {
     "description": "Slack timestamp of the message"
   },
   {
-    "name": "text",
-    "type": "STRING",
-    "mode": "REQUIRED",
-    "description": "Text of Slack message"
-  },
-  {
     "name": "embeddings",
     "type": "FLOAT",
     "mode": "REPEATED",
-    "description": "Embeddings for content"
+    "description": "Embeddings for message text"
   }
 ]
 EOF
@@ -179,12 +167,19 @@ resource "google_bigquery_table" "slack_content_metadata" {
 EOF
 }
 
+resource "random_id" "job_name_suffix" {
+  keepers = {
+    first = "${timestamp()}"
+  }
+  byte_length = 2
+}
+
 # Uncomment this when there are over 5000 rows in the table.  BQ won't let you create indexes on empty tables.
-# resource "google_bigquery_job" "vector_index" {
-#   job_id = "create_vector_index_${random_id.name_suffix.hex}"
-#   query {
-#     query          = "CREATE VECTOR INDEX embeddings ON ${google_bigquery_dataset.aibot_slack_messages.dataset_id}.${google_bigquery_table.slack_content.id}(embeddings) OPTIONS(index_type = 'IVF')"
-#     use_legacy_sql = false
-#   }
-#   location = "EU"
-# }
+resource "google_bigquery_job" "vector_index" {
+  job_id = "create_vector_index_${random_id.job_name_suffix.hex}"
+  query {
+    query          = "CREATE VECTOR INDEX embeddings ON ${google_bigquery_dataset.aibot_slack_messages.dataset_id}.${google_bigquery_table.slack_content.id}(embeddings) OPTIONS(index_type = 'IVF')"
+    use_legacy_sql = false
+  }
+  location = "EU"
+}
