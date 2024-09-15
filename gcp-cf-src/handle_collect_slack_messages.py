@@ -58,56 +58,45 @@ def download_slack_content():
     bigquery_client = bigquery.Client()
 
     now = datetime.now(timezone.utc)
-    end_of_today = create_end_of_day_date(now)
-    start_of_tomorrow = end_of_today + timedelta(milliseconds=1)
 
     team_ids_for_search = get_secret_value('AIBot', 'teamIdsForSearch')
     for team_id in team_ids_for_search.split(','):
         print(f"teamId <{team_id}>")
         public_channels = get_public_channels(team_id) or []
+        channels_metadata = get_channels_metadata(
+            bigquery_client, public_channels)
         for public_channel in public_channels:
+            print(f"Checking {public_channel['name']} "
+                  f"({public_channel['id']})...")
+            channel_metadata = channels_metadata[public_channel['id']]
+            last_download_datetime = channel_metadata.last_download_datetime
+            time_diff = now - last_download_datetime
+            # Don't bother downloading if we have done so within last 10 mins.
+            if time_diff.total_seconds() < 600:
+                print(f"Last downloaded at "
+                      f"{last_download_datetime} so skipping...")
+                continue
 
-            channel_metadata = get_channel_metadata(
-                bigquery_client, public_channel)
-            current_day_to_get_messages = channel_metadata.last_download_datetime
+            print(f"Getting messages from "
+                  f"{last_download_datetime} to {now}...")
 
-            count = 0
-            while current_day_to_get_messages < start_of_tomorrow:
-                count += 1
-                print(f"""Getting messages for {public_channel['name']} """
-                      f"""({public_channel['id']}) for {current_day_to_get_messages}""")
+            oldest = f"{int(last_download_datetime.timestamp())}"
+            latest = f"{int(now.timestamp())}"
+            messages = get_channel_messages_using_token(slack_user_token,
+                                                        public_channel['id'],
+                                                        oldest,
+                                                        latest,
+                                                        True)
 
-                messages = get_messages_for_day(
-                    slack_user_token, public_channel, current_day_to_get_messages)
+            if len(messages) > 0:
+                print("Generating embeddings...")
+                messages = create_message_embeddings(messages)
+                print("Saving messages...")
+                put_channel_messages(
+                    bigquery_client, public_channel['id'], messages)
+            else:
+                print("No messages in time range")
 
-                if len(messages) > 0:
-                    print("Generating embeddings...")
-                    messages = create_message_embeddings(messages)
-                    print("Saving messages...")
-                    put_channel_messages(
-                        bigquery_client, public_channel['id'], messages)
-                else:
-                    print("No messages on day")
-
-                # We have got messages for the entire day, so set the last_download_date
-                # to reflect that.
-                channel_metadata.last_download_datetime = create_end_of_day_date(
-                    current_day_to_get_messages)
-                # Saving the metadata is quite slow so only save periodically.
-                # It's not a big deal if we end up with duplicate message data
-                if count == 100:
-                    count = 0
-                    print("Saving metadata...")
-                    put_channel_metadata(
-                        bigquery_client, channel_metadata)
-
-                current_day_to_get_messages += timedelta(days=1)
-
-            # For "today" the last download datetime won't be end of day today,
-            # because that hasn't happened yet.  So set the last_download_datetime to now.
-            # This doesn't make any difference to the application logic
-            # as we always get a full day, but it might be confusing if someone
-            # looks at the metadata directly.
             print("Saving metadata...")
             channel_metadata.last_download_datetime = now
             put_channel_metadata(
@@ -128,27 +117,6 @@ def create_message_embeddings(messages: List[Message]) -> List[MessageWithEmbedd
         message_with_embeddings.embeddings = embeddings[0].values
         messages_with_embeddings.append(message_with_embeddings)
     return messages_with_embeddings
-
-
-def create_start_of_day_date(day: datetime) -> datetime:
-    return day.replace(hour=0, minute=0, second=0, microsecond=0)
-
-
-def create_end_of_day_date(day: datetime) -> datetime:
-    return day.replace(hour=23, minute=59, second=59, microsecond=999999)
-
-
-def get_messages_for_day(slack_user_token: str, channel: Dict, day: datetime) -> List[Message]:
-    if not channel.get('id'):
-        raise ValueError("channel.id is missing")
-    start_of_day = create_start_of_day_date(day)
-    end_of_day = create_end_of_day_date(day)
-    messages = get_channel_messages_using_token(slack_user_token,
-                                                channel['id'],
-                                                int(start_of_day.timestamp()),
-                                                int(end_of_day.timestamp()),
-                                                True)
-    return messages
 
 
 def put_channel_messages(bigquery_client: bigquery.Client, channel_id: str, messages: List[MessageWithEmbeddings]):
@@ -176,35 +144,72 @@ def put_channel_messages(bigquery_client: bigquery.Client, channel_id: str, mess
 
 
 def put_channel_metadata(bigquery_client: bigquery.Client, channel_metadata: ChannelMetadata):
-    # Use query jobs rather than insert_rows so we bypass the streaming buffer.
-    # Otherwise we can't delete the old rows for 90 mins.
-    # TODO migrate to https://cloud.google.com/bigquery/docs/write-api-streaming#exactly-once
-    query = f"""
-    INSERT INTO {DATASET_NAME}.{METADATA_TABLE_NAME} (
-        channel_id,
-        channel_name,
-        created_datetime,
-        last_download_datetime
-    )
-    VALUES (
-        "{channel_metadata.channel_id}",
-        "{channel_metadata.channel_name}",
-        DATETIME(TIMESTAMP("{channel_metadata.created_datetime}")),
-        DATETIME(TIMESTAMP("{channel_metadata.last_download_datetime}"))
-    )
-    """
-    query_job = bigquery_client.query(query)
-    query_job.result()
 
+    # TODO migrate to https://cloud.google.com/bigquery/docs/write-api-streaming#exactly-once
+    bq_rows = [vars(channel_metadata)]
+    table = bigquery_client.get_table(
+        f"{DATASET_NAME}.{METADATA_TABLE_NAME}")
+    results = bigquery_client.insert_rows(
+        table=table,
+        rows=bq_rows,
+        ignore_unknown_values=True)
+    for result in results:
+        print(f"put_channel_metadata result = {result}")
+
+
+def delete_stale_metadata(bigquery_client: bigquery.Client, channel_metadata: ChannelMetadata):
     # Delete any other rows of metadata for this channel
     query = f"""
     DELETE FROM
       {DATASET_NAME}.{METADATA_TABLE_NAME}
         WHERE channel_id = "{channel_metadata.channel_id}"
         and last_download_datetime <> DATETIME(TIMESTAMP("{channel_metadata.last_download_datetime}"))
+        and last_download_datetime < DATETIME_SUB(CURRENT_DATETIME(), INTERVAL 90 MINUTE)
     """
+    print(query)
     query_job = bigquery_client.query(query)
     query_job.result()
+
+
+def get_channels_metadata(bigquery_client: bigquery.Client, channels: list[Dict]) -> dict[str, ChannelMetadata]:
+
+    sql_channel_ids = ', '.join(
+        [f"\"{channel["id"]}\"" for channel in channels])
+    # The query uses max to deal with the case of multiple rows of metadata for the same channel.
+    # BQ is an append-only database (mainly) so need to deal with this case.
+    query = f"""
+    SELECT      channel_id, channel_name, created_datetime, MAX(last_download_datetime) as last_download_datetime
+    FROM        {DATASET_NAME}.{METADATA_TABLE_NAME}
+    WHERE       channel_id in ({sql_channel_ids})
+    GROUP BY    channel_id, channel_name, created_datetime
+    """
+
+    query_job = bigquery_client.query(query)
+    rows = query_job.result()
+    all_metadata: dict[str, ChannelMetadata] = dict()
+    for row in rows:
+        channel_metadata = ChannelMetadata(
+            channel_id=row['channel_id'],
+            channel_name=row['channel_name'],
+            # The replace below makes the datetimes offset-aware.
+            created_datetime=row['created_datetime'].replace(
+                tzinfo=timezone.utc),
+            last_download_datetime=row['last_download_datetime'].replace(
+                tzinfo=timezone.utc))
+        all_metadata[channel_metadata.channel_id] = channel_metadata
+
+    # Set default metadata if channel doesn't have any metadata yet.
+    for channel in channels:
+        if not channel['id'] in all_metadata:
+            created_datetime = datetime.fromtimestamp(
+                channel['created'], tz=timezone.utc)
+            all_metadata[channel['id']] = ChannelMetadata(
+                channel_id=channel['id'],
+                channel_name=channel['name'],
+                created_datetime=created_datetime,
+                last_download_datetime=created_datetime)
+
+    return all_metadata
 
 
 def get_channel_metadata(bigquery_client: bigquery.Client, channel: Dict) -> ChannelMetadata:
