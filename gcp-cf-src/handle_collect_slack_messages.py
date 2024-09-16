@@ -72,6 +72,8 @@ def download_slack_content():
             last_download_datetime = channel_metadata.last_download_datetime
             time_diff = now - last_download_datetime
             # Don't bother downloading if we have done so within last 10 mins.
+            # Main thing this gains is skipping channels which have been shared
+            # across workspaces.  Many of ours are so this is a big optimisation.
             if time_diff.total_seconds() < 600:
                 print(f"Last downloaded at "
                       f"{last_download_datetime} so skipping...")
