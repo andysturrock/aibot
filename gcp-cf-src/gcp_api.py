@@ -2,6 +2,7 @@
     Wrappers around GCP API functions.
 """
 import os
+import json
 from google.cloud import secretmanager
 
 
@@ -12,18 +13,17 @@ def get_secret_value(secret_name, secret_key):
     :return: The secret value
     :rtype: str
     :raises ClientError: if the caller doesn't have access to that secret
-    :raises botocore.errorfactory.ResourceNotFoundException: if the secret doesn't exist
+    :raises Error if the secret doesn't exist
     :raises KeyError: if key doesn't exist
     """
 
     project_id = os.environ["GCP_PROJECT"]
-    secret_name = secret_name + "_" + secret_key
 
     client = secretmanager.SecretManagerServiceClient()
     secret_path = client.secret_path(project_id, secret_name)
     response = client.access_secret_version(
         request={"name": f"{secret_path}/versions/latest"})
 
-    secret_value = response.payload.data.decode("UTF-8")
+    secret = json.loads(response.payload.data.decode("UTF-8"))
 
-    return secret_value
+    return secret[secret_key]

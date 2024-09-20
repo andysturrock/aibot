@@ -3,7 +3,7 @@
 """
 from typing import List, Dict
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
 
@@ -160,7 +160,7 @@ def put_channel_metadata(bigquery_client: bigquery.Client, channel_metadata: Cha
 
 
 def delete_stale_metadata(bigquery_client: bigquery.Client, channel_metadata: ChannelMetadata):
-    # Delete any other rows of metadata for this channel
+    # Delete any other rows of metadata for this channel which are outside the streaming buffer.
     query = f"""
     DELETE FROM
       {DATASET_NAME}.{METADATA_TABLE_NAME}
@@ -168,9 +168,9 @@ def delete_stale_metadata(bigquery_client: bigquery.Client, channel_metadata: Ch
         and last_download_datetime <> DATETIME(TIMESTAMP("{channel_metadata.last_download_datetime}"))
         and last_download_datetime < DATETIME_SUB(CURRENT_DATETIME(), INTERVAL 90 MINUTE)
     """
-    print(query)
     query_job = bigquery_client.query(query)
-    query_job.result()
+    result = query_job.result()
+    print(f"delete_stale_metadata result: {result}")
 
 
 def get_channels_metadata(bigquery_client: bigquery.Client, channels: list[Dict]) -> dict[str, ChannelMetadata]:
@@ -252,8 +252,7 @@ def get_channel_metadata(bigquery_client: bigquery.Client, channel: Dict) -> Cha
 def handle_collect_slack_messages(request):
     """Entry point when called as a GCP Cloud Function
     """
-    print(f"handle_collect_slack_messages: {request}!")
-    return "OK"
+    download_slack_content()
 
 
 def main():
