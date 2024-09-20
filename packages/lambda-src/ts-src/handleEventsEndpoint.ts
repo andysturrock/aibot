@@ -4,6 +4,10 @@ import util from 'util';
 import { getSecretValue, invokeLambda } from './awsAPI';
 import { PromptCommandPayload, addReaction, getBotId } from './slackAPI';
 import { verifySlackRequest } from './verifySlackRequest';
+// Set default options for util.inspect to make it work well in CloudWatch
+util.inspect.defaultOptions.maxArrayLength = null;
+util.inspect.defaultOptions.depth = null;
+util.inspect.defaultOptions.colors = false;
 
 /**
  * Handle the event posts from Slack.

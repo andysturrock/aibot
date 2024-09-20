@@ -13,9 +13,13 @@ import path from 'node:path';
 import stream from 'node:stream/promises';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
-import { callModelFunction, formatResponse, generateResponseBlocks, getGenerativeModel, ModelFunctionCallArgs, removeReaction } from './handleAICommon';
+import { callModelFunction, formatResponse, generateResponseBlocks, getGenerativeModel, GetGenerativeModelDefaults, ModelFunctionCallArgs, removeReaction } from './handleAICommon';
 import { getHistory, GetHistoryFunction, putHistory, PutHistoryFunction } from './historyTable';
 import { File, postEphmeralErrorMessage, postMessage, postTextMessage, PromptCommandPayload } from './slackAPI';
+// Set default options for util.inspect to make it work well in CloudWatch
+util.inspect.defaultOptions.maxArrayLength = null;
+util.inspect.defaultOptions.depth = null;
+util.inspect.defaultOptions.colors = false;
 
 export async function handlePromptCommand(event: PromptCommandPayload) {
   console.log(`handlePromptCommand event ${util.inspect(event, false, null)}`);
@@ -111,16 +115,21 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
 
     const startChatParams: StartChatParams = { };
     startChatParams.history = history;
-    const generativeModel = await getGenerativeModel();
+    const getGenerativeModelDefaults: GetGenerativeModelDefaults = {
+      slackSummaryDefaultDays: 30,
+      slackSummaryDefaultChannelId: channelId,
+      slackSummaryDefaultThreadId: event.thread_ts ?? "undefined"
+    };
+    const generativeModel = await getGenerativeModel(getGenerativeModelDefaults);
     const chatSession = generativeModel.startChat(startChatParams);
 
     let response: string | undefined = undefined;
     while(response == undefined) {
-      console.log(`Parts array input to supervisor chat: ${util.inspect(parts, false, null, true)}`);
+      console.log(`Parts array input to supervisor chat: ${util.inspect(parts, false, null)}`);
       const generateContentResult = await chatSession.sendMessage(parts);
 
       const contentResponse = generateContentResult.response;
-      console.log(`supervisor contentResponse: ${util.inspect(contentResponse, false, null, true)}`);
+      console.log(`supervisor contentResponse: ${util.inspect(contentResponse, false, null)}`);
       
       // No response parts almost certainly means we've hit a safety stop.
       if(!generateContentResult.response.candidates?.[0].content.parts) {
@@ -144,19 +153,12 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
           }
           return functionCalls;
         }, functionCalls);
-        // TODO - this isn't quite right because we're sending a threadTs even though the
-        // question might be about the main channel.  Eg if in a thread the user asks
-        // "summarise the last 7 days of this channel" they are only going to get the summary
-        // of the thread.
-        // We could have two agents, one for summarising channels and one for summarising threads.
-        // Or maybe do some prompt engineering around passing threadTs in the model args only if the
-        // request is specifically about threads.
+        // This extra info is used by callModelFunction() and the sub-agent models.
         const extraArgs: ModelFunctionCallArgs = {
           channelId,
           parentThreadTs,
           fileDataParts,
-          slackId: event.user_id,
-          threadTs: event.thread_ts
+          slackId: event.user_id
         };
         parts = new Array<Part>();
         for (const functionCall of functionCalls) {
@@ -169,7 +171,7 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     // See above for why we add the blank content.
     history = fixMissingContentParts(history);
     await putHistoryFunction(event.channel, parentThreadTs, history, "supervisor");
-    const formattedResponse = formatResponse(response);
+    const formattedResponse = await formatResponse(response);
     const blocks = generateResponseBlocks(formattedResponse);
 
     if(channelId && event.ts) {
