@@ -14,9 +14,14 @@ variable "gcp_gemini_project_id" {
   description = "GCP id for Gemini project"
 }
 
+variable "gcp_gemini_project_number" {
+  type        = string
+  description = "GCP project number for Gemini project"
+}
+
 variable "gcp_identity_project_number" {
   type        = string
-  description = "GCP number for workload identity federation project"
+  description = "GCP project number for workload identity federation project"
 }
 
 variable "aws_account_id" {
@@ -27,4 +32,9 @@ variable "aws_account_id" {
 variable "workload_identity_pool_id" {
   type        = string
   description = "Workload Identity Pool Id where the AWS role is mapped"
+}
+
+variable "gcp_region" {
+  type        = string
+  description = "GCP region, eg europe-west2"
 }
