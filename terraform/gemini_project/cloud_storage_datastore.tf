@@ -1,12 +1,7 @@
-# Need to use a random suffix as bucket names need to be unique
-resource "random_id" "bucket_name_suffix" {
-  byte_length = 2
-}
-
 # Create a bucket for the datastore
 resource "google_storage_bucket" "aibot_search_datastore" {
   location                    = "EU"
-  name                        = "aibot_search_datastore_${random_id.bucket_name_suffix.hex}"
+  name                        = "aibot_search_datastore_${random_id.name_suffix.hex}"
   force_destroy               = true
   uniform_bucket_level_access = true
   storage_class               = "STANDARD"
@@ -14,7 +9,7 @@ resource "google_storage_bucket" "aibot_search_datastore" {
 
 resource "google_discovery_engine_data_store" "aibot_search" {
   location                    = "eu"
-  data_store_id               = "aibot_search"
+  data_store_id               = "aibot_search_${random_id.name_suffix.hex}"
   display_name                = "AIBot search"
   industry_vertical           = "GENERIC"
   content_config              = "CONTENT_REQUIRED"
@@ -38,7 +33,7 @@ resource "google_discovery_engine_search_engine" "aibot" {
 # Create a bucket for the datastore
 resource "google_storage_bucket" "aibot_documents" {
   location                    = "EU"
-  name                        = "aibot_documents_${random_id.bucket_name_suffix.hex}"
+  name                        = "aibot_documents_${random_id.name_suffix.hex}"
   force_destroy               = true
   uniform_bucket_level_access = true
   storage_class               = "STANDARD"

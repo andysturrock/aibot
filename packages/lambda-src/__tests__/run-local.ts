@@ -1,45 +1,32 @@
 import {
-  Content,
-  FunctionCall
+  Content
 } from '@google-cloud/vertexai';
+import { GenericMessageEvent } from '@slack/bolt';
 import * as dotenv from 'dotenv';
 import readline from 'node:readline/promises';
-import util from 'util';
-import { callModelFunction } from '../ts-src/handleAICommon';
+import { downloadSlackContent } from '../ts-src/downloadSlackContent';
 import { _handlePromptCommand } from '../ts-src/handlePromptCommand';
 import { PromptCommandPayload } from '../ts-src/slackAPI';
 dotenv.config();
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function callCustomGroundedModel(prompt: string) {
-  const functionCall: FunctionCall = {
-    name: "call_custom_search_grounded_model",
-    args: {prompt}
-  };
-  const functionResponse = await callModelFunction(functionCall, {});
-  console.log(`functionResponse: ${util.inspect(functionResponse, false, null, true)}`);
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function callGoogleGroundedModel(prompt: string) {
-  const functionCall: FunctionCall = {
-    name: "call_google_search_grounded_model",
-    args: {prompt}
-  };
-  const functionResponse = await callModelFunction(functionCall, {});
-  console.log(`functionResponse: ${util.inspect(functionResponse, false, null, true)}`);
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function testHandlePromptCommand() {
+  const genericMessageEvent: GenericMessageEvent = {
+    event_ts: "1721893185.864729",
+    channel: "C06KQCCSJMU",
+    type: 'message',
+    subtype: undefined,
+    user: '',
+    ts: '',
+    channel_type: 'channel'
+  };
   const event: PromptCommandPayload = {
     user_id: '',
     text: '',
     bot_id: '',
     bot_user_id: '',
     team_id: '',
-    event_ts: "1721893185.864729",
-    channel: "C06KQCCSJMU"
+    ...genericMessageEvent
   };
   let history: Content[] = [];
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -71,4 +58,14 @@ async function testHandlePromptCommand() {
 
 // void callCustomGroundedModel("What is the daily meal rate for expenses?");
 // void callGoogleGroundedModel("You are the CTO of a digital bank. Write a paper for the board advising them about AI and the approach the bank should take in adopting it.");
-void testHandlePromptCommand();
+// void testHandlePromptCommand();
+async function testDownloadSlackContent() {
+  await downloadSlackContent();
+}
+
+try {
+  void testDownloadSlackContent();
+}
+catch(error) {
+  console.error(error);
+}

@@ -26,6 +26,7 @@ import {
 import { KnownBlock, RichTextBlock, RichTextLink, RichTextList, RichTextSection, RichTextText, SectionBlock } from '@slack/bolt';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
+import { handleSlackSearch } from './handleSlackSearch';
 import { handleSlackSummary } from './handleSlackSummary';
 import { GetHistoryFunction, PutHistoryFunction } from './historyTable';
 import * as slackAPI from './slackAPI';
@@ -98,6 +99,9 @@ export async function callModelFunction(functionCall: FunctionCall,
   case "call_handle_files_model":
     modelFunction = callHandleFilesModel;
     break;
+  case "call_slack_search_model":
+    modelFunction = callSlackSearchModel;
+    break;
   default:
     throw new Error(`Unknown function ${functionCall.name}`);
   }
@@ -115,9 +119,7 @@ export async function callModelFunction(functionCall: FunctionCall,
   };
   generateContentRequest.contents.push(promptContent);
 
-  //console.log(`callModelFunction generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
   const generateContentResult = await modelFunction(args, generateContentRequest);
-  //console.log(`callModelFunction generateContentResult: ${util.inspect(generateContentResult, false, null)}`);
   // If there are no content parts it's because something has gone wrong, eg hit a safety stop.
   // The finishReason has the reason for the unexpected stop so tell the user that.
   if(!generateContentResult.response.candidates?.[0].content.parts) {
@@ -138,13 +140,24 @@ export async function callModelFunction(functionCall: FunctionCall,
   history.push(responseContent);
   await putHistoryFunction(args.channelId, args.parentThreadTs, history, functionCall.name);
 
-  // Create the attributions.
-  const groundingChunks = generateContentResult.response.candidates?.[0].groundingMetadata?.groundingChunks ?? [];
+  // Create the attributions
   response.content.attributions = [];
+  // First from groundings.
+  const groundingChunks = generateContentResult.response.candidates?.[0].groundingMetadata?.groundingChunks ?? [];
   groundingChunks.reduce((attributions, groundingChunk) => {
     const attribution: Attribution = {
       title: groundingChunk.retrievedContext?.title,
       uri: groundingChunk.retrievedContext?.uri
+    };
+    attributions.push(attribution);
+    return attributions;
+  }, response.content.attributions);
+  // Or from Citations
+  const citations = generateContentResult.response.candidates?.[0].citationMetadata?.citations ?? [];
+  citations.reduce((attributions, citation) => {
+    const attribution: Attribution = {
+      title: citation.title,
+      uri: citation.uri
     };
     attributions.push(attribution);
     return attributions;
@@ -264,6 +277,20 @@ async function callSlackSummaryModel(modelFunctionCallArgs: ModelFunctionCallArg
   const slackSummaryModel = await _getGenerativeModel(model, tools, systemInstruction, 0);
 
   const generateContentResult = await handleSlackSummary(slackSummaryModel, modelFunctionCallArgs, generateContentRequest);
+  return generateContentResult;
+}
+
+async function callSlackSearchModel(modelFunctionCallArgs: ModelFunctionCallArgs, generateContentRequest: GenerateContentRequest) {
+  const systemInstruction = `
+    You are a helpful assistant who can search for content in Slack messages and then summarise the results.
+    If you can't find the answer or create a summary you must respond "I don't know".
+    If you don't understand the request then ask clarifying questions.
+  `;
+  const tools: Tool[] = [];
+  const model = await getSecretValue('AIBot', 'slackSearchModel');
+  const slackSummaryModel = await _getGenerativeModel(model, tools, systemInstruction, 0);
+
+  const generateContentResult = await handleSlackSearch(slackSummaryModel, modelFunctionCallArgs, generateContentRequest);
   return generateContentResult;
 }
 
@@ -397,6 +424,22 @@ export async function getGenerativeModel() {
     },
   };
   functionDeclarations.push(callHandleFilesModel);
+
+  const callHandleSlackSearchModel: FunctionDeclaration = {
+    name: 'call_slack_search_model',
+    description: 'Calls a LLM which can search Slack for content.',
+    parameters: {
+      type: FunctionDeclarationSchemaType.OBJECT,
+      properties: {
+        prompt: {
+          type: FunctionDeclarationSchemaType.STRING,
+          description: "The prompt for the model"
+        }
+      },
+      required: ['prompt'],
+    },
+  };
+  functionDeclarations.push(callHandleSlackSearchModel);
   
   const functionDeclarationsTool: FunctionDeclarationsTool = {
     functionDeclarations
@@ -410,8 +453,9 @@ export async function getGenerativeModel() {
   2. call_slack_summary_model.  Use this agent if the request is about summarising Slack channels or threads.
   3. call_google_search_grounded_model.  Use this agent if the request is about general knowledge or current affairs.
   4. call_handle_files_model.  Use this agent if the request is about a file, for example summarising files or rewording or rewriting them.
+  5. call_slack_search_model.  Use this agent if the request is to search Slack.
 
-  If the request mentions channels or threads then it's probably about Slack, so use the Slack Summary agent.
+  If the request mentions summarising channels or threads then it's probably about Slack, so use the Slack Summary agent.
 
   If the request is about a file then you must pass the request straight to the file processing agent and use its answer as your response.
   If the request is not about a file then you can use your own knowledge if you are sure.
@@ -428,6 +472,7 @@ export async function getGenerativeModel() {
   2. call_slack_summary_model = Slack Summary Agent
   3. call_google_search_grounded_model = Google Search Agent
   4. call_handle_files_model = File Handling Agent
+  5. call_slack_search_model = Slack Search Agent
   Use the agent names rather than the function names when responding to user queries.
 
   If an agent responds with a question, then you should respond with that question.
@@ -486,11 +531,17 @@ export function formatResponse(responseString: string) {
     .replace(/\\t/g, "\\t")
     .replace(/\\b/g, "\\b")
     .replace(/\\f/g, "\\f");
-
+  
   // Remove unprintable chars/unicode
   responseString = responseString.replace(/[^\x20-\x7E]/g, '');
   // Remove octal escape sequences
   responseString = responseString.replace(/\\[0-7]{3}/g, '');
+  // Remove bullet point character
+  responseString = responseString.replace(/\u2022/g, '');
+  // Remove rightwards arrow character
+  responseString = responseString.replace(/\u27B5/g, '');
+  // Remove everything outside normal ASCII range
+  responseString = responseString.replace(/[^ -~]/g, '');
     
   // First try to extract the model's answer into our expected JSON schema
   let response: Response;

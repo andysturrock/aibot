@@ -2,7 +2,10 @@ import { Block, GenericMessageEvent, HomeView, KnownBlock } from "@slack/bolt";
 import {
   BotsInfoArguments,
   ChatDeleteArguments,
+  ChatGetPermalinkArguments,
   ConversationsHistoryArguments,
+  ConversationsInfoArguments,
+  ConversationsListArguments,
   ConversationsRepliesArguments,
   LogLevel,
   ReactionsAddArguments,
@@ -24,9 +27,19 @@ async function createClient() {
 }
 
 async function createUserClient(slackId: string) {
-  const slackBotUserToken = await getAccessToken(slackId);
+  const slackUserToken = await getAccessToken(slackId);
+  
+  if(!slackUserToken) {
+    throw new Error("Cannot get Slack user token from table.");
+  }
 
-  return new WebClient(slackBotUserToken, {
+  return new WebClient(slackUserToken, {
+    logLevel: LogLevel.INFO
+  });
+}
+
+function createUserClientFromToken(slackUserToken: string) {
+  return new WebClient(slackUserToken, {
     logLevel: LogLevel.INFO
   });
 }
@@ -173,9 +186,12 @@ export async function postErrorMessageToResponseUrl(responseUrl: string, text: s
 }
 
 export type Message = {
+  channel: string,
   user: string,
   text: string,
-  date?: Date
+  date?: Date,
+  ts: string,
+  threadTs?: string
 };
 
 function tsToDate(ts: string) {
@@ -183,12 +199,23 @@ function tsToDate(ts: string) {
   return ts ? new Date(Number.parseInt(seconds) * 1000) : undefined;
 }
 
-export async function getThreadMessages(slackId: string, channelId: string, threadTs: string) {
-  // Note requires user token. See https://api.slack.com/methods/conversations.replies.
+export async function getThreadMessagesUsingToken(slackUserToken: string, channelId: string, threadTs: string, oldest?: string, latest?: string) {
+  const client = createUserClientFromToken(slackUserToken);
+  return await _getThreadMessages(client, channelId, threadTs, oldest, latest);
+}
+
+export async function getThreadMessages(slackId: string, channelId: string, threadTs: string, oldest?: string, latest?: string) {
   const client = await createUserClient(slackId);
+  return await _getThreadMessages(client, channelId, threadTs, oldest, latest);
+}
+
+async function _getThreadMessages(client: WebClient, channelId: string, threadTs: string, oldest?: string, latest?: string) {
   const conversationsRepliesArguments: ConversationsRepliesArguments = {
     channel: channelId,
-    ts: threadTs
+    ts: threadTs,
+    oldest,
+    latest,
+    inclusive: true
   };
   const replies = await client.conversations.replies(conversationsRepliesArguments);
   
@@ -196,19 +223,33 @@ export async function getThreadMessages(slackId: string, channelId: string, thre
   const messages: Message[] = messageReplies.map(message => {
     const date = message.ts ? tsToDate(message.ts) : undefined;
     return {
+      channel: channelId,
       user: message.user ?? "",
       text: message.text ?? "",
-      date
+      date,
+      ts: message.ts ?? "",
+      threadTs: message.thread_ts
     };
   });
   return messages;
 }
 
-export async function getChannelMessages(slackId: string, channelId: string, oldest? : string | undefined, includeThreads = true) {
+export async function getChannelMessagesUsingToken(slackUserToken: string, channelId: string, oldest?: string, latest?: string, includeThreads?: boolean) {
+  const client = createUserClientFromToken(slackUserToken);
+  return await _getChannelMessages(client, channelId, oldest,latest, includeThreads);
+}
+
+export async function getChannelMessages(slackId: string, channelId: string, oldest?: string, latest?: string, includeThreads = true) {
   const client = await createUserClient(slackId);
+  return await _getChannelMessages(client, channelId, oldest, latest, includeThreads);
+}
+
+async function _getChannelMessages(client: WebClient, channelId: string, oldest?: string, latest?: string, includeThreads = true) {
   const conversationsHistoryArguments: ConversationsHistoryArguments = {
     channel: channelId,
-    oldest
+    oldest,
+    latest,
+    inclusive: true
   };
   const history = await client.conversations.history(conversationsHistoryArguments);
   
@@ -217,7 +258,7 @@ export async function getChannelMessages(slackId: string, channelId: string, old
     const messages: Message[] = [];
     for(const message of history.messages ?? []) {
       if(message.reply_count && message.reply_count > 0 && message.ts) {
-        const threadMessages = await getThreadMessages(slackId, channelId, message.ts);
+        const threadMessages = await _getThreadMessages(client, channelId, message.ts);
         // Reverse the order of the thread messages because they are returned oldest first
         // whereas channel messages returned newest first.
         messages.push(...threadMessages.reverse());
@@ -225,9 +266,11 @@ export async function getChannelMessages(slackId: string, channelId: string, old
       else if(message.type == "message" && message.text && message.text.length > 0) {
         const date = message.ts ? tsToDate(message.ts) : undefined;
         messages.push({
+          channel: channelId,
           user: message.user ?? "",
           text: message.text ?? "",
-          date
+          date,
+          ts: message.ts ?? ""
         });
       }
     }
@@ -238,6 +281,7 @@ export async function getChannelMessages(slackId: string, channelId: string, old
     const messageReplies = history.messages?.filter(message => message.type == "message") ?? [];
     const messages: Message[] = messageReplies.map(message => {
       return {
+        channel: channelId,
         user: message.user ?? "",
         text: message.text ?? "",
         ts: message.ts ?? ""
@@ -254,6 +298,62 @@ export async function getUserRealName(userId: string) {
   };
   const usersInfoResponse = await client.users.info(usersInfoArguments);
   return usersInfoResponse.user?.real_name;
+}
+
+export async function getPublicChannelsUsingToken(slackUserToken: string, team_id: string) {
+  const client = createUserClientFromToken(slackUserToken);
+  return await _getPublicChannels(client, team_id);
+}
+
+export async function getPublicChannels(team_id: string) {
+  const client = await createClient();
+  return await _getPublicChannels(client, team_id);
+}
+
+async function _getPublicChannels(client: WebClient, team_id: string) {
+  const conversationsListArguments: ConversationsListArguments = {
+    types: "public_channel",
+    team_id
+  };
+  const conversationsListResponse = await client.conversations.list(conversationsListArguments);
+  return conversationsListResponse.channels;
+}
+
+export async function getTeams() {
+  const client = await createClient();
+  const authTeamsListResponse = await client.auth.teams.list();
+  return authTeamsListResponse.teams;
+}
+
+export async function getPermaLink(channelId: string, ts: string) {
+  const client = await createClient();
+  const chatGetPermalinkArguments: ChatGetPermalinkArguments = {
+    channel: channelId,
+    message_ts: ts
+  };
+  const chatGetPermalinkResponse = await client.chat.getPermalink(chatGetPermalinkArguments);
+  return chatGetPermalinkResponse.permalink;
+}
+
+export async function getChannelName(channelId: string) {
+  const client = await createClient();
+  const conversationsInfoArguments: ConversationsInfoArguments = {
+    channel: channelId,
+  };
+  const conversationsInfoResponse = await client.conversations.info(conversationsInfoArguments);
+  return conversationsInfoResponse.channel?.name;
+}
+
+export async function getMessageTextUsingToken(slackUserToken:string, channelId: string, ts: string) {
+  const client = createUserClientFromToken(slackUserToken);
+  const conversationsHistoryArguments: ConversationsHistoryArguments = {
+    channel: channelId,
+    latest: ts,
+    inclusive: true,
+    limit: 1
+  };
+  const conversationsHistoryResponse = await client.conversations.history(conversationsHistoryArguments);
+  return conversationsHistoryResponse.messages?.[0].text;
 }
 
 export type PromptCommandPayload = {
@@ -275,6 +375,9 @@ type ArrayElement<ArrayType extends readonly unknown[]> =
 type FilesArray = NonNullable<GenericMessageEvent['files']>;
 export type File = ArrayElement<FilesArray>;
 
+// Channel is exported from @slack/web-api/dist/response/ConversationsListResponse
+// But that's a bit weird for other files to import, so just re-export it here
+export type { Channel } from '@slack/web-api/dist/response/ConversationsListResponse';
 
 export type Action = {
   action_id: string,
