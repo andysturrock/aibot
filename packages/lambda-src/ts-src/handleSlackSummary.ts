@@ -31,16 +31,28 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
     Please summarise the messages below.
   `;
   const texts: string[] = [];
+  const now = new Date();
+  const xDaysAgo = new Date(now.getTime() - (modelFunctionCallArgs.days * 24 * 60 * 60 * 1000));
+  const oldest = `${xDaysAgo.getTime() / 1000}`; // Slack timestamps are in seconds rather than millis
+  const latest = `${now.getTime() / 1000}`;
   if(modelFunctionCallArgs.threadTs) {
-    const messages = await getThreadMessages(modelFunctionCallArgs.slackId, modelFunctionCallArgs.channelId, modelFunctionCallArgs.parentThreadTs);
+    const messages = await getThreadMessages(modelFunctionCallArgs.slackId,
+      modelFunctionCallArgs.channelId,
+      modelFunctionCallArgs.parentThreadTs,
+      oldest,
+      latest
+    );
     for(const message of messages) {
       texts.push(`${message.date ? message.date.toISOString() : "unknown"} - ${message.user}: ${message.text}`);
     }
   }
   else {
-    const xDaysAgo = new Date(new Date().getTime() - (modelFunctionCallArgs.days * 24 * 60 * 60 * 1000));
     // Slack's timestamps are in seconds rather than ms.
-    const messages = await getChannelMessages(modelFunctionCallArgs.slackId, modelFunctionCallArgs.channelId, `${xDaysAgo.getTime() / 1000}`, true);
+    const messages = await getChannelMessages(modelFunctionCallArgs.slackId,
+      modelFunctionCallArgs.channelId,
+      oldest,
+      latest,
+      true);
     // Messages are returned most recent at the start of the array, so swap that round.
     messages.reverse();
     for(const message of messages) {

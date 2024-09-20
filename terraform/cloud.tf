@@ -4,7 +4,7 @@ terraform {
 
     workspaces {
       project = "aibot"
-      tags = ["aibot-atom-dev"]
+      tags    = ["aibot-atom-dev"]
     }
   }
 }
