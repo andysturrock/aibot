@@ -28,9 +28,11 @@
             ],
             "bot": [
                 "app_mentions:read",
+                "channels:read",
                 "chat:write",
+                "im:history",
                 "reactions:write",
-                "im:history"
+                "team:read"
             ]
         }
     },
