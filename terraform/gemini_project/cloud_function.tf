@@ -39,9 +39,12 @@ resource "google_cloudfunctions2_function" "collect_slack_messages" {
   }
   service_config {
     max_instance_count    = 1
-    available_memory      = "256M"
+    available_memory      = "512M"
     timeout_seconds       = 360
     service_account_email = google_service_account.collect_slack_messages.email
+    environment_variables = {
+      GCP_PROJECT = var.gcp_gemini_project_id
+    }
   }
 }
 
@@ -52,7 +55,8 @@ resource "google_service_account" "collect_slack_messages" {
   display_name = "Service Account for running collect_slack_messages function"
 }
 
-data "google_iam_policy" "collect_slack_messages" {
+# Give the service account permission to invoke the function
+data "google_iam_policy" "collect_slack_messages_run_invoker" {
   binding {
     role = "roles/run.invoker"
     members = [
@@ -61,11 +65,20 @@ data "google_iam_policy" "collect_slack_messages" {
   }
 }
 
+# Give the service account permissiont to get the AIBot secret
+resource "google_secret_manager_secret_iam_binding" "collect_slack_messages" {
+  secret_id = "AIBot"
+  role      = "roles/secretmanager.secretAccessor"
+  members = [
+    "serviceAccount:${google_service_account.collect_slack_messages.email}"
+  ]
+}
+
 resource "google_cloud_run_service_iam_policy" "collect_slack_messages" {
   # This is the bit where we need the cloud function name and cloud run service name to match.
   # Note we use the function name in the service section and this is a google_cloud_run_service_iam_policy resource.
   service     = google_cloudfunctions2_function.collect_slack_messages.name
-  policy_data = data.google_iam_policy.collect_slack_messages.policy_data
+  policy_data = data.google_iam_policy.collect_slack_messages_run_invoker.policy_data
   depends_on  = [google_cloudfunctions2_function.collect_slack_messages]
 
   lifecycle {
@@ -89,20 +102,57 @@ resource "google_cloud_scheduler_job" "collect_slack_messages" {
     }
   }
 
-  # Needs this otherwise the function is replaced (changing its URL) and this doesn't get updated to match.
+  # Needs this because the function is replaced (changing its URL).
+  # Therefore this job needs to be updated to match.
   depends_on = [google_cloudfunctions2_function.collect_slack_messages]
   lifecycle {
     replace_triggered_by = [google_cloudfunctions2_function.collect_slack_messages]
   }
 }
 
-
-
 resource "google_bigquery_dataset" "aibot_slack_messages" {
   dataset_id    = "aibot_slack_messages"
   friendly_name = "AI Bot Slack Messages"
   description   = "Slack messages for search by AI Bot"
   location      = "EU"
+}
+
+# Give the service account access to the dataset
+resource "google_bigquery_dataset_iam_member" "aibot_slack_messages_bq_user" {
+  dataset_id = google_bigquery_dataset.aibot_slack_messages.dataset_id
+  role       = "roles/bigquery.user"
+  member     = "serviceAccount:${google_service_account.collect_slack_messages.email}"
+}
+
+# Give the service account read-write access to the slack_content table
+resource "google_bigquery_table_iam_member" "aibot_slack_messages_slack_content_dataeditor" {
+  dataset_id = google_bigquery_dataset.aibot_slack_messages.dataset_id
+  table_id   = google_bigquery_table.slack_content.table_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.collect_slack_messages.email}"
+}
+
+# Give the service account read-write access to the slack_content_metadata table
+resource "google_bigquery_table_iam_member" "aibot_slack_messages_slack_content_metadata_dataeditor" {
+  dataset_id = google_bigquery_dataset.aibot_slack_messages.dataset_id
+  table_id   = google_bigquery_table.slack_content_metadata.table_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.collect_slack_messages.email}"
+}
+
+# Allow the service account to create BQ jobs
+resource "google_project_iam_member" "aibot_slack_messages_bq_jobuser" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.collect_slack_messages.email}"
+}
+
+# Give the service account aiplatform.user role (which contains aiplatform.endpoints.predict permission)
+# which is needed to create embeddings.
+resource "google_project_iam_member" "aibot_slack_messages_aiplatform_user" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.collect_slack_messages.email}"
 }
 
 resource "google_bigquery_table" "slack_content" {
@@ -175,11 +225,11 @@ resource "random_id" "job_name_suffix" {
 }
 
 # Uncomment this when there are over 5000 rows in the table.  BQ won't let you create indexes on empty tables.
-resource "google_bigquery_job" "vector_index" {
-  job_id = "create_vector_index_${random_id.job_name_suffix.hex}"
-  query {
-    query          = "CREATE VECTOR INDEX embeddings ON ${google_bigquery_dataset.aibot_slack_messages.dataset_id}.${google_bigquery_table.slack_content.id}(embeddings) OPTIONS(index_type = 'IVF')"
-    use_legacy_sql = false
-  }
-  location = "EU"
-}
+# resource "google_bigquery_job" "vector_index" {
+#   job_id = "create_vector_index_${random_id.job_name_suffix.hex}"
+#   query {
+#     query          = "CREATE VECTOR INDEX embeddings ON ${google_bigquery_dataset.aibot_slack_messages.dataset_id}.${google_bigquery_table.slack_content.id}(embeddings) OPTIONS(index_type = 'IVF')"
+#     use_legacy_sql = false
+#   }
+#   location = "EU"
+# }

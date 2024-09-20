@@ -24,6 +24,8 @@ Terraform needs the following roles and permissions to run in the gemini project
 ```
 roles/Service Usage Admin
 roles/Artifact Registry Writer
+secretmanager.secrets.getIamPolicy
+secretmanager.secrets.setIamPolicy
 bigquery.datasets.create
 bigquery.jobs.create
 cloudfunctions.functions.create

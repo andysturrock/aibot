@@ -20,27 +20,22 @@ resource "google_project_iam_binding" "aibot_lambda_custom_role_binding" {
   ]
 }
 
-resource "google_project_iam_binding" "aibot_lambda_bigquery_data_viewer" {
+resource "google_project_iam_member" "aibot_lambda_bigquery_data_viewer" {
   project = var.gcp_gemini_project_id
   role    = "roles/bigquery.dataViewer"
-  members = [
-    "principal://iam.googleapis.com/projects/${var.gcp_identity_project_number}/locations/global/workloadIdentityPools/${var.workload_identity_pool_id}/subject/arn:aws:sts::${var.aws_account_id}:assumed-role/handlePromptCommandLambdaRole/AIBot-handlePromptCommandLambda",
-  ]
+  member  = "principal://iam.googleapis.com/projects/${var.gcp_identity_project_number}/locations/global/workloadIdentityPools/${var.workload_identity_pool_id}/subject/arn:aws:sts::${var.aws_account_id}:assumed-role/handlePromptCommandLambdaRole/AIBot-handlePromptCommandLambda"
 }
 
-resource "google_project_iam_binding" "aibot_lambda_bigquery_job_user" {
+resource "google_project_iam_member" "aibot_lambda_bigquery_job_user" {
   project = var.gcp_gemini_project_id
   role    = "roles/bigquery.jobUser"
-  members = [
-    "principal://iam.googleapis.com/projects/${var.gcp_identity_project_number}/locations/global/workloadIdentityPools/${var.workload_identity_pool_id}/subject/arn:aws:sts::${var.aws_account_id}:assumed-role/handlePromptCommandLambdaRole/AIBot-handlePromptCommandLambda",
-  ]
+  member  = "principal://iam.googleapis.com/projects/${var.gcp_identity_project_number}/locations/global/workloadIdentityPools/${var.workload_identity_pool_id}/subject/arn:aws:sts::${var.aws_account_id}:assumed-role/handlePromptCommandLambdaRole/AIBot-handlePromptCommandLambda"
 }
 
 # The Compute Engine default service account needs the cloud builds builder role.
-resource "google_project_iam_binding" "compute_service_account" {
+# It uses Cloud Build to create the container for the service.
+resource "google_project_iam_member" "compute_service_account" {
   project = var.gcp_gemini_project_id
   role    = "roles/cloudbuild.builds.builder"
-  members = [
-    "serviceAccount:${var.gcp_gemini_project_number}-compute@developer.gserviceaccount.com",
-  ]
+  member  = "serviceAccount:${var.gcp_gemini_project_number}-compute@developer.gserviceaccount.com"
 }
