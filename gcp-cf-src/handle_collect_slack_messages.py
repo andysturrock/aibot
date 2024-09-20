@@ -253,6 +253,7 @@ def handle_collect_slack_messages(request):
     """Entry point when called as a GCP Cloud Function
     """
     download_slack_content()
+    return 'OK'
 
 
 def main():
@@ -260,6 +261,8 @@ def main():
     """
     load_dotenv()
     download_slack_content()
+    # bigquery_client = bigquery.Client()
+    # delete_stale_metadata(bigquery_client)
 
 
 if __name__ == "__main__":
