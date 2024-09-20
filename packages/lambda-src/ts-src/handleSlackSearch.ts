@@ -6,7 +6,7 @@ import util from 'util';
 import { getSecretValue } from './awsAPI';
 import { ModelFunctionCallArgs } from './handleAICommon';
 import { getChannelName, getPermaLink, getThreadMessagesUsingToken, Message } from './slackAPI';
-// Makes util.inspect print large structures (eg embeddings arrays) in full rather than truncating.
+// Set default options for util.inspect to make it work well in CloudWatch
 util.inspect.defaultOptions.maxArrayLength = null;
 util.inspect.defaultOptions.depth = null;
 util.inspect.defaultOptions.colors = false;
@@ -18,7 +18,6 @@ export async function handleSlackSearch(slackSummaryModel: GenerativeModel | Gen
   if(!modelFunctionCallArgs.prompt) {
     throw new Error("modelFunctionCallArgs missing prompt");
   }
-  console.log(`Generating embeddings...`);
   const searchEmbeddings  = await generateEmbeddings(modelFunctionCallArgs.prompt);
   const project = await getSecretValue('AIBot', 'gcpProjectId');
   // Region is something like eu-west2, multi-region is when you can specify "eu" or "us"
@@ -56,7 +55,6 @@ export async function handleSlackSearch(slackSummaryModel: GenerativeModel | Gen
     useLegacySql: false
   };
 
-  console.log(`Doing vector query ${query}...`);
   const [job] = await bigQuery.createQueryJob(options);
   const queryRowsResponse = await job.getQueryResults();
   const rows = queryRowsResponse[0] as Row[];
@@ -105,7 +103,6 @@ export async function handleSlackSearch(slackSummaryModel: GenerativeModel | Gen
     Using these messages below, respond to the request: ${modelFunctionCallArgs.prompt}.
     ${util.inspect(messages, false, null)}
   `;
-  console.log(`prompt: ${prompt}`);
 
   // Search backwards through the content until we find the most recent user part, which should be the original prompt.
   // Then add a text part to that with all the detail above.

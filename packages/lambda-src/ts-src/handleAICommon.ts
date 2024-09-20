@@ -30,6 +30,10 @@ import { handleSlackSearch } from './handleSlackSearch';
 import { handleSlackSummary } from './handleSlackSummary';
 import { GetHistoryFunction, PutHistoryFunction } from './historyTable';
 import * as slackAPI from './slackAPI';
+// Set default options for util.inspect to make it work well in CloudWatch
+util.inspect.defaultOptions.maxArrayLength = null;
+util.inspect.defaultOptions.depth = null;
+util.inspect.defaultOptions.colors = false;
 
 export type Attribution = {
   title?: string
@@ -37,13 +41,39 @@ export type Attribution = {
 };
 
 export type ModelFunctionCallArgs = {
-  prompt?: string,
+  /**
+   * Prompt for the sub-agent
+   */
+  prompt?: string;
+  /**
+   * Used together with parentThreadTs as a key for conversation history
+   */
   channelId: string;
-  parentThreadTs: string,
+  /**
+   * Used together with channelId as a key for conversation history
+   */
+  parentThreadTs: string;
+  /**
+   * Used by the Files Handling model
+   */
   fileDataParts?: Part[];
-  days?: number;
-  threadTs?: string,
-  slackId?: string
+  /**
+   * Used by the Slack Summary model to get messages using this user's token.
+   * Ensures that users can only summarise channels they are allowed to see.
+   */
+  slackId?: string;
+  /**
+   * Used by the Slack Summary model.  Id of the channel to summarise.
+   */
+  summaryChannelId?: string;
+  /**
+   * Used by the Slack Summary model.  Timestamp (which is used as the id) of the thread to summarise.
+   */
+  summaryThreadTs?: string;
+  /**
+   * Used by the Slack Summary model.  Number of days to summarise.
+   */
+  summaryDays?: number;
 };
 
 export async function callModelFunction(functionCall: FunctionCall,
@@ -352,14 +382,20 @@ async function getGoogleGroundedGenerativeModel(systemInstruction: string, tempe
   return googleSearchGroundedModel;
 }
 
-export async function getGenerativeModel() {
+export type GetGenerativeModelDefaults = {
+  slackSummaryDefaultDays: number;
+  slackSummaryDefaultChannelId: string;
+  slackSummaryDefaultThreadId: string;
+};
+
+export async function getGenerativeModel(getGenerativeModelDefaults: GetGenerativeModelDefaults) {
   const botName = await getSecretValue('AIBot', 'botName');
   const tools: Tool[] = [];
   const functionDeclarations: FunctionDeclaration[] = [];
 
   const callCustomSearchGroundedModel: FunctionDeclaration = {
     name: 'call_custom_search_grounded_model',
-    description: 'Use an LLM to search for policies and other internal information in internal documents and other material',
+    description: 'Calls an LLM to search for policies and other internal information in internal documents and other material',
     parameters: {
       type: FunctionDeclarationSchemaType.OBJECT,
       properties: {
@@ -375,7 +411,7 @@ export async function getGenerativeModel() {
 
   const callGoogleSearchGroundedModel: FunctionDeclaration = {
     name: 'call_google_search_grounded_model',
-    description: 'Use an LLM which has access to Google Search for general knowledge and current affairs.',
+    description: 'Calls an LLM which has access to Google Search for general knowledge and current affairs.',
     parameters: {
       type: FunctionDeclarationSchemaType.OBJECT,
       properties: {
@@ -391,7 +427,7 @@ export async function getGenerativeModel() {
 
   const callSlackSummaryModel: FunctionDeclaration = {
     name: 'call_slack_summary_model',
-    description: 'Use an LLM which has access to Slack messages in channels and threads to create summaries.',
+    description: 'Calls an LLM which has access to Slack messages in channels and threads to create summaries.',
     parameters: {
       type: FunctionDeclarationSchemaType.OBJECT,
       properties: {
@@ -399,12 +435,20 @@ export async function getGenerativeModel() {
           type: FunctionDeclarationSchemaType.STRING,
           description: "The prompt for the model"
         },
-        days: {
+        summaryDays: {
           type: FunctionDeclarationSchemaType.INTEGER,
           description: "The number of days of Slack messages to summarise"
-        }
+        },
+        summaryChannelId: {
+          type: FunctionDeclarationSchemaType.STRING,
+          description: "The id of the Slack channel to summarise"
+        },
+        summaryThreadTs: {
+          type: FunctionDeclarationSchemaType.STRING,
+          description: "The id of the Slack thread to summarise"
+        },
       },
-      required: ['prompt', 'days'],
+      required: ['prompt', 'summaryDays', 'summaryChannelId'],
     },
   };
   functionDeclarations.push(callSlackSummaryModel);
@@ -455,11 +499,14 @@ export async function getGenerativeModel() {
   4. call_handle_files_model.  Use this agent if the request is about a file, for example summarising files or rewording or rewriting them.
   5. call_slack_search_model.  Use this agent if the request is to search Slack.
 
-  If the request mentions summarising channels or threads then it's probably about Slack, so use the Slack Summary agent.
-
   If the request is about a file then you must pass the request straight to the file processing agent and use its answer as your response.
   If the request is not about a file then you can use your own knowledge if you are sure.
   If it is not obvious which agent to use then ask clarifying questions until you are sure.
+
+  If the request mentions summarising channels or threads then it's probably about Slack, so use the Slack Summary agent.
+  For the call_slack_summary_model, if the user doesn't specify the number of days then use ${getGenerativeModelDefaults.slackSummaryDefaultDays} as the summaryDays parameter.
+  For the call_slack_summary_model, if the user doesn't specify the channel to summarise then use ${getGenerativeModelDefaults.slackSummaryDefaultChannelId} as the summaryChannelId parameter.
+  For the call_slack_summary_model, if the user asks something like "summarise this thread" use ${getGenerativeModelDefaults.slackSummaryDefaultThreadId} as the summaryThreadTs parameter.  Otherwise use "undefined" as the summaryThreadTs parameter.
 
   If an agent responds that it can't answer then work out what is the next best agent and respond in JSON like this:
   {
@@ -507,7 +554,7 @@ export type Response = {
   attributions?:  Attribution[]
 };
 
-export function formatResponse(responseString: string) {
+export async function formatResponse(responseString: string) {
 // For some reason sometimes the answer gets wrapped in backticks, as if it's in markdown.
   // This is despite the prompt saying to use plain text not markdown.
   // Remove the ```json part
@@ -547,6 +594,11 @@ export function formatResponse(responseString: string) {
   let response: Response;
   try {
     response = JSON.parse(responseString) as Response;
+    if(!response.answer) {
+      // There have been occasions where the model has returned "null" as the answer.
+      const botName = await getSecretValue('AIBot', 'botName');
+      response.answer = `${botName} did not respond.`;
+    }
   }
   catch(error) {
     console.error(error);

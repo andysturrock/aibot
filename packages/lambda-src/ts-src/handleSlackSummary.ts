@@ -2,6 +2,10 @@ import { GenerateContentRequest, GenerativeModel, GenerativeModelPreview, TextPa
 import util from 'util';
 import { ModelFunctionCallArgs } from './handleAICommon';
 import { getChannelMessages, getThreadMessages } from './slackAPI';
+// Set default options for util.inspect to make it work well in CloudWatch
+util.inspect.defaultOptions.maxArrayLength = null;
+util.inspect.defaultOptions.depth = null;
+util.inspect.defaultOptions.colors = false;
 
 export async function handleSlackSummary(slackSummaryModel: GenerativeModel | GenerativeModelPreview,
   modelFunctionCallArgs: ModelFunctionCallArgs,
@@ -9,14 +13,14 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
   if(!modelFunctionCallArgs.slackId) {
     throw new Error("Missing slackId parameter");
   }
-  if(!modelFunctionCallArgs.channelId) {
-    throw new Error("Missing channelId parameter");
+  if(!modelFunctionCallArgs.summaryChannelId) {
+    throw new Error("Missing summaryChannelId parameter");
   }
-  if(!modelFunctionCallArgs.days) {
-    throw new Error("Missing days parameter");
+  if(!modelFunctionCallArgs.summaryDays) {
+    throw new Error("Missing summaryDays parameter");
   }
-  if(modelFunctionCallArgs.threadTs == "undefined") {
-    modelFunctionCallArgs.threadTs = undefined;
+  if(modelFunctionCallArgs.summaryThreadTs == "undefined") {
+    modelFunctionCallArgs.summaryThreadTs = undefined;
   }
 
   // If the event has a thread_ts field we'll summarise the thread.
@@ -32,12 +36,12 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
   `;
   const texts: string[] = [];
   const now = new Date();
-  const xDaysAgo = new Date(now.getTime() - (modelFunctionCallArgs.days * 24 * 60 * 60 * 1000));
+  const xDaysAgo = new Date(now.getTime() - (modelFunctionCallArgs.summaryDays * 24 * 60 * 60 * 1000));
   const oldest = `${xDaysAgo.getTime() / 1000}`; // Slack timestamps are in seconds rather than millis
   const latest = `${now.getTime() / 1000}`;
-  if(modelFunctionCallArgs.threadTs) {
+  if(modelFunctionCallArgs.summaryThreadTs) {
     const messages = await getThreadMessages(modelFunctionCallArgs.slackId,
-      modelFunctionCallArgs.channelId,
+      modelFunctionCallArgs.summaryChannelId,
       modelFunctionCallArgs.parentThreadTs,
       oldest,
       latest
@@ -47,9 +51,8 @@ export async function handleSlackSummary(slackSummaryModel: GenerativeModel | Ge
     }
   }
   else {
-    // Slack's timestamps are in seconds rather than ms.
     const messages = await getChannelMessages(modelFunctionCallArgs.slackId,
-      modelFunctionCallArgs.channelId,
+      modelFunctionCallArgs.summaryChannelId,
       oldest,
       latest,
       true);
