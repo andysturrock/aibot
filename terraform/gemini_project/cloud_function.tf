@@ -40,7 +40,7 @@ resource "google_cloudfunctions2_function" "collect_slack_messages" {
   service_config {
     max_instance_count    = 1
     available_memory      = "512M"
-    timeout_seconds       = 360
+    timeout_seconds       = 900 # 15 mins
     service_account_email = google_service_account.collect_slack_messages.email
     environment_variables = {
       GCP_PROJECT = var.gcp_gemini_project_id
