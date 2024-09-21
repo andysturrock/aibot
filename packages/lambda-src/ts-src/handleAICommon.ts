@@ -541,6 +541,9 @@ export async function getGenerativeModel(getGenerativeModelDefaults: GetGenerati
   }
   Use plain text rather than markdown format.
 
+  If you see a string like <@U12345AB6C7> that is a user id in Slack.  Keep the string like that and do not change its format.
+  If you see a string like <#C12345AB6C7> that is a channel id in Slack.  Keep the string like that and do not change its format.
+
   Check your response is valid JSON and if it is not then reformat it.  Remove all non-printable characters.
   Only respond with valid JSON.
   `;

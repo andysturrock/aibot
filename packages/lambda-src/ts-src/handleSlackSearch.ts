@@ -71,19 +71,26 @@ export async function handleSlackSearch(slackSummaryModel: GenerativeModel | Gen
     quotedUser: string
   };
   const messages: QuotedMessage[] = [];
+  
   for(const row of rows) {
-    const threadRows = await getThreadMessagesUsingToken(slackUserToken, row.channel, `${row.ts}`);
-    // Turn the raw channel ids and user ids into quoted versions so they show up properly in the results.
-    // eg turn U012AB3CD into <@U012AB3CD> and C123ABC456 into <#C123ABC456>
-    for(const threadRow of threadRows) {
-      const quotedMessage: QuotedMessage = {
-        quotedChannel: `<#${threadRow.channel}>`,
-        quotedUser: `<@${threadRow.user}>`,
-        ...threadRow
-      };
-      messages.push(quotedMessage);
+    try{
+      const threadRows = await getThreadMessagesUsingToken(slackUserToken, row.channel, `${row.ts}`);
+      // Turn the raw channel ids and user ids into quoted versions so they show up properly in the results.
+      // eg turn U012AB3CD into <@U012AB3CD> and C123ABC456 into <#C123ABC456>
+      for(const threadRow of threadRows) {
+        const quotedMessage: QuotedMessage = {
+          quotedChannel: `<#${threadRow.channel}>`,
+          quotedUser: `<@${threadRow.user}>`,
+          ...threadRow
+        };
+        messages.push(quotedMessage);
+      }
+    }
+    catch(error) {
+      console.error(`Error fetching messages from channel ${row.channel} thread ${row.ts}`);
     }
   }
+
   const prompt = `
     The data below is a set of Slack messages.  The messages have been pre-selected to contain relevant content about the question.
     The format is json with the following fields:
