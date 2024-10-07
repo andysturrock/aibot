@@ -219,7 +219,7 @@ async function transferFilesToGCS(event: PromptCommandPayload, parentThreadTs: s
           fileUri: gsUri
         };
         fileDataArray.push(fileData);
-        await postTextMessage(event.channel, `I have stored the file at ${gsUri}.`, parentThreadTs);
+        await postTextMessage(event.channel, `I have copied the file to Google storage at ${gsUri}.`, parentThreadTs);
       }
       catch(error) {
         console.error(util.inspect(error, false, null));
