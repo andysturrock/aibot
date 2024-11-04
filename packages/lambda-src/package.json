@@ -20,7 +20,7 @@
   "dependencies": {
     "@google-cloud/language": "^6.4.0",
     "@google-cloud/vertexai": "^1.3.0",
-    "@slack/bolt": "^3.19.0",
+    "@slack/bolt": "^4.1.0",
     "util": "^0.12.5"
   }
 }
