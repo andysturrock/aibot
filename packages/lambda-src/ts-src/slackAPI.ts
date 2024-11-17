@@ -1,4 +1,9 @@
-import { Block, GenericMessageEvent, HomeView, KnownBlock } from "@slack/bolt";
+import {
+  Block,
+  GenericMessageEvent,
+  HomeView,
+  KnownBlock
+} from "@slack/types";
 import {
   BotsInfoArguments,
   ChatDeleteArguments,
@@ -377,7 +382,7 @@ export type File = ArrayElement<FilesArray>;
 
 // Channel is exported from @slack/web-api/dist/response/ConversationsListResponse
 // But that's a bit weird for other files to import, so just re-export it here
-export type { Channel } from '@slack/web-api/dist/response/ConversationsListResponse';
+export type { Channel } from '@slack/web-api/dist/types/response/ConversationsListResponse';
 
 export type Action = {
   action_id: string,
