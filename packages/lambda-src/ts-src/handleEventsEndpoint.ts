@@ -1,4 +1,5 @@
-import { AppHomeOpenedEvent, EnvelopedEvent, GenericMessageEvent } from '@slack/bolt';
+import { EnvelopedEvent } from '@slack/bolt/dist/types/events/';
+import { AppHomeOpenedEvent, GenericMessageEvent } from '@slack/types';
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import util from 'util';
 import { getSecretValue, invokeLambda } from './awsAPI';
@@ -53,7 +54,6 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
     case "message":
     case "app_mention": {
       const genericMessageEvent = envelopedEvent.event as GenericMessageEvent;
-      //console.log(`handleEventsEndpoint genericMessageEvent: ${util.inspect(genericMessageEvent, false, null)}`);
 
       // Get our own user ID and ignore messages we have posted, otherwise we'll get into an infinite loop.
       const myId = await getBotId();

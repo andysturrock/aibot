@@ -1,4 +1,5 @@
-import { BlockAction, KnownBlock, MrkdwnElement, SectionBlock } from "@slack/bolt";
+import { BlockAction } from '@slack/bolt/dist/types/actions';
+import { KnownBlock, MrkdwnElement, SectionBlock } from "@slack/types";
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import { getSecretValue } from './awsAPI';
 import { publishHomeView } from "./slackAPI";

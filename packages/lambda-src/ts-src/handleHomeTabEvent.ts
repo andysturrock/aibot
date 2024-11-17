@@ -1,4 +1,4 @@
-import { ActionsBlock, AppHomeOpenedEvent, KnownBlock, MrkdwnElement, SectionBlock } from '@slack/bolt';
+import { ActionsBlock, AppHomeOpenedEvent, KnownBlock, MrkdwnElement, SectionBlock } from '@slack/types';
 import { getSecretValue } from './awsAPI';
 import { publishHomeView } from './slackAPI';
 import { getAccessToken } from './tokensTable';

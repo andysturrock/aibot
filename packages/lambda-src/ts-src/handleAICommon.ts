@@ -1,6 +1,8 @@
 import {
   Content,
   FunctionCall,
+  FunctionCallingConfig,
+  FunctionCallingMode,
   FunctionDeclaration,
   FunctionDeclarationSchemaType,
   FunctionDeclarationsTool,
@@ -20,10 +22,11 @@ import {
   SafetySetting,
   TextPart,
   Tool,
+  ToolConfig,
   VertexAI,
   VertexAISearch
 } from '@google-cloud/vertexai';
-import { KnownBlock, RichTextBlock, RichTextLink, RichTextList, RichTextSection, RichTextText, SectionBlock } from '@slack/bolt';
+import { KnownBlock, RichTextBlock, RichTextLink, RichTextList, RichTextSection, RichTextText, SectionBlock } from '@slack/types';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
 import { handleSlackSearch } from './handleSlackSearch';
@@ -324,8 +327,12 @@ async function callSlackSearchModel(modelFunctionCallArgs: ModelFunctionCallArgs
   return generateContentResult;
 }
 
+type GetGenerativeModelOptionalParams = {
+  responseMimeType?: string;
+  toolConfig?: ToolConfig
+};
 async function _getGenerativeModel(model:string, tools: Tool[], systemInstruction: string,
-  temperature: number, responseMimeType = "text/plain") {
+  temperature: number, getGenerativeModelOptionalParams: GetGenerativeModelOptionalParams = {responseMimeType: "text/plain"}) {
   const project = await getSecretValue('AIBot', 'gcpProjectId');
   const location = await getSecretValue('AIBot', 'gcpLocation');
 
@@ -333,7 +340,7 @@ async function _getGenerativeModel(model:string, tools: Tool[], systemInstructio
     temperature,
     maxOutputTokens: 8192,
     topP: 0.95,
-    responseMimeType
+    responseMimeType: getGenerativeModelOptionalParams.responseMimeType
   };
   const safetySettings: SafetySetting[] = [];
   safetySettings.push(
@@ -354,12 +361,14 @@ async function _getGenerativeModel(model:string, tools: Tool[], systemInstructio
       threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
     }
   );
+
   const modelParams: ModelParams = {
     model,
     tools,
     safetySettings,
     generationConfig,
-    systemInstruction
+    systemInstruction,
+    toolConfig: getGenerativeModelOptionalParams.toolConfig
   };
   const vertexAI = new VertexAI({ project, location });
   // const generativeModel = vertexAI.preview.getGenerativeModel(modelParams);
@@ -484,7 +493,7 @@ export async function getGenerativeModel(getGenerativeModelDefaults: GetGenerati
     },
   };
   functionDeclarations.push(callHandleSlackSearchModel);
-  
+ 
   const functionDeclarationsTool: FunctionDeclarationsTool = {
     functionDeclarations
   };
@@ -548,7 +557,13 @@ export async function getGenerativeModel(getGenerativeModelDefaults: GetGenerati
   Only respond with valid JSON.
   `;
   const model = await getSecretValue('AIBot', 'supervisorAgentModel');
-  const generativeModel = _getGenerativeModel(model, tools, systemInstruction, 1.0);
+  const functionCallingConfig: FunctionCallingConfig = {
+    mode: FunctionCallingMode.AUTO
+  };
+  const toolConfig: ToolConfig = {
+    functionCallingConfig
+  };
+  const generativeModel = _getGenerativeModel(model, tools, systemInstruction, 1.0, {toolConfig});
   return generativeModel;
 }
 
