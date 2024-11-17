@@ -1,10 +1,10 @@
 import {
   Content
 } from '@google-cloud/vertexai';
-import { GenericMessageEvent } from '@slack/bolt';
+import { GenericMessageEvent } from '@slack/types';
 import * as dotenv from 'dotenv';
 import readline from 'node:readline/promises';
-import { downloadSlackContent } from '../ts-src/downloadSlackContent';
+// import { downloadSlackContent } from '../ts-src/downloadSlackContent';
 import { _handlePromptCommand } from '../ts-src/handlePromptCommand';
 import { PromptCommandPayload } from '../ts-src/slackAPI';
 dotenv.config();
@@ -58,14 +58,14 @@ async function testHandlePromptCommand() {
 
 // void callCustomGroundedModel("What is the daily meal rate for expenses?");
 // void callGoogleGroundedModel("You are the CTO of a digital bank. Write a paper for the board advising them about AI and the approach the bank should take in adopting it.");
-// void testHandlePromptCommand();
-async function testDownloadSlackContent() {
-  await downloadSlackContent();
-}
+void testHandlePromptCommand();
+// async function testDownloadSlackContent() {
+//   await downloadSlackContent();
+// }
 
-try {
-  void testDownloadSlackContent();
-}
-catch(error) {
-  console.error(error);
-}
+// try {
+//   void testDownloadSlackContent();
+// }
+// catch(error) {
+//   console.error(error);
+// }

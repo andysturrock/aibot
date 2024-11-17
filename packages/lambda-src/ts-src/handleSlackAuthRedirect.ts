@@ -1,4 +1,4 @@
-import { KnownBlock, MrkdwnElement, SectionBlock } from "@slack/bolt";
+import { KnownBlock, MrkdwnElement, SectionBlock } from "@slack/types";
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import axios, { AxiosRequestConfig } from "axios";
 import querystring from 'querystring';
