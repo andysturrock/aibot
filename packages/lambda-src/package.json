@@ -19,7 +19,7 @@
     "ts-jest": "^29.2.5"
   },
   "dependencies": {
-    "@google-cloud/aiplatform": "^3.33.0",
+    "@google-cloud/aiplatform": "^4.1.0",
     "@google-cloud/bigquery": "^7.9.1",
     "@google-cloud/language": "^6.5.0",
     "@google-cloud/storage": "^7.14.0",
