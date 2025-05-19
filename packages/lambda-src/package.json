@@ -21,7 +21,7 @@
   "dependencies": {
     "@google-cloud/aiplatform": "^4.1.0",
     "@google-cloud/bigquery": "^8.0.0",
-    "@google-cloud/language": "^6.5.0",
+    "@google-cloud/language": "^7.0.2",
     "@google-cloud/storage": "^7.14.0",
     "@google-cloud/vertexai": "^1.9.0",
     "@slack/bolt": "^4.1.0",
