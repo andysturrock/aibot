@@ -29,7 +29,7 @@ export class LambdaStack extends Stack {
         NODE_OPTIONS: '--enable-source-maps',
       },
       logRetention: logs.RetentionDays.THREE_DAYS,
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_22_X,
       timeout: Duration.seconds(30),
       vpc: props.vpc,
       vpcSubnets: {

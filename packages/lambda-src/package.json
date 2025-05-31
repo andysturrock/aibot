@@ -5,30 +5,30 @@
     "test": "jest"
   },
   "devDependencies": {
-    "@aws-sdk/client-dynamodb": "^3.662.0",
-    "@aws-sdk/client-lambda": "^3.662.0",
-    "@aws-sdk/client-secrets-manager": "^3.662.0",
+    "@aws-sdk/client-dynamodb": "^3.821.0",
+    "@aws-sdk/client-lambda": "^3.821.0",
+    "@aws-sdk/client-secrets-manager": "^3.821.0",
     "@tsconfig/node18": "^18.2.4",
-    "@types/aws-lambda": "^8.10.145",
-    "@types/jest": "^29.5.13",
-    "@types/luxon": "^3.4.2",
-    "@types/node": "^22.7.4",
-    "bun": "^1.1.29",
-    "google-gax": "^4.4.1",
+    "@types/aws-lambda": "^8.10.149",
+    "@types/jest": "^29.5.14",
+    "@types/luxon": "^3.6.2",
+    "@types/node": "^22.15.29",
+    "bun": "^1.2.15",
+    "google-gax": "^4.6.1",
     "jest": "^29.7.0",
-    "ts-jest": "^29.2.5"
+    "ts-jest": "^29.3.4"
   },
   "dependencies": {
-    "@google-cloud/aiplatform": "^4.1.0",
-    "@google-cloud/bigquery": "^8.0.0",
+    "@google-cloud/aiplatform": "^4.2.0",
+    "@google-cloud/bigquery": "^8.1.0",
     "@google-cloud/language": "^7.0.2",
-    "@google-cloud/storage": "^7.14.0",
-    "@google-cloud/vertexai": "^1.9.0",
-    "@slack/bolt": "^4.1.0",
+    "@google-cloud/storage": "^7.16.0",
+    "@google-cloud/vertexai": "^1.10.0",
+    "@slack/bolt": "^4.4.0",
     "@slack/types": "^2.14.0",
-    "axios": "^1.7.7",
-    "dotenv": "^16.4.5",
-    "luxon": "^3.5.0",
+    "axios": "^1.9.0",
+    "dotenv": "^16.5.0",
+    "luxon": "^3.6.1",
     "util": "^0.12.5"
   }
 }
