@@ -380,7 +380,6 @@ async function getGoogleGroundedGenerativeModel(systemInstruction: string, tempe
   const tools: Tool[] = [];
   // Google search grounding is a useful way to overcome dated training data.
   const googleSearchRetrieval: GoogleSearchRetrieval = {
-    disableAttribution: false
   };
   const googleSearchRetrievalTool: GoogleSearchRetrievalTool = {
     googleSearchRetrieval
