@@ -1,0 +1,99 @@
+  console.log
+    Importing aiService...
+
+      at Object.<anonymous> (packages/lambda-src/__tests__/aiService.test.ts:50:15)
+
+  console.error
+    Failed to import aiService: SyntaxError: The requested module 'lodash' does not provide an export named 'isEmpty'
+        at SourceTextModule.link (node:internal/vm/module:204:17)
+        at processTicksAndRejections (node:internal/process/task_queues:105:5)
+        at async Runtime.linkAndEvaluateModule (/home/andy/git_repos/aibot_beta/node_modules/jest-runtime/build/index.js:708:5)
+        at async importModuleDynamicallyWrapper (node:internal/vm/module:436:15)
+        at async Object.<anonymous> (/home/andy/git_repos/aibot_beta/packages/lambda-src/__tests__/aiService.test.ts:51:19)
+
+      52 |       console.log('aiService imported successfully');
+      53 |     } catch (e) {
+    > 54 |       console.error('Failed to import aiService:', e);
+         |               ^
+      55 |       throw e;
+      56 |     }
+      57 |   });
+
+      at Object.<anonymous> (packages/lambda-src/__tests__/aiService.test.ts:54:15)
+
+(node:44536) ExperimentalWarning: VM Modules is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:44536) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+FAIL packages/lambda-src/__tests__/aiService.test.ts (31.618 s)
+  aiService
+    ✕ should create a supervisor agent with sub-agents (1 ms)
+    Utility Functions
+      ✕ should parse JSON response and remove backticks
+      ✕ should handle broken JSON gracefully
+      ✕ should translate bold markdown (1 ms)
+
+  ● aiService › should create a supervisor agent with sub-agents
+
+    SyntaxError: The requested module 'lodash' does not provide an export named 'isEmpty'
+
+      49 |     try {
+      50 |       console.log('Importing aiService...');
+    > 51 |       aiService = await import('../ts-src/aiService');
+         |                   ^
+      52 |       console.log('aiService imported successfully');
+      53 |     } catch (e) {
+      54 |       console.error('Failed to import aiService:', e);
+
+      at async Runtime.linkAndEvaluateModule (node_modules/jest-runtime/build/index.js:708:5)
+      at async Object.<anonymous> (packages/lambda-src/__tests__/aiService.test.ts:51:19)
+
+  ● aiService › Utility Functions › should parse JSON response and remove backticks
+
+    SyntaxError: The requested module 'lodash' does not provide an export named 'isEmpty'
+
+      49 |     try {
+      50 |       console.log('Importing aiService...');
+    > 51 |       aiService = await import('../ts-src/aiService');
+         |                   ^
+      52 |       console.log('aiService imported successfully');
+      53 |     } catch (e) {
+      54 |       console.error('Failed to import aiService:', e);
+
+      at async Runtime.linkAndEvaluateModule (node_modules/jest-runtime/build/index.js:708:5)
+      at async Object.<anonymous> (packages/lambda-src/__tests__/aiService.test.ts:51:19)
+
+  ● aiService › Utility Functions › should handle broken JSON gracefully
+
+    SyntaxError: The requested module 'lodash' does not provide an export named 'isEmpty'
+
+      49 |     try {
+      50 |       console.log('Importing aiService...');
+    > 51 |       aiService = await import('../ts-src/aiService');
+         |                   ^
+      52 |       console.log('aiService imported successfully');
+      53 |     } catch (e) {
+      54 |       console.error('Failed to import aiService:', e);
+
+      at async Runtime.linkAndEvaluateModule (node_modules/jest-runtime/build/index.js:708:5)
+      at async Object.<anonymous> (packages/lambda-src/__tests__/aiService.test.ts:51:19)
+
+  ● aiService › Utility Functions › should translate bold markdown
+
+    SyntaxError: The requested module 'lodash' does not provide an export named 'isEmpty'
+
+      49 |     try {
+      50 |       console.log('Importing aiService...');
+    > 51 |       aiService = await import('../ts-src/aiService');
+         |                   ^
+      52 |       console.log('aiService imported successfully');
+      53 |     } catch (e) {
+      54 |       console.error('Failed to import aiService:', e);
+
+      at async Runtime.linkAndEvaluateModule (node_modules/jest-runtime/build/index.js:708:5)
+      at async Object.<anonymous> (packages/lambda-src/__tests__/aiService.test.ts:51:19)
+
+Test Suites: 1 failed, 1 total
+Tests:       4 failed, 4 total
+Snapshots:   0 total
+Time:        31.675 s
+Ran all test suites.

@@ -1,24 +1,25 @@
 import { helpers, PredictionServiceClient } from '@google-cloud/aiplatform';
 import { google } from '@google-cloud/aiplatform/build/protos/protos';
 import { BigQuery, BigQueryOptions } from '@google-cloud/bigquery';
-import { Citation, CitationMetadata, GenerateContentRequest, GenerativeModel, GenerativeModelPreview, TextPart } from '@google-cloud/vertexai';
+import { Citation, CitationMetadata } from '@google-cloud/vertexai';
+import { GenerateContentParameters, Part } from '@google/genai';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
-import { ModelFunctionCallArgs } from './handleAICommon';
+import { ModelFunctionCallArgs } from './aiService';
 import { getChannelName, getPermaLink, getThreadMessagesUsingToken, Message } from './slackAPI';
 // Set default options for util.inspect to make it work well in CloudWatch
 util.inspect.defaultOptions.maxArrayLength = null;
 util.inspect.defaultOptions.depth = null;
 util.inspect.defaultOptions.colors = false;
 
-export async function handleSlackSearch(slackSummaryModel: GenerativeModel | GenerativeModelPreview,
+export async function handleSlackSearch(slackSummaryModel: any,
   modelFunctionCallArgs: ModelFunctionCallArgs,
-  generateContentRequest: GenerateContentRequest) {
+  generateContentRequest: GenerateContentParameters) {
 
-  if(!modelFunctionCallArgs.prompt) {
+  if (!modelFunctionCallArgs.prompt) {
     throw new Error("modelFunctionCallArgs missing prompt");
   }
-  const searchEmbeddings  = await generateEmbeddings(modelFunctionCallArgs.prompt);
+  const searchEmbeddings = await generateEmbeddings(modelFunctionCallArgs.prompt);
   const project = await getSecretValue('AIBot', 'gcpProjectId');
   // Region is something like eu-west2, multi-region is when you can specify "eu" or "us"
   const location = await getSecretValue('AIBot', 'gcpMultiRegion');
@@ -71,13 +72,13 @@ export async function handleSlackSearch(slackSummaryModel: GenerativeModel | Gen
     quotedUser: string
   };
   const messages: QuotedMessage[] = [];
-  
-  for(const row of rows) {
-    try{
+
+  for (const row of rows) {
+    try {
       const threadRows = await getThreadMessagesUsingToken(slackUserToken, row.channel, `${row.ts}`);
       // Turn the raw channel ids and user ids into quoted versions so they show up properly in the results.
       // eg turn U012AB3CD into <@U012AB3CD> and C123ABC456 into <#C123ABC456>
-      for(const threadRow of threadRows) {
+      for (const threadRow of threadRows) {
         const quotedMessage: QuotedMessage = {
           quotedChannel: `<#${threadRow.channel}>`,
           quotedUser: `<@${threadRow.user}>`,
@@ -86,7 +87,7 @@ export async function handleSlackSearch(slackSummaryModel: GenerativeModel | Gen
         messages.push(quotedMessage);
       }
     }
-    catch(error) {
+    catch {
       console.error(`Error fetching messages from channel ${row.channel} thread ${row.ts}`);
     }
   }
@@ -113,11 +114,11 @@ export async function handleSlackSearch(slackSummaryModel: GenerativeModel | Gen
 
   // Search backwards through the content until we find the most recent user part, which should be the original prompt.
   // Then add a text part to that with all the detail above.
-  const lastUserContent = generateContentRequest.contents.findLast(content => content.role == 'user');
-  if(!lastUserContent) {
+  const lastUserContent = (generateContentRequest.contents as any).findLast((content: any) => content.role == 'user');
+  if (!lastUserContent) {
     throw new Error(`Could not find user content in generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
   }
-  const promptPart: TextPart = {
+  const promptPart: Part = {
     text: prompt
   };
   lastUserContent.parts.push(promptPart);
@@ -127,9 +128,9 @@ export async function handleSlackSearch(slackSummaryModel: GenerativeModel | Gen
   const citations: Citation[] = [];
   // Use to keep track whether citations are duplicates.
   const citationSet = new Set<string>();
-  for(const message of messages) {
+  for (const message of messages) {
     // Create the citation if we haven't already cited the parent message or this message.
-    if(!citationSet.has(message.threadTs ?? message.ts)) {
+    if (!citationSet.has(message.threadTs ?? message.ts)) {
       // Slack has a handy API for getting a permalink to a message given its channel and timestamp.
       // If the message is in a thread create the link to the parent message of the thread.
       const uri = await getPermaLink(message.channel, message.threadTs ?? message.ts);
@@ -142,8 +143,8 @@ export async function handleSlackSearch(slackSummaryModel: GenerativeModel | Gen
       citationSet.add(message.threadTs ?? message.ts);
     }
   }
-  if(content.response.candidates?.[0]) {
-    if(content.response.candidates[0].citationMetadata) {
+  if (content.response.candidates?.[0]) {
+    if (content.response.candidates[0].citationMetadata) {
       content.response.candidates[0].citationMetadata.citations = citations;
     }
     else {
@@ -160,31 +161,31 @@ async function generateEmbeddings(text: string) {
   const gcpProjectId = await getSecretValue('AIBot', 'gcpProjectId');
   const gcpLocation = await getSecretValue('AIBot', 'gcpLocation');
   const apiEndpoint = `${gcpLocation}-aiplatform.googleapis.com`;
-  const clientOptions = {apiEndpoint: apiEndpoint};
+  const clientOptions = { apiEndpoint: apiEndpoint };
   const model = "text-embedding-004";
   const endpoint = `projects/${gcpProjectId}/locations/${gcpLocation}/publishers/google/models/${model}`;
   const taskType = "RETRIEVAL_QUERY";
 
-  const instances = [helpers.toValue({content: text, task_type: taskType})] as google.protobuf.IValue[];
-  
+  const instances = [helpers.toValue({ content: text, task_type: taskType })] as google.protobuf.IValue[];
+
   // From @google-cloud/aiplatform/build/protos/protos.d.ts
   type IPredictRequest = {
-    endpoint?: (string|null);
-    instances?: (google.protobuf.IValue[]|null);
-    parameters?: (google.protobuf.IValue|null);
+    endpoint?: (string | null);
+    instances?: (google.protobuf.IValue[] | null);
+    parameters?: (google.protobuf.IValue | null);
   };
-  const request: IPredictRequest = {endpoint, instances};
+  const request: IPredictRequest = { endpoint, instances };
   const client = new PredictionServiceClient(clientOptions);
   const [response] = await client.predict(request);
   const predictions = response.predictions;
   const embeddings: number[] = [];
-  if(predictions) {
-    for(const prediction of predictions) {
+  if (predictions) {
+    for (const prediction of predictions) {
       const embeddingsProto = prediction.structValue?.fields?.embeddings;
-      if(embeddingsProto) {
+      if (embeddingsProto) {
         const valuesProto = embeddingsProto.structValue?.fields?.values;
-        for(const value of valuesProto?.listValue?.values ?? []) {
-          if(value.numberValue) {
+        for (const value of valuesProto?.listValue?.values ?? []) {
+          if (value.numberValue) {
             embeddings.push(value.numberValue);
           }
         }

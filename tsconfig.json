@@ -1,9 +1,28 @@
 {
-  "extends": "@tsconfig/node20/tsconfig.json",
+  "extends": "@tsconfig/node22/tsconfig.json",
   "compilerOptions": {
-    "moduleResolution": "Node16",
-    "module": "Node16"
+    "moduleResolution": "bundler",
+    "module": "preserve",
+    "skipLibCheck": true,
+    "allowJs": true,
+    "noEmit": true,
+    "types": [
+      "node",
+      "jest"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "eslint__js": [
+        "./node_modules/@eslint/js/types/index.d.ts"
+      ]
+    }
   },
-  "include": ["packages/**/*", "eslint.config.js"],
-  "exclude": ["**/node_modules", "**/dist", "**/cdk.out"]
+  "include": [
+    "eslint.config.js"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/dist",
+    "**/cdk.out"
+  ]
 }

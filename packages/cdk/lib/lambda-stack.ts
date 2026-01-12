@@ -19,7 +19,7 @@ export class LambdaStack extends Stack {
     const lambdaVersionIdForURL = props.lambdaVersion.replace(/\./g, '_');
 
     const noInboundAllOutboundSecurityGroup = props.securityGroups.get("noInboundAllOutboundSecurityGroup");
-    if(!noInboundAllOutboundSecurityGroup) {
+    if (!noInboundAllOutboundSecurityGroup) {
       throw new Error("Cannot find security group noInboundAllOutboundSecurityGroup");
     }
 
@@ -131,9 +131,8 @@ export class LambdaStack extends Stack {
     // Create the cert for the gateway.
     // Usefully, this writes the DNS Validation CNAME records to the R53 zone,
     // which is great as normal Cloudformation doesn't do that.
-    const acmCertificateForCustomDomain = new acm.DnsValidatedCertificate(this, 'CustomDomainCertificate', {
+    const acmCertificateForCustomDomain = new acm.Certificate(this, 'CustomDomainCertificate', {
       domainName: props.aiBotDomainName,
-      hostedZone: zone,
       validation: acm.CertificateValidation.fromDns(zone),
     });
 
@@ -167,13 +166,13 @@ export class LambdaStack extends Stack {
 
     // Connect the API Gateway to the lambdas
     const handleSlackAuthRedirectLambdaIntegration = new apigateway.LambdaIntegration(handleSlackAuthRedirectLambda, {
-      requestTemplates: {"application/json": '{ "statusCode": "200" }'}
+      requestTemplates: { "application/json": '{ "statusCode": "200" }' }
     });
     const handleInteractiveEndpointLambdaIntegration = new apigateway.LambdaIntegration(handleInteractiveEndpointLambda, {
-      requestTemplates: {"application/json": '{ "statusCode": "200" }'}
+      requestTemplates: { "application/json": '{ "statusCode": "200" }' }
     });
     const handleEventsEndpointLambdaIntegration = new apigateway.LambdaIntegration(handleEventsEndpointLambda, {
-      requestTemplates: {"application/json": '{ "statusCode": "200" }'}
+      requestTemplates: { "application/json": '{ "statusCode": "200" }' }
     });
     const handleSlackAuthRedirectResource = api.root.addResource('slack-oauth-redirect');
     const handleInteractiveEndpointResource = api.root.addResource('interactive-endpoint');
@@ -190,6 +189,6 @@ export class LambdaStack extends Stack {
       target: route53.RecordTarget.fromAlias(new targets.ApiGatewayDomain(customDomain))
     });
     // And path mapping to the API
-    customDomain.addBasePathMapping(api, {basePath: lambdaVersionIdForURL, stage: stage});
+    customDomain.addBasePathMapping(api, { basePath: lambdaVersionIdForURL, stage: stage });
   }
 }

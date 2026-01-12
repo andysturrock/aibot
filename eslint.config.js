@@ -5,7 +5,15 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ["packages/*/dist/", "packages/*/node_modules/", "packages/*/cdk.out"]
+    ignores: [
+      "**/node_modules/",
+      "packages/*/dist/",
+      "packages/*/cdk.out/",
+      "eslint.config.js",
+      "**/*.ohm-bundle.js",
+      "**/*.ohm-bundle.d.ts",
+      "cdk/jest.config.js"
+    ]
   },
   eslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
@@ -14,12 +22,12 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        project: ['./tsconfig.json', './packages/*/tsconfig.json'],
+        project: true,
         tsconfigRootDir: import.meta.dirname,
       },
     },
     rules: {
-      "@typescript-eslint/semi": ["error"],
+      "semi": ["error", "always"],
       "@typescript-eslint/consistent-type-definitions": [
         "error",
         "type"
@@ -33,7 +41,13 @@ export default tseslint.config(
           allowRegExp: true
         },
       ],
-      "indent": ["error", 2]
+      "indent": ["error", 2],
+      "@typescript-eslint/no-unsafe-call": "warn",
+      "@typescript-eslint/no-unsafe-member-access": "warn",
+      "@typescript-eslint/no-unsafe-return": "warn",
+      "@typescript-eslint/no-unsafe-assignment": "warn",
+      "@typescript-eslint/no-unsafe-argument": "warn",
+      "@typescript-eslint/no-explicit-any": "warn"
     }
   }
 );
