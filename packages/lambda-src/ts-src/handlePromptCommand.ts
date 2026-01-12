@@ -3,17 +3,15 @@ import {
   Content,
   FileData,
   FileDataPart,
-  FunctionCall,
   Part,
-  StartChatParams,
   TextPart
 } from '@google-cloud/vertexai';
+import { Runner } from '@google/adk';
 import axios, { AxiosRequestConfig } from 'axios';
 import path from 'node:path';
-import stream from 'node:stream/promises';
 import util from 'util';
 import { getSecretValue } from './awsAPI';
-import { callModelFunction, formatResponse, generateResponseBlocks, getGenerativeModel, GetGenerativeModelDefaults, ModelFunctionCallArgs, removeReaction } from './handleAICommon';
+import { createSupervisorAgent, formatResponse, generateResponseBlocks, ModelFunctionCallArgs, removeReaction } from './handleAICommon';
 import { getHistory, GetHistoryFunction, putHistory, PutHistoryFunction } from './historyTable';
 import { File, postEphmeralErrorMessage, postMessage, postTextMessage, PromptCommandPayload } from './slackAPI';
 // Set default options for util.inspect to make it work well in CloudWatch
@@ -26,14 +24,14 @@ export async function handlePromptCommand(event: PromptCommandPayload) {
   await _handlePromptCommand(event, getHistory, putHistory);
 }
 
-// The getHistoryFunction and putHistoryFunction args make this is easier to test.
-export async function _handlePromptCommand(event: PromptCommandPayload,  getHistoryFunction: GetHistoryFunction, putHistoryFunction: PutHistoryFunction): Promise<void> {
+// The getHistoryFunction and putHistoryFunction args make this easier to test.
+export async function _handlePromptCommand(event: PromptCommandPayload, getHistoryFunction: GetHistoryFunction, putHistoryFunction: PutHistoryFunction): Promise<void> {
   // Rather annoyingly Google seems to only get config from the filesystem.
   // We'll package this config file with the lambda code.
-  if(!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     process.env.GOOGLE_APPLICATION_CREDENTIALS = "./clientLibraryConfig-aws-aibot.json";
   }
-  
+
   const channelId = event.channel;
 
   // If we are in a thread we'll respond there.  If not then we'll start a thread for the response.
@@ -46,11 +44,11 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
   // We also want to use the parent thread ts consistently as the key for the history.
   const parentThreadTs = event.thread_ts ?? event.ts;
   try {
-    
-    if(!parentThreadTs) {
+
+    if (!parentThreadTs) {
       throw new Error("Need thread_ts or ts field in message");
     }
-    if(!channelId) {
+    if (!channelId) {
       throw new Error("Missing channel in event");
     }
 
@@ -59,7 +57,7 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     try {
       fileDataArray = await transferFilesToGCS(event, parentThreadTs);
     }
-    catch(error) {
+    catch (error) {
       // Remove the eyes emoji from the original message so we don't have eyes littered everywhere.
       await removeReaction(event.channel, event.event_ts);
       const text = (error instanceof Error) ? error.message : "Failed to transfer files to GCS";
@@ -68,7 +66,7 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     }
     // Create file parts to supply to the File Agent later.
     const fileDataParts = new Array<Part>();
-    for(const fileData of fileDataArray) {
+    for (const fileData of fileDataArray) {
       const fileDataPart: FileDataPart = {
         fileData
       };
@@ -81,7 +79,7 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     // If we have file parts then add some additional prompting.
     // Otherwise the supervisor seems reluctant to actually call the File Processing agent
     // We'll pass the file parts to the Files agent below when the supervisor agent asks us to call it.
-    if(fileDataParts.length > 0) {      
+    if (fileDataParts.length > 0) {
       const fileUrisTextPart: TextPart = {
         text: `
           This request contains one or more files.
@@ -113,68 +111,32 @@ export async function _handlePromptCommand(event: PromptCommandPayload,  getHist
     // so this function adds some dummy Parts to the Content.
     history = fixMissingContentParts(history);
 
-    const startChatParams: StartChatParams = { };
-    startChatParams.history = history;
-    const getGenerativeModelDefaults: GetGenerativeModelDefaults = {
-      slackSummaryDefaultDays: 30,
-      slackSummaryDefaultChannelId: channelId,
-      slackSummaryDefaultThreadId: event.thread_ts ?? "undefined"
+    const supervisorAgent = await createSupervisorAgent();
+    // Extra args for tools
+    const extraArgs: ModelFunctionCallArgs = {
+      channelId,
+      parentThreadTs,
+      fileDataParts,
+      slackId: event.user_id
     };
-    const generativeModel = await getGenerativeModel(getGenerativeModelDefaults);
-    const chatSession = generativeModel.startChat(startChatParams);
 
-    let response: string | undefined = undefined;
-    while(response == undefined) {
-      console.log(`Parts array input to supervisor chat: ${util.inspect(parts, false, null)}`);
-      const generateContentResult = await chatSession.sendMessage(parts);
+    const runner = new Runner({
+      agent: supervisorAgent,
+      history: history
+    });
 
-      const contentResponse = generateContentResult.response;
-      console.log(`supervisor contentResponse: ${util.inspect(contentResponse, false, null)}`);
-      
-      // No response parts almost certainly means we've hit a safety stop.
-      if(!generateContentResult.response.candidates?.[0].content.parts) {
-        response = `{
-          "answer": "I can't answer that because ${generateContentResult.response.candidates?.[0].finishReason}"
-        }`;
-        console.warn(`generateContentResult had no content parts: ${util.inspect(generateContentResult, false, null)}`);
-      }
-      else {
-        response = contentResponse.candidates?.[0].content.parts[0].text;
-      }
+    const runnerResult = await runner.run(prompt, extraArgs);
+    const lastResponse = runnerResult.responses[runnerResult.responses.length - 1];
+    let response = lastResponse?.content ?? "I don't know";
 
-      // Response and function calls should be mutually exclusive, but check anyway.
-      // We'll only call the functions if we don't have a response.
-      if(!response) {
-        const functionCalls: FunctionCall[] = [];
-        // Gather all the function calls into one array.
-        contentResponse.candidates?.[0].content.parts.reduce((functionCalls, part) => {
-          if(part.functionCall) {
-            functionCalls.push(part.functionCall);
-          }
-          return functionCalls;
-        }, functionCalls);
-        // This extra info is used by callModelFunction() and the sub-agent models.
-        const extraArgs: ModelFunctionCallArgs = {
-          channelId,
-          parentThreadTs,
-          fileDataParts,
-          slackId: event.user_id
-        };
-        parts = new Array<Part>();
-        for (const functionCall of functionCalls) {
-          const functionResponsePart = await callModelFunction(functionCall, extraArgs, getHistoryFunction, putHistoryFunction);
-          parts.push(functionResponsePart);
-        }
-      }
-    }
-    history = await chatSession.getHistory();
-    // See above for why we add the blank content.
+    // Update history
+    history = runner.history;
     history = fixMissingContentParts(history);
     await putHistoryFunction(event.channel, parentThreadTs, history, "supervisor");
     const formattedResponse = await formatResponse(response);
     const blocks = generateResponseBlocks(formattedResponse);
 
-    if(channelId && event.ts) {
+    if (channelId && event.ts) {
       // Remove the eyes emoji from the original message so we don't have eyes littered everywhere.
       await removeReaction(channelId, event.ts);
       // Slack recommends truncating the text field to 4000 chars.
@@ -206,9 +168,9 @@ async function transferFilesToGCS(event: PromptCommandPayload, parentThreadTs: s
   const documentBucketName = await getSecretValue('AIBot', 'documentBucketName');
   const handleFilesModel = await getSecretValue('AIBot', 'handleFilesModel');
   const botName = await getSecretValue('AIBot', 'botName');
-  const fileDataArray: FileData[]  = [];
-  for(const file of event.files ?? []) {
-    if(!isSupportedMimeType(file.mimetype)) {
+  const fileDataArray: FileData[] = [];
+  for (const file of event.files ?? []) {
+    if (!isSupportedMimeType(file.mimetype)) {
       throw new Error(`${botName} using ${handleFilesModel} does not support file type ${file.mimetype}`);
     }
     else {
@@ -221,7 +183,7 @@ async function transferFilesToGCS(event: PromptCommandPayload, parentThreadTs: s
         fileDataArray.push(fileData);
         await postTextMessage(event.channel, `I have copied the file to Google storage at ${gsUri}.`, parentThreadTs);
       }
-      catch(error) {
+      catch (error) {
         console.error(util.inspect(error, false, null));
         throw new Error(`Failed to upload file ${file.title} to Gemini`);
       }
@@ -231,7 +193,7 @@ async function transferFilesToGCS(event: PromptCommandPayload, parentThreadTs: s
 }
 
 async function transferFileToGCS(slackBotToken: string, documentBucketName: string, userId: string, file: File) {
-  if(!file.url_private_download) {
+  if (!file.url_private_download) {
     throw new Error("Missing url_private_download field");
   }
   const axiosRequestConfig: AxiosRequestConfig = {
@@ -245,7 +207,7 @@ async function transferFileToGCS(slackBotToken: string, documentBucketName: stri
   // Extract the filename from the URL rather than use the name.
   // Slack will have transformed any special chars etc.
   const filename = path.basename(file.url_private_download);
-  
+
   // Stream the file directly from Slack to GCS (ie without writing to the filesystem here).
   const storage = new Storage();
   const dateFolderName = new Date().toISOString().substring(0, 10);
@@ -253,7 +215,7 @@ async function transferFileToGCS(slackBotToken: string, documentBucketName: stri
   const documentBucket = storage.bucket(documentBucketName);
   const bucketFile = documentBucket.file(gcsFilename);
   const bucketFileStream = bucketFile.createWriteStream();
-  
+
   await stream.pipeline(axiosResponse.data, bucketFileStream);
   return `gs://${documentBucketName}/${gcsFilename}`;
 }
