@@ -1,8 +1,9 @@
 functions-framework==3.*
 python-dotenv
-vertexai
+google-cloud-aiplatform
+google-cloud-secret-manager
+google-cloud-bigquery
+slack_sdk
 grpcio
 grpcio-status
-slack_sdk
 dataclasses
-google-cloud-secret-manager

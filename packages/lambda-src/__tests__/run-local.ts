@@ -17,7 +17,7 @@ async function testHandlePromptCommand() {
     type: 'message',
     subtype: undefined,
     user: '',
-    ts: '',
+    ts: '1721893185.864729',
     channel_type: 'channel'
   };
   const event: PromptCommandPayload = {

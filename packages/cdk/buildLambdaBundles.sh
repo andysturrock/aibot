@@ -24,7 +24,7 @@ do
   # The enclosing in () means "execute in subshell", so this script doesn't change directory itself
   # Get some weird errors from Axios re "Expected signal to be an instanceof AbortSignal" without --keep-names
   ( cd ../lambda-src && \
-    esbuild ./ts-src/${lambda}.ts \
+    npx esbuild ./ts-src/${lambda}.ts \
     --bundle \
     --external:aws-sdk \
     --sourcemap \
