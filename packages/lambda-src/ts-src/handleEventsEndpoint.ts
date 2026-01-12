@@ -17,7 +17,7 @@ util.inspect.defaultOptions.colors = false;
  */
 export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
   try {
-    if(!event.body) {
+    if (!event.body) {
       throw new Error("Missing event body");
     }
 
@@ -26,19 +26,19 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
     verifySlackRequest(signingSecret, event.headers, event.body);
 
     const result: APIGatewayProxyResult = {
-      body: JSON.stringify({msg: "ok"}),
+      body: JSON.stringify({ msg: "ok" }),
       statusCode: 200
     };
 
     type URLVerification = {
-      token:string;
+      token: string;
       challenge: string;
       type: string;
     };
     // This handles the initial event API verification.
     // See https://api.slack.com/events/url_verification
     const urlVerification = JSON.parse(event.body) as URLVerification;
-    if(urlVerification.type === "url_verification") {
+    if (urlVerification.type === "url_verification") {
       result.body = JSON.stringify({
         challenge: urlVerification.challenge
       });
@@ -49,7 +49,7 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
     }
 
     const envelopedEvent = JSON.parse(event.body) as EnvelopedEvent;
-    switch(envelopedEvent.event.type) {
+    switch (envelopedEvent.event.type) {
     // DM from the Messages tab or @mention
     case "message":
     case "app_mention": {
@@ -57,15 +57,15 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
 
       // Get our own user ID and ignore messages we have posted, otherwise we'll get into an infinite loop.
       const myId = await getBotId();
-      if(!myId.bot_id || !myId.bot_user_id) {
+      if (!myId.bot_id || !myId.bot_user_id) {
         throw new Error("Cannot get bot's own user id");
       }
-      if(genericMessageEvent.bot_id === myId.bot_id) {
+      if (genericMessageEvent.bot_id === myId.bot_id) {
         console.debug(`Ignoring message from self ${myId.bot_id} or ${myId.bot_user_id}`);
         return result;
       }
       const ignoreMessagesFromTheseIds = (await getSecretValue('AIBot', 'ignoreMessagesFromTheseIds')).split(",");
-      if(ignoreMessagesFromTheseIds.some(id => id == genericMessageEvent.user)) {
+      if (ignoreMessagesFromTheseIds.some(id => id == genericMessageEvent.user)) {
         console.debug(`Ignoring message from ${genericMessageEvent.user} as it's in the ignore list ${util.inspect(ignoreMessagesFromTheseIds, false, null)}`);
         console.debug(`Message was ${genericMessageEvent.text}`);
         return result;
@@ -75,7 +75,7 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
       // Then call the AIBot-handlePromptCommandLambda asynchronously.
       await addReaction(genericMessageEvent.channel, genericMessageEvent.event_ts, "eyes");
 
-      if(!genericMessageEvent.text) {
+      if (!genericMessageEvent.text) {
         throw new Error("No text in message");
       }
       const promptCommandPayload: PromptCommandPayload = {
@@ -97,7 +97,7 @@ export async function handleEventsEndpoint(event: APIGatewayProxyEvent): Promise
     case "app_home_opened": {
       const appHomeOpenedEvent: AppHomeOpenedEvent = envelopedEvent.event as AppHomeOpenedEvent;
       // Slightly strangely AppHomeOpenedEvent is fired for when the user opens either Messages or Home tab.
-      if(appHomeOpenedEvent.tab === "home") {
+      if (appHomeOpenedEvent.tab === "home") {
         await invokeLambda("AIBot-handleHomeTabEventLambda", JSON.stringify(appHomeOpenedEvent));
       }
       break;
