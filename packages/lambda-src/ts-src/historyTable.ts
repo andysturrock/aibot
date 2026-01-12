@@ -22,7 +22,7 @@ export type PutHistoryFunction = (channelId: string, threadTs: string, history: 
  * @param agentName the name of the agent to get the history for
  * @returns history or undefined if no history exists for the channel and thread
  */
-export async function getHistory(channelId: string, threadTs: string, agentName: string) : Promise<Content[] | undefined>  { 
+export async function getHistory(channelId: string, threadTs: string, agentName: string): Promise<Content[] | undefined> {
   const ddbClient = new DynamoDBClient({});
 
   const id = `${channelId}_${threadTs}_${agentName}`;
@@ -31,12 +31,12 @@ export async function getHistory(channelId: string, threadTs: string, agentName:
     TableName,
     KeyConditionExpression: "id = :id",
     ExpressionAttributeValues: {
-      ":id" : {"S" : id}
+      ":id": { "S": id }
     }
   };
   const data = await ddbClient.send(new QueryCommand(params));
   const items = data.Items;
-  if(items?.[0]?.history.S) {
+  if (items?.[0]?.history.S) {
     const history = JSON.parse(items[0].history.S) as Content[];
     return history;
   }
@@ -53,7 +53,7 @@ export async function deleteHistory(channelId: string, threadTs: string, agentNa
   const params: DeleteItemCommandInput = {
     TableName,
     Key: {
-      'id': {S: id}
+      'id': { S: id }
     }
   };
 
@@ -78,9 +78,9 @@ export async function putHistory(channelId: string, threadTs: string, history: C
   const putItemCommandInput: PutItemCommandInput = {
     TableName,
     Item: {
-      id: {S: id},
-      history: {S: JSON.stringify(history)},
-      expiry: {N: `${Math.floor(ttl.getTime() / 1000)}`}
+      id: { S: id },
+      history: { S: JSON.stringify(history) },
+      expiry: { N: `${Math.floor(ttl.getTime() / 1000)}` }
     }
   };
 

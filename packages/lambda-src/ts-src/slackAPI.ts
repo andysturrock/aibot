@@ -33,8 +33,8 @@ async function createClient() {
 
 async function createUserClient(slackId: string) {
   const slackUserToken = await getAccessToken(slackId);
-  
-  if(!slackUserToken) {
+
+  if (!slackUserToken) {
     throw new Error("Cannot get Slack user token from table.");
   }
 
@@ -79,13 +79,13 @@ export async function publishHomeView(user: string, blocks: (KnownBlock | Block)
     type: "home",
     blocks
   };
-  const viewsPublishArguments: ViewsPublishArguments  = {
+  const viewsPublishArguments: ViewsPublishArguments = {
     user_id: user,
     view: homeView
   };
   await client.views.publish(viewsPublishArguments);
 }
-export async function postTextMessage(channelId: string, text:string, thread_ts?: string) {
+export async function postTextMessage(channelId: string, text: string, thread_ts?: string) {
   const blocks: KnownBlock[] = [
     {
       type: "section",
@@ -98,7 +98,7 @@ export async function postTextMessage(channelId: string, text:string, thread_ts?
   await postMessage(channelId, text, blocks, thread_ts);
 }
 
-export async function postMessage(channelId: string, text:string, blocks: (KnownBlock | Block)[], thread_ts?: string) {
+export async function postMessage(channelId: string, text: string, blocks: (KnownBlock | Block)[], thread_ts?: string) {
   const client = await createClient();
   await client.chat.postMessage({
     channel: channelId,
@@ -110,7 +110,7 @@ export async function postMessage(channelId: string, text:string, blocks: (Known
 
 export async function postEphemeralMessage(channelId: string,
   userId: string,
-  text:string,
+  text: string,
   blocks: (KnownBlock | Block)[],
   threadTs?: string
 ) {
@@ -125,7 +125,7 @@ export async function postEphemeralMessage(channelId: string,
   return result.message_ts;
 }
 
-export async function postEphmeralErrorMessage(channelId: string, userId:string, text: string, threadTs?: string) {
+export async function postEphmeralErrorMessage(channelId: string, userId: string, text: string, threadTs?: string) {
   const blocks: KnownBlock[] = [
     {
       type: "section",
@@ -223,7 +223,7 @@ async function _getThreadMessages(client: WebClient, channelId: string, threadTs
     inclusive: true
   };
   const replies = await client.conversations.replies(conversationsRepliesArguments);
-  
+
   const messageReplies = replies.messages?.filter(message => (message.type == "message" && message.text && message.text.length > 0)) ?? [];
   const messages: Message[] = messageReplies.map(message => {
     const date = message.ts ? tsToDate(message.ts) : undefined;
@@ -241,7 +241,7 @@ async function _getThreadMessages(client: WebClient, channelId: string, threadTs
 
 export async function getChannelMessagesUsingToken(slackUserToken: string, channelId: string, oldest?: string, latest?: string, includeThreads?: boolean) {
   const client = createUserClientFromToken(slackUserToken);
-  return await _getChannelMessages(client, channelId, oldest,latest, includeThreads);
+  return await _getChannelMessages(client, channelId, oldest, latest, includeThreads);
 }
 
 export async function getChannelMessages(slackId: string, channelId: string, oldest?: string, latest?: string, includeThreads = true) {
@@ -257,18 +257,18 @@ async function _getChannelMessages(client: WebClient, channelId: string, oldest?
     inclusive: true
   };
   const history = await client.conversations.history(conversationsHistoryArguments);
-  
-  if(includeThreads) {
+
+  if (includeThreads) {
     // The thread includes the main message so don't need to get that separately.
     const messages: Message[] = [];
-    for(const message of history.messages ?? []) {
-      if(message.reply_count && message.reply_count > 0 && message.ts) {
+    for (const message of history.messages ?? []) {
+      if (message.reply_count && message.reply_count > 0 && message.ts) {
         const threadMessages = await _getThreadMessages(client, channelId, message.ts);
         // Reverse the order of the thread messages because they are returned oldest first
         // whereas channel messages returned newest first.
         messages.push(...threadMessages.reverse());
       }
-      else if(message.type == "message" && message.text && message.text.length > 0) {
+      else if (message.type == "message" && message.text && message.text.length > 0) {
         const date = message.ts ? tsToDate(message.ts) : undefined;
         messages.push({
           channel: channelId,
@@ -349,7 +349,7 @@ export async function getChannelName(channelId: string) {
   return conversationsInfoResponse.channel?.name;
 }
 
-export async function getMessageTextUsingToken(slackUserToken:string, channelId: string, ts: string) {
+export async function getMessageTextUsingToken(slackUserToken: string, channelId: string, ts: string) {
   const client = createUserClientFromToken(slackUserToken);
   const conversationsHistoryArguments: ConversationsHistoryArguments = {
     channel: channelId,
@@ -375,7 +375,7 @@ export type PromptCommandPayload = {
 
 // The File type is not exported from node_modules/@slack/bolt/dist/types/events/message-events.d.ts
 // So use some Typescript type trickery here to extract it and export it.
-type ArrayElement<ArrayType extends readonly unknown[]> = 
+type ArrayElement<ArrayType extends readonly unknown[]> =
   ArrayType extends readonly (infer ElementType)[] ? ElementType : never;
 type FilesArray = NonNullable<GenericMessageEvent['files']>;
 export type File = ArrayElement<FilesArray>;

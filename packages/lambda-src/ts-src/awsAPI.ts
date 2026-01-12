@@ -1,6 +1,6 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+ 
+ 
+ 
 import { InvocationType, InvokeCommand, InvokeCommandInput, LambdaClient, LambdaClientConfig } from "@aws-sdk/client-lambda";
 import { GetSecretValueCommand, GetSecretValueRequest, SecretsManagerClient, SecretsManagerClientConfig } from "@aws-sdk/client-secrets-manager";
 
