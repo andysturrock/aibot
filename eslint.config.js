@@ -9,6 +9,7 @@ export default tseslint.config(
       "**/node_modules/",
       "packages/*/dist/",
       "packages/*/cdk.out/",
+      "packages/*/coverage/",
       "eslint.config.js",
       "**/*.ohm-bundle.js",
       "**/*.ohm-bundle.d.ts",
