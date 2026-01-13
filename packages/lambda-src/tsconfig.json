@@ -6,6 +6,6 @@
   "include": [
     "ts-src/**/*",
     "__tests__/**/*",
-    "jest.config.js"
+    "vitest.config.ts"
   ]
 }

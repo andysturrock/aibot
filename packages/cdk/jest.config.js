@@ -1,8 +1,0 @@
-import baseConfig from '../../jest.config.js';
-
-const config = {
-  ...baseConfig,
-  setupFilesAfterEnv: ['<rootDir>/../../jest.setup.ts'],
-};
-
-export default config;

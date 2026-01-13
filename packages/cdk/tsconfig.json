@@ -6,6 +6,6 @@
   "include": [
     "bin/**/*",
     "lib/**/*",
-    "jest.config.js"
+    "vitest.config.ts"
   ]
 }
