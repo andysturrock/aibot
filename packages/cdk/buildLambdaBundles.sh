@@ -28,7 +28,6 @@ do
     --bundle \
     --external:aws-sdk \
     --sourcemap \
-    --tsconfig=./tsconfig-build.json \
     --platform=node \
     --target=node18 \
     --tree-shaking=true \

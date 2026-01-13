@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "fix": "eslint . --fix",
     "watch": "tsc -w",
-    "test": "jest --passWithNoTests",
+    "test": "vitest run --passWithNoTests",
     "build": "bash buildLambdaBundles.sh",
     "deploy": "cdk deploy --require-approval=never --all"
   },

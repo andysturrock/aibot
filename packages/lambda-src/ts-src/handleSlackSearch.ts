@@ -1,20 +1,18 @@
+import { Gemini } from '@google/adk';
 import { helpers, PredictionServiceClient } from '@google-cloud/aiplatform';
 import { google } from '@google-cloud/aiplatform/build/protos/protos';
 import { BigQuery, BigQueryOptions } from '@google-cloud/bigquery';
-import { Citation, CitationMetadata } from '@google-cloud/vertexai';
-import { GenerateContentParameters, Part } from '@google/genai';
-import util from 'util';
+import { Content, GenerateContentParameters, GenerateContentResponse, GoogleGenAI, Part } from '@google/genai';
+import util from 'node:util';
 import { getSecretValue } from './awsAPI';
-import { ModelFunctionCallArgs } from './aiService';
+import { Attribution, ModelFunctionCallArgs } from './aiService';
 import { getChannelName, getPermaLink, getThreadMessagesUsingToken, Message } from './slackAPI';
-// Set default options for util.inspect to make it work well in CloudWatch
-util.inspect.defaultOptions.maxArrayLength = null;
-util.inspect.defaultOptions.depth = null;
-util.inspect.defaultOptions.colors = false;
 
-export async function handleSlackSearch(slackSummaryModel: any,
+export async function handleSlackSearch(
+  slackSummaryModel: Gemini,
   modelFunctionCallArgs: ModelFunctionCallArgs,
-  generateContentRequest: GenerateContentParameters) {
+  generateContentRequest: GenerateContentParameters
+): Promise<GenerateContentResponse> {
 
   if (!modelFunctionCallArgs.prompt) {
     throw new Error("modelFunctionCallArgs missing prompt");
@@ -38,14 +36,14 @@ export async function handleSlackSearch(slackSummaryModel: any,
   const query = `
     SELECT distinct base.channel, base.ts, distance
         FROM VECTOR_SEARCH(
-        TABLE aibot_slack_messages.slack_content,
-        'embeddings',
-        (
-           select ${util.inspect(searchEmbeddings, false, null)} as search_embeddings
-        ),
-        query_column_to_search => 'search_embeddings',
-        top_k => 15,
-        options => '{"fraction_lists_to_search": 1.0}'
+  TABLE aibot_slack_messages.slack_content,
+  'embeddings',
+  (
+    select ${util.inspect(searchEmbeddings, false, null)} as search_embeddings
+),
+  query_column_to_search => 'search_embeddings',
+  top_k => 15,
+  options => '{"fraction_lists_to_search": 1.0}'
         )
         order by distance
   `;
@@ -75,25 +73,25 @@ export async function handleSlackSearch(slackSummaryModel: any,
 
   for (const row of rows) {
     try {
-      const threadRows = await getThreadMessagesUsingToken(slackUserToken, row.channel, `${row.ts}`);
+      const threadRows = await getThreadMessagesUsingToken(slackUserToken, row.channel, `${row.ts} `);
       // Turn the raw channel ids and user ids into quoted versions so they show up properly in the results.
       // eg turn U012AB3CD into <@U012AB3CD> and C123ABC456 into <#C123ABC456>
       for (const threadRow of threadRows) {
         const quotedMessage: QuotedMessage = {
-          quotedChannel: `<#${threadRow.channel}>`,
-          quotedUser: `<@${threadRow.user}>`,
+          quotedChannel: `< #${threadRow.channel}> `,
+          quotedUser: `< @${threadRow.user}> `,
           ...threadRow
         };
         messages.push(quotedMessage);
       }
     }
     catch {
-      console.error(`Error fetching messages from channel ${row.channel} thread ${row.ts}`);
+      console.error(`Error fetching messages from channel ${row.channel} thread ${row.ts} `);
     }
   }
 
   const prompt = `
-    The data below is a set of Slack messages.  The messages have been pre-selected to contain relevant content about the question.
+    The data below is a set of Slack messages.The messages have been pre - selected to contain relevant content about the question.
     The format is json with the following fields:
     {
       quotedChannel: 'Slack channel id in output format',
@@ -102,11 +100,11 @@ export async function handleSlackSearch(slackSummaryModel: any,
       user: 'The Slack user id',
       text: 'The text of the message',
       date: 'The date of the message in ISO 8601 format',
-      ts: A Unix timestamp (ie seconds after the epoch) for the message.  You can ignore the part after the decimal point.
-      threadTs: An optional Unix timestamp (ie seconds after the epoch) if message is in a thread.  You can ignore the part after the decimal point.
+      ts: 'A Unix timestamp (ie seconds after the epoch) for the message. You can ignore the part after the decimal point.',
+      threadTs: 'An optional Unix timestamp (ie seconds after the epoch) if message is in a thread. You can ignore the part after the decimal point.'
     }
-    In your response convert the Unix timestamps and date fields into normal dates (eg 19th September 2024).
-    In your response use the quotedChannel and quotedUser fields to refer to channels or users.  Use the field name directly, ie keep the <> and # and @ characters.
+    In your response convert the Unix timestamps and date fields into normal dates(eg 19th September 2024).
+    In your response use the quotedChannel and quotedUser fields to refer to channels or users. Use the field name directly, ie keep the <> and # and @ characters.
 
     Using these messages below, respond to the request: ${modelFunctionCallArgs.prompt}.
     ${util.inspect(messages, false, null)}
@@ -114,44 +112,60 @@ export async function handleSlackSearch(slackSummaryModel: any,
 
   // Search backwards through the content until we find the most recent user part, which should be the original prompt.
   // Then add a text part to that with all the detail above.
-  const lastUserContent = (generateContentRequest.contents as any).findLast((content: any) => content.role == 'user');
+  const contents = generateContentRequest.contents as Content[];
+  const lastUserContent = contents.findLast((content) => content.role === 'user');
   if (!lastUserContent) {
-    throw new Error(`Could not find user content in generateContentRequest: ${util.inspect(generateContentRequest, false, null)}`);
+    throw new Error(`Could not find user content in generateContentRequest: ${util.inspect(generateContentRequest, false, null)} `);
   }
   const promptPart: Part = {
     text: prompt
   };
+  lastUserContent.parts ??= [];
   lastUserContent.parts.push(promptPart);
 
-  const content = await slackSummaryModel.generateContent(generateContentRequest);
+  // Use the underlying GenAI model for grounded search
+  // [ADK_LIMITATION] apiClient is typed as 'GoogleGenAI' but may require an unsafe cast to access 'getGenerativeModel' 
+  // if the version mismatch persists in the environment's type resolution.
+  if (!generateContentRequest.model) {
+    throw new Error("generateContentRequest missing model name for search");
+  }
+  const apiClient = slackSummaryModel.apiClient as unknown as GoogleGenAI;
+  const content = await apiClient.models.generateContent(generateContentRequest);
+
   // Add the set of messages we've considered in as Citations.
-  const citations: Citation[] = [];
+  const citations: Attribution[] = [];
   // Use to keep track whether citations are duplicates.
   const citationSet = new Set<string>();
   for (const message of messages) {
-    // Create the citation if we haven't already cited the parent message or this message.
     if (!citationSet.has(message.threadTs ?? message.ts)) {
-      // Slack has a handy API for getting a permalink to a message given its channel and timestamp.
-      // If the message is in a thread create the link to the parent message of the thread.
       const uri = await getPermaLink(message.channel, message.threadTs ?? message.ts);
       const channelName = await getChannelName(message.channel);
-      const citation: Citation = {
+      citations.push({
         uri,
         title: channelName
-      };
-      citations.push(citation);
+      });
       citationSet.add(message.threadTs ?? message.ts);
     }
   }
-  if (content.response.candidates?.[0]) {
-    if (content.response.candidates[0].citationMetadata) {
-      content.response.candidates[0].citationMetadata.citations = citations;
-    }
-    else {
-      const citationMetadata: CitationMetadata = {
+
+  const response = content;
+  if (response.candidates?.[0]) {
+    /**
+     * [SDK_LIMITATION] The GenerateContentResponse candidate type does not explicitly expose 'citationMetadata' 
+     * in the version currently resolved by the bundler, although it is returned by the API.
+     */
+    type CandidateWithCitations = {
+      citationMetadata?: {
+        citations: Attribution[];
+      };
+    };
+    const candidate = response.candidates[0] as unknown as CandidateWithCitations;
+    if (candidate.citationMetadata) {
+      candidate.citationMetadata.citations = citations;
+    } else {
+      candidate.citationMetadata = {
         citations
       };
-      content.response.candidates[0].citationMetadata = citationMetadata;
     }
   }
   return content;
@@ -176,7 +190,32 @@ async function generateEmbeddings(text: string) {
   };
   const request: IPredictRequest = { endpoint, instances };
   const client = new PredictionServiceClient(clientOptions);
-  const [response] = await client.predict(request);
+
+  /**
+   * [SDK_LIMITATION] The predict() return type in @google-cloud/aiplatform is overly complex for ESM resolution/bundling 
+   * in this environment. Manual casting to a simplified interface is required for property access.
+   */
+  type PredictionResponse = {
+    predictions?: {
+      structValue?: {
+        fields?: {
+          embeddings?: {
+            structValue?: {
+              fields?: {
+                values?: {
+                  listValue?: {
+                    values?: { numberValue?: number }[];
+                  };
+                };
+              };
+            };
+          };
+        };
+      };
+    }[];
+  };
+
+  const [response] = (await client.predict(request)) as unknown as [PredictionResponse];
   const predictions = response.predictions;
   const embeddings: number[] = [];
   if (predictions) {
