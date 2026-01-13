@@ -101,7 +101,7 @@ type ADKGeminiParams = GeminiParams & {
  * Centralized factory to create Gemini models with consistent enterprise settings.
  * Ensures 'vertexai: true' is always set and GCP project/location are correctly scoped.
  */
-async function getGeminiModel(modelName: string, dataStoreIds?: string[]) {
+export async function getGeminiModel(modelName: string, dataStoreIds?: string[]) {
   const project = await getSecretValue('AIBot', 'gcpProjectId');
   const location = await getSecretValue('AIBot', 'gcpLocation');
 

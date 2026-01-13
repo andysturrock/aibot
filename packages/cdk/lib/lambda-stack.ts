@@ -9,6 +9,10 @@ import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import { Construct } from 'constructs';
 import { LambdaStackProps } from './common';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export class LambdaStack extends Stack {
   constructor(scope: Construct, id: string, props: LambdaStackProps) {
@@ -42,7 +46,7 @@ export class LambdaStack extends Stack {
     const handleSlackAuthRedirectLambda = new lambda.Function(this, "handleSlackAuthRedirectLambda", {
       handler: "handleSlackAuthRedirect.handleSlackAuthRedirect",
       functionName: 'AIBot-handleSlackAuthRedirect',
-      code: lambda.Code.fromAsset("../lambda-src/dist/handleSlackAuthRedirect"),
+      code: lambda.Code.fromAsset(path.join(__dirname, "../../lambda-src/dist/handleSlackAuthRedirect")),
       ...allLambdaProps
     });
     // Allow read access to the secret it needs
@@ -54,7 +58,7 @@ export class LambdaStack extends Stack {
     const handleEventsEndpointLambda = new lambda.Function(this, "handleEventsEndpointLambda", {
       handler: "handleEventsEndpoint.handleEventsEndpoint",
       functionName: 'AIBot-handleEventsEndpoint',
-      code: lambda.Code.fromAsset("../lambda-src/dist/handleEventsEndpoint"),
+      code: lambda.Code.fromAsset(path.join(__dirname, "../../lambda-src/dist/handleEventsEndpoint")),
       memorySize: 512,
       ...allLambdaProps
     });
@@ -66,7 +70,7 @@ export class LambdaStack extends Stack {
     const handlePromptCommandLambda = new lambda.Function(this, "handlePromptCommandLambda", {
       handler: "handlePromptCommand.handlePromptCommand",
       functionName: 'AIBot-handlePromptCommandLambda',
-      code: lambda.Code.fromAsset("../lambda-src/dist/handlePromptCommand"),
+      code: lambda.Code.fromAsset(path.join(__dirname, "../../lambda-src/dist/handlePromptCommand")),
       memorySize: 1024,
       ...allLambdaProps,
       timeout: Duration.seconds(180)
@@ -93,7 +97,7 @@ export class LambdaStack extends Stack {
     const handleInteractiveEndpointLambda = new lambda.Function(this, "handleInteractiveEndpointLambda", {
       handler: "handleInteractiveEndpoint.handleInteractiveEndpoint",
       functionName: 'AIBot-handleInteractiveEndpoint',
-      code: lambda.Code.fromAsset("../lambda-src/dist/handleInteractiveEndpoint"),
+      code: lambda.Code.fromAsset(path.join(__dirname, "../../lambda-src/dist/handleInteractiveEndpoint")),
       memorySize: 512,
       ...allLambdaProps
     });
@@ -105,7 +109,7 @@ export class LambdaStack extends Stack {
     const handleHomeTabEventLambda = new lambda.Function(this, "handleHomeTabEventLambda", {
       handler: "handleHomeTabEvent.handleHomeTabEvent",
       functionName: 'AIBot-handleHomeTabEventLambda',
-      code: lambda.Code.fromAsset("../lambda-src/dist/handleHomeTabEvent"),
+      code: lambda.Code.fromAsset(path.join(__dirname, "../../lambda-src/dist/handleHomeTabEvent")),
       memorySize: 1024,
       ...allLambdaProps
     });
