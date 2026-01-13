@@ -1,4 +1,3 @@
-import { Content } from '@google/genai';
 import { GenericMessageEvent } from '@slack/types';
 import * as dotenv from 'dotenv';
 import readline from 'node:readline/promises';
@@ -25,17 +24,6 @@ async function testHandlePromptCommand() {
     team_id: '',
     ...genericMessageEvent
   };
-  let history: Content[] = [];
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  function getHistory(_channelId: string, _threadTs: string, _agentName: string): Promise<Content[] | undefined> {
-    return Promise.resolve(history);
-  }
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  function putHistory(_channelId: string, _threadTs: string, newHistory: Content[], _agentName: string): Promise<void> {
-    history = newHistory;
-    return Promise.resolve();
-  }
-
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -44,7 +32,7 @@ async function testHandlePromptCommand() {
   let text = await rl.question(`Input:`);
   while (text != "bye") {
     event.text = text;
-    await _handlePromptCommand(event, getHistory as any, putHistory as any);
+    await _handlePromptCommand(event);
     text = await rl.question(`Input:`);
   }
 }

@@ -1,4 +1,5 @@
-import { beforeAll, describe, expect, it, jest } from '@jest/globals';
+import { vi, describe, it, expect } from 'vitest';
+import * as aiService from '../ts-src/aiService';
 
 // Set environment variables for secrets to avoid real AWS calls
 process.env.gcpProjectId = 'test-project';
@@ -10,55 +11,48 @@ process.env.googleSearchGroundedModel = 'gemini-1.5-flash';
 process.env.customSearchGroundedModel = 'gemini-1.5-flash';
 process.env.slackBotToken = 'test-slack-token';
 
-// Mock lodash for ESM compatibility
-jest.unstable_mockModule('lodash', () => ({
-  default: { cloneDeep: (obj: any) => JSON.parse(JSON.stringify(obj)), merge: Object.assign },
-  cloneDeep: (obj: any) => JSON.parse(JSON.stringify(obj)),
-  merge: Object.assign,
+// Vitest handles hoisting vi.mock() calls and supports extensionless imports natively
+vi.mock('@google-cloud/vertexai', () => ({
+  VertexAI: vi.fn().mockImplementation(() => ({
+    getGenerativeModel: vi.fn().mockReturnValue({
+      generateContent: vi.fn(() => Promise.resolve({
+        response: {
+          candidates: [{ content: { parts: [{ text: '{"answer": "Vertex AI search results", "attributions": []}' }] } }]
+        }
+      }))
+    })
+  }))
 }));
 
-// Mock external library
-jest.unstable_mockModule('@google-cloud/vertexai', () => {
-  const mockGenerativeModel = {
-    generateContent: jest.fn(() => Promise.resolve({
-      response: {
-        candidates: [{ content: { parts: [{ text: '{"answer": "Vertex AI search results", "attributions": []}' }] } }]
-      }
-    }))
-  };
-  return {
-    VertexAI: jest.fn().mockImplementation(() => ({
-      getGenerativeModel: jest.fn().mockReturnValue(mockGenerativeModel)
-    }))
-  };
-});
-
-// Mock internal modules that perform network/external calls
-jest.unstable_mockModule('../ts-src/slackAPI', () => ({
-  postMessage: jest.fn(),
-  postTextMessage: jest.fn(),
-  postEphmeralErrorMessage: jest.fn(),
+vi.mock('../ts-src/slackAPI', () => ({
+  postMessage: vi.fn(),
+  postTextMessage: vi.fn(),
+  postEphmeralErrorMessage: vi.fn(),
 }));
 
-jest.unstable_mockModule('../ts-src/handleSlackSearch', () => ({
-  handleSlackSearch: jest.fn(() => Promise.resolve({
+vi.mock('../ts-src/awsAPI', () => ({
+  getSecretValue: vi.fn((_secretName: string, key: string) => {
+    const secrets: Record<string, string> = {
+      gcpProjectId: 'test-project',
+      gcpDataStoreIds: 'test-datastore',
+      gcpLocation: 'us-central1',
+      slackBotToken: 'test-slack-token',
+      botName: 'TestBot',
+      slackSearchModel: 'gemini-1.5-flash',
+      googleSearchGroundedModel: 'gemini-1.5-flash',
+      customSearchGroundedModel: 'gemini-1.5-flash'
+    };
+    return Promise.resolve(secrets[key] || '');
+  }),
+}));
+
+vi.mock('../ts-src/handleSlackSearch', () => ({
+  handleSlackSearch: vi.fn(() => Promise.resolve({
     candidates: [{ content: { role: 'model', parts: [{ text: '{"answer": "Slack results", "attributions": []}' }] } }]
   }))
 }));
 
 describe('aiService', () => {
-  let aiService: any;
-
-  beforeAll(async () => {
-    try {
-      // Dynamic import to allow mocks to be established
-      aiService = await import('../ts-src/aiService');
-    } catch (e) {
-      console.error('Failed to import aiService:', e);
-      throw e;
-    }
-  });
-
   it('should create a supervisor agent with sub-agents', async () => {
     const supervisor = await aiService.createSupervisorAgent();
     expect(supervisor.name).toBe('SupervisorAgent');
