@@ -6,6 +6,7 @@
   "include": [
     "bin/**/*",
     "lib/**/*",
+    "test/**/*",
     "vitest.config.ts"
   ]
 }
