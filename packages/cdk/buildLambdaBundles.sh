@@ -29,7 +29,7 @@ do
     --external:aws-sdk \
     --sourcemap \
     --platform=node \
-    --target=node18 \
+    --target=node22 \
     --tree-shaking=true \
     --minify \
     --keep-names \

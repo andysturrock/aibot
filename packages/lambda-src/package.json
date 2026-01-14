@@ -3,7 +3,8 @@
   "scripts": {
     "lint": "eslint .",
     "fix": "eslint . --fix",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "local": "npx -y vite-node __tests__/run-local.ts"
   },
   "devDependencies": {
     "@aws-sdk/client-dynamodb": "^3.726.0",

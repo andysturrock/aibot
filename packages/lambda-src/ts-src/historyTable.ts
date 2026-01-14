@@ -22,7 +22,7 @@ export type PutHistoryFunction = (channelId: string, threadTs: string, history: 
  * @returns history or undefined if no history exists for the channel and thread
  */
 export async function getHistory(channelId: string, threadTs: string, agentName: string): Promise<Content[] | undefined> {
-  const ddbClient = new DynamoDBClient({});
+  const ddbClient = new DynamoDBClient({ region: 'eu-west-2' });
 
   const id = `${channelId}_${threadTs}_${agentName}`;
 
@@ -45,7 +45,7 @@ export async function getHistory(channelId: string, threadTs: string, agentName:
 }
 
 export async function deleteHistory(channelId: string, threadTs: string, agentName: string) {
-  const ddbClient = new DynamoDBClient({});
+  const ddbClient = new DynamoDBClient({ region: 'eu-west-2' });
 
   const id = `${channelId}_${threadTs}_${agentName}`;
 
@@ -83,7 +83,7 @@ export async function putHistory(channelId: string, threadTs: string, history: C
     }
   };
 
-  const ddbClient = new DynamoDBClient({});
+  const ddbClient = new DynamoDBClient({ region: 'eu-west-2' });
 
   await ddbClient.send(new PutItemCommand(putItemCommandInput));
 }
