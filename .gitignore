@@ -5,3 +5,8 @@ npm-debug.log
 **/.env.*
 **/.env
 **/__pycache__/
+coverage/
+**/coverage/
+**/cdk.out/
+**/.vite-node/
+tsconfig.tsbuildinfo
