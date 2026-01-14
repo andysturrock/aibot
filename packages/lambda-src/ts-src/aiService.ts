@@ -10,9 +10,12 @@ import {
   AppendEventRequest,
   Runner,
   CreateSessionRequest,
-  GeminiParams
+  GeminiParams,
+  AgentTool,
+  LoggingPlugin,
+  BuiltInCodeExecutor
 } from '@google/adk';
-import { Content, GenerateContentParameters, Type } from '@google/genai';
+import { Content, GenerateContentParameters, Type, HarmCategory, HarmBlockThreshold, FinishReason } from '@google/genai';
 import { KnownBlock, RichTextBlock, RichTextLink, RichTextList, RichTextSection, RichTextText, SectionBlock } from '@slack/types';
 import util from 'node:util';
 import { getSecretValue } from './awsAPI';
@@ -20,6 +23,7 @@ import { handleSlackSearch } from './handleSlackSearch';
 import { getHistory, putHistory } from './historyTable';
 import * as slackAPI from './slackAPI';
 import { postEphmeralErrorMessage, postMessage, PromptCommandPayload } from './slackAPI';
+export type { PromptCommandPayload } from './slackAPI';
 
 // Set default options for util.inspect to make it work well in CloudWatch
 util.inspect.defaultOptions.maxArrayLength = null;
@@ -82,6 +86,20 @@ class DynamoDBSessionService extends InMemorySessionService {
 
     await putHistory(this.channelId, this.threadTs, history, this.agentName);
     return result;
+  }
+}
+
+/**
+ * The Inheritance Trick: Subclass BuiltInCodeExecutor so the Runner's 'instanceof' check passes,
+ * but override its tool-injection logic to do NOTHING. This prevents the conflicting 'codeExecution'
+ * tool from being added to model requests, resolving the Vertex AI 400 error.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
+class NoOpCodeExecutor extends BuiltInCodeExecutor {
+  override async processLlmRequest(llmRequest: any): Promise<any> {
+    // Doing nothing to avoid tool conflict with search tools,
+    // but we MUST return the request so the runner can proceed.
+    return llmRequest;
   }
 }
 
@@ -185,51 +203,37 @@ function createSearchSlackTool(): FunctionTool {
 }
 
 /**
- * Creates the Google Search Agent.
+ * Creates an agent specialized in Google Search (Grounding).
+ * This MUST be isolated as Vertex AI doesn't allow mixing grounding with other tools.
  */
-async function createGoogleSearchAgent() {
-  const modelName = await getSecretValue('AIBot', 'googleSearchGroundedModel');
+export async function createGoogleSearchAgent() {
+  const modelName = await getSecretValue('AIBot', 'supervisorModel');
   const model = await getGeminiModel(modelName);
 
   return new LlmAgent({
     name: "GoogleSearchAgent",
-    description: "An agent that can search Google to answer questions about current events.",
-    instruction: "You are a helpful assistant with access to Google search. You must cite your references when answering.",
+    description: "An agent that can search Google for current public information.",
+    instruction: "You are a research expert. Use Google Search to find current facts. Always cite your sources with URLs.",
     model: model,
-    tools: [GOOGLE_SEARCH]
+    tools: [GOOGLE_SEARCH],
+    codeExecutor: new NoOpCodeExecutor()
   });
 }
 
 /**
- * Creates the Custom Search Agent (Searching internal documents).
+ * Creates an agent specialized in searching Slack.
  */
-async function createCustomSearchAgent() {
-  const dataStoreIds = (await getSecretValue('AIBot', 'gcpDataStoreIds')).split(',');
-  const modelName = await getSecretValue('AIBot', 'customSearchGroundedModel');
-
-  const model = await getGeminiModel(modelName, dataStoreIds);
-
-  return new LlmAgent({
-    name: "CustomSearchAgent",
-    description: "Searches through internal company documents and policies.",
-    instruction: "You are a helpful assistant who specialises in searching through internal company documents.",
-    model: model
-  });
-}
-
-/**
- * Creates the Slack Search Agent.
- */
-async function createSlackSearchAgent() {
-  const modelName = await getSecretValue('AIBot', 'slackSearchModel');
+export async function createSlackSearchAgent() {
+  const modelName = await getSecretValue('AIBot', 'supervisorModel');
   const model = await getGeminiModel(modelName);
-  const searchSlackTool = createSearchSlackTool();
 
   return new LlmAgent({
     name: "SlackSearchAgent",
-    description: "An agent that can search Slack messages.",
-    model,
-    tools: [searchSlackTool]
+    description: "An agent that can search internal Slack messages.",
+    instruction: "You are an internal researcher. Use Slack Search to find relevant conversations and summary them.",
+    model: model,
+    tools: [createSearchSlackTool()],
+    codeExecutor: new NoOpCodeExecutor()
   });
 }
 
@@ -241,28 +245,37 @@ export async function createSupervisorAgent() {
   const modelName = await getSecretValue('AIBot', 'supervisorModel');
   const model = await getGeminiModel(modelName);
 
-  const slackSearchAgent = await createSlackSearchAgent();
-  const googleSearchAgent = await createGoogleSearchAgent();
-  const customSearchAgent = await createCustomSearchAgent();
-
   return new LlmAgent({
     name: "SupervisorAgent",
     model: model,
-    description: "Orchestrates multiple specialized agents to answer user queries.",
+    description: "Orchestrates specialized agents to answer user queries.",
     instruction: `
       Your name is ${botName}.
-      You are a supervisor that can delegate tasks to specialized agents.
-      1. Use SlackSearchAgent if the request is to search Slack.
-      2. Use GoogleSearchAgent if the request is about general knowledge or current affairs.
-      3. Use CustomSearchAgent if the request is about internal company matters or policies.
+      You are a supervisor that helps users.
+      
+      When you need to search for current public information, use the GoogleSearchAgent.
+      When you need to find internal conversations or messages from Slack, use the SlackSearchAgent.
       
       Always provide the final answer in a structured JSON format:
-{
-  "answer": "your response here",
-    "attributions": [{ "title": "title", "uri": "uri" }]
-}
-`,
-    subAgents: [slackSearchAgent, googleSearchAgent, customSearchAgent]
+      {
+        "answer": "your response here",
+        "attributions": [{ "title": "title", "uri": "uri" }]
+      }
+    `,
+    tools: [
+      new AgentTool({
+        agent: await createGoogleSearchAgent()
+      }),
+      new AgentTool({
+        agent: await createSlackSearchAgent()
+      })
+    ],
+    codeExecutor: new NoOpCodeExecutor(),
+    generateContentConfig: {
+      safetySettings: [
+        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
+      ]
+    }
   });
 }
 
@@ -273,28 +286,29 @@ export type Response = {
 
 export async function formatResponse(responseString: string) {
   // Strip markdown code blocks if present
-  responseString = responseString.trim();
-  responseString = responseString.replace(/^```json\s*/, '');
-  responseString = responseString.replace(/```\s*$/, '');
-  responseString = responseString.trim();
+  let processed = responseString.trim();
+  processed = processed.replace(/^```json\s*/, '');
+  processed = processed.replace(/```\s*$/, '');
+  processed = processed.trim();
 
   let response: Response;
   try {
-    response = JSON.parse(responseString) as Response;
-    if (!response.answer) {
-      const botName = await getSecretValue('AIBot', 'botName');
-      response.answer = `${botName} did not respond.`;
+    response = JSON.parse(processed) as Response;
+    if (!response.answer && processed !== responseString) { // If it was supposed to be JSON but answer is missing
+      throw new Error("Missing answer in JSON");
     }
   }
   catch (error) {
-    console.error(error);
-    const answer = `(Sorry about the format, I couldn't parse the answer properly)\n${responseString}`;
+    // If it's not JSON, treat the whole thing as the answer
     response = {
-      answer
+      answer: responseString.replaceAll('**', '*')
     };
+    return response;
   }
 
-  response.answer = response.answer.replaceAll('**', '*');
+  if (response.answer) {
+    response.answer = response.answer.replaceAll('**', '*');
+  }
   return response;
 }
 
@@ -381,10 +395,6 @@ export async function removeReaction(channelId: string, eventTS: string): Promis
   }
 }
 
-export async function handlePromptCommand(event: PromptCommandPayload) {
-  console.log(`handlePromptCommand event ${util.inspect(event, false, null)}`);
-  await _handlePromptCommand(event);
-}
 
 export async function _handlePromptCommand(event: PromptCommandPayload): Promise<void> {
   process.env.GOOGLE_APPLICATION_CREDENTIALS ??= "./clientLibraryConfig-aws-aibot.json";
@@ -400,9 +410,12 @@ export async function _handlePromptCommand(event: PromptCommandPayload): Promise
     }
 
     const prompt = event.text;
+    console.log(`Prompt: ${prompt}`);
 
     // Load existing history
+    console.log("Loading history...");
     const history = await getHistory(event.channel, parentThreadTs, "supervisor") ?? [];
+    console.log(`Loaded ${history.length} history events`);
 
     // Initialize custom session service for DynamoDB persistence hook
     const sessionService = new DynamoDBSessionService(event.channel, parentThreadTs, "supervisor");
@@ -427,21 +440,45 @@ export async function _handlePromptCommand(event: PromptCommandPayload): Promise
     };
 
     // Seed the session with existing history
-    await sessionService.createSession({
-      id: sessionId,
+    console.log(`Creating session with ID: ${sessionId}`);
+    const session = await sessionService.createSession({
+      sessionId: sessionId,
       appName: "AIBot",
       userId,
       state: extraArgs as unknown as Record<string, unknown>
-    } as unknown as CreateSessionRequest);
+    });
 
+    if (history.length > 0) {
+      console.log(`Adding ${history.length} history items to session...`);
+      for (const content of history) {
+        // Only append model and user messages, skip anything empty
+        if (content.parts && content.parts.length > 0) {
+          await sessionService.appendEvent({
+            session,
+            event: createEvent({ content })
+          });
+        }
+      }
+    }
+
+    const checkSession = await sessionService.getSession({
+      appName: "AIBot",
+      userId,
+      sessionId
+    });
+    console.log(`Session verification: ${checkSession ? 'Found' : 'NOT FOUND'}`);
+
+    console.log("Creating agents...");
     const supervisorAgent = await createSupervisorAgent();
 
     const runner = new Runner({
       agent: supervisorAgent,
       appName: "AIBot",
-      sessionService: sessionService
+      sessionService: sessionService,
+      plugins: [new LoggingPlugin()]
     });
 
+    console.log("Starting ADK runner...");
     let finalResponse = "";
     const newMessage: Content = {
       role: 'user',
@@ -451,9 +488,23 @@ export async function _handlePromptCommand(event: PromptCommandPayload): Promise
     for await (const runnerEvent of runner.runAsync({
       userId,
       sessionId,
-      newMessage,
+      newMessage: newMessage,
       stateDelta: extraArgs as unknown as Record<string, unknown>
     })) {
+      console.log(`Runner event: ${util.inspect(runnerEvent, { depth: 1 })}`);
+      if (runnerEvent.finishReason) {
+        console.log(`Model finish reason: ${runnerEvent.finishReason}`);
+      }
+
+      if (runnerEvent.errorCode) {
+        console.error(`Runner encountered error: ${runnerEvent.errorCode} - ${runnerEvent.errorMessage}`);
+        // If we get an error, we should probably return it as the response.
+        finalResponse = JSON.stringify({
+          answer: `I encountered an error while processing your request: ${runnerEvent.errorMessage} (${runnerEvent.errorCode})`
+        });
+        break;
+      }
+
       if (runnerEvent.content?.role === 'model' && runnerEvent.content.parts) {
         const textParts: string[] = runnerEvent.content.parts
           .filter(p => 'text' in p)
@@ -472,12 +523,15 @@ export async function _handlePromptCommand(event: PromptCommandPayload): Promise
     const blocks = generateResponseBlocks(formattedResponse);
 
     if (channelId && event.ts) {
+      console.log("Sending response to Slack...");
       await removeReaction(channelId, event.ts);
       const text = formattedResponse.answer.slice(0, 3997) + "...";
       await postMessage(channelId, text, blocks, event.event_ts);
+      console.log("Response sent.");
     }
   }
-  catch {
+  catch (err) {
+    console.error(`Error in _handlePromptCommand: ${util.inspect(err, { depth: null })}`);
     await postEphmeralErrorMessage(channelId, event.user_id, "Error calling AI API", parentThreadTs);
   }
 }

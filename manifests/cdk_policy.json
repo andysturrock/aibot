@@ -2,83 +2,54 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "iam",
+      "Sid": "AssumeCDKRoles",
       "Effect": "Allow",
-      "Action": [
-        "iam:GetRole",
-        "iam:CreateRole",
-        "iam:DeleteRole",
-        "iam:AttachRolePolicy",
-        "iam:DetachRolePolicy",
-        "iam:DeleteRolePolicy",
-        "iam:PutRolePolicy",
-        "iam:ListRoleTags",
-        "iam:GetRolePolicy",
-        "iam:TagRole"
-      ],
-      "Resource": "arn:aws:iam::AWS_ACCOUNT_ID:role/*"
+      "Action": "sts:AssumeRole",
+      "Resource": [
+        "arn:aws:iam::*:role/cdk-hnb659fds-deploy-role-*-eu-west-2",
+        "arn:aws:iam::*:role/cdk-hnb659fds-file-publishing-role-*-eu-west-2",
+        "arn:aws:iam::*:role/cdk-hnb659fds-lookup-role-*-eu-west-2",
+        "arn:aws:iam::*:role/cdk-hnb659fds-image-publishing-role-*-eu-west-2"
+      ]
     },
     {
-      "Sid": "s3",
+      "Sid": "ReadCDKBootstrapVersion",
       "Effect": "Allow",
-      "Action": [
-        "s3:CreateBucket",
-        "s3:PutLifecycleConfiguration",
-        "s3:PutEncryptionConfiguration",
-        "s3:PutBucketVersioning",
-        "s3:PutBucketPublicAccessBlock",
-        "s3:GetBucketPolicy",
-        "s3:PutBucketPolicy",
-        "s3:DeleteBucketPolicy"
-      ],
-      "Resource": "arn:aws:s3:::*"
+      "Action": "ssm:GetParameter",
+      "Resource": "arn:aws:ssm:eu-west-2:*:parameter/cdk-bootstrap/hnb659fds/version"
     },
     {
-      "Sid": "cloudformation",
+      "Sid": "CloudFormationPermissions",
       "Effect": "Allow",
       "Action": [
-        "cloudformation:DescribeStackEvents",
+        "cloudformation:DescribeStacks",
         "cloudformation:GetTemplate",
-        "cloudformation:DeleteStack",
-        "cloudformation:CreateChangeSet",
+        "cloudformation:DescribeStackEvents",
         "cloudformation:DescribeChangeSet",
+        "cloudformation:CreateChangeSet",
         "cloudformation:ExecuteChangeSet",
-        "cloudformation:DeleteChangeSet",
-        "cloudformation:DescribeStacks"
-      ],
-      "Resource": "arn:aws:cloudformation:eu-west-2:AWS_ACCOUNT_ID:stack/CDKToolkit/*"
-    },
-    {
-      "Sid": "ecr",
-      "Effect": "Allow",
-      "Action": [
-        "ecr:CreateRepository",
-        "ecr:PutLifecyclePolicy",
-        "ecr:DeleteRepository",
-        "ecr:SetRepositoryPolicy",
-        "ecr:DescribeRepositories"
-      ],
-      "Resource": "arn:aws:ecr:eu-west-2:AWS_ACCOUNT_ID:repository/*"
-    },
-    {
-      "Sid": "ssm",
-      "Effect": "Allow",
-      "Action": [
-        "ssm:PutParameter",
-        "ssm:DeleteParameter",
-        "ssm:GetParameters"
-      ],
-      "Resource": "arn:aws:ssm:eu-west-2:AWS_ACCOUNT_ID:parameter/cdk-bootstrap/*"
-    },
-    {
-      "Sid": "sts",
-      "Effect": "Allow",
-      "Action": [
-        "sts:assumeRole"
+        "cloudformation:DeleteChangeSet"
       ],
       "Resource": [
-        "arn:aws:iam::AWS_ACCOUNT_ID:role/cdk-hnb659fds-deploy-role-AWS_ACCOUNT_ID-eu-west-2",
-        "arn:aws:iam::AWS_ACCOUNT_ID:role/cdk-hnb659fds-file-publishing-role-AWS_ACCOUNT_ID-eu-west-2"
+        "arn:aws:cloudformation:eu-west-2:*:stack/AIBotDynamoDBStack/*",
+        "arn:aws:cloudformation:eu-west-2:*:stack/AIBotSecretsManagerStack/*",
+        "arn:aws:cloudformation:eu-west-2:*:stack/AIBotNetworkStack/*",
+        "arn:aws:cloudformation:eu-west-2:*:stack/AIBotLambdaStack/*",
+        "arn:aws:cloudformation:eu-west-2:*:stack/CDKToolkit/*"
+      ]
+    },
+    {
+      "Sid": "S3StagingBucketAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketLocation",
+        "s3:ListBucket",
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::cdk-hnb659fds-assets-*-eu-west-2",
+        "arn:aws:s3:::cdk-hnb659fds-assets-*-eu-west-2/*"
       ]
     }
   ]
