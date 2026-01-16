@@ -25,8 +25,8 @@ from shared import (
 )
 
 # Service specific imports
-from agents import create_supervisor_agent
-from google.adk.sdk import Runner
+from .agents import create_supervisor_agent
+from google.adk import Runner
 
 load_dotenv()
 

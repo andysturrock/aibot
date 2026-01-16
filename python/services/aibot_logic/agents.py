@@ -9,7 +9,7 @@ from google.adk.tools.google_search_tool import google_search
 from google.adk.tools import AgentTool
 from google.genai import types
 from mcp.client.session import ClientSession
-from mcp.client.streamable_http import StreamableHttpClientTransport
+from mcp.client.streamable_http import StreamableHTTPTransport
 
 # Import from shared library
 from shared import get_secret_value, get_history, put_history
@@ -35,7 +35,7 @@ async def search_slack(query: str, tool_context: Any) -> str:
         mcp_server_url = await get_secret_value('AIBot', 'mcpSlackSearchUrl')
         
         # Use MCP Client to call the search tool
-        async with StreamableHttpClientTransport(f"{mcp_server_url}/mcp", headers={'Authorization': f'Bearer {slack_user_token}'}) as transport:
+        async with StreamableHTTPTransport(f"{mcp_server_url}/mcp", headers={'Authorization': f'Bearer {slack_user_token}'}) as transport:
             async with ClientSession(transport) as session:
                 await session.initialize()
                 result = await session.call_tool("search_slack_messages", arguments={"query": query})
