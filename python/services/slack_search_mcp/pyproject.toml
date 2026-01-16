@@ -1,0 +1,17 @@
+[project]
+name = "slack-search-mcp"
+version = "0.1.0"
+dependencies = [
+    "shared",
+    "mcp[fastapi]",
+    "fastapi",
+    "uvicorn",
+    "google-cloud-bigquery",
+    "google-cloud-aiplatform",
+    "python-dotenv",
+    "slack-sdk"
+]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+packages = []

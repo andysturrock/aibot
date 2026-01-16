@@ -1,10 +1,6 @@
 terraform {
-  cloud {
-    organization = "sturrock"
-
-    workspaces {
-      project = "aibot"
-      tags    = ["aibot-atom-dev"]
-    }
+  backend "gcs" {
+    bucket = "your-gcp-project-id-terraform-state"
+    prefix = "terraform/state/aibot-atom-dev"
   }
 }
