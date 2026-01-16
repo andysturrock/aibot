@@ -1,4 +1,3 @@
 export default [
-  'packages/lambda-src',
-  'packages/cdk',
+  'packages/cloud-function-source',
 ];

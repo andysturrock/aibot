@@ -1,0 +1,21 @@
+[project]
+name = "aibot-logic"
+version = "0.1.0"
+dependencies = [
+    "shared",
+    "google-adk",
+    "fastapi",
+    "uvicorn",
+    "google-cloud-pubsub",
+    "google-cloud-firestore",
+    "slack-sdk",
+    "python-dotenv",
+    "mcp[fastapi]",
+    "vertexai",
+    "google-cloud-aiplatform",
+    "pydantic"
+]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+packages = []

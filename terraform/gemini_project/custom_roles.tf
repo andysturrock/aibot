@@ -12,24 +12,24 @@ resource "google_project_iam_custom_role" "aibot_role" {
   ]
 }
 
-resource "google_project_iam_binding" "aibot_lambda_custom_role_binding" {
+resource "google_project_iam_binding" "aibot_logic_custom_role_binding" {
   project = var.gcp_gemini_project_id
   role    = "projects/${var.gcp_gemini_project_id}/roles/${google_project_iam_custom_role.aibot_role.role_id}"
   members = [
-    "principal://iam.googleapis.com/projects/${var.gcp_identity_project_number}/locations/global/workloadIdentityPools/${var.workload_identity_pool_id}/subject/arn:aws:sts::${var.aws_account_id}:assumed-role/handlePromptCommandLambdaRole/AIBot-handlePromptCommandLambda",
+    "serviceAccount:${google_service_account.aibot_logic.email}",
   ]
 }
 
-resource "google_project_iam_member" "aibot_lambda_bigquery_data_viewer" {
+resource "google_project_iam_member" "aibot_logic_bigquery_data_viewer" {
   project = var.gcp_gemini_project_id
   role    = "roles/bigquery.dataViewer"
-  member  = "principal://iam.googleapis.com/projects/${var.gcp_identity_project_number}/locations/global/workloadIdentityPools/${var.workload_identity_pool_id}/subject/arn:aws:sts::${var.aws_account_id}:assumed-role/handlePromptCommandLambdaRole/AIBot-handlePromptCommandLambda"
+  member  = "serviceAccount:${google_service_account.aibot_logic.email}"
 }
 
-resource "google_project_iam_member" "aibot_lambda_bigquery_job_user" {
+resource "google_project_iam_member" "aibot_logic_bigquery_job_user" {
   project = var.gcp_gemini_project_id
   role    = "roles/bigquery.jobUser"
-  member  = "principal://iam.googleapis.com/projects/${var.gcp_identity_project_number}/locations/global/workloadIdentityPools/${var.workload_identity_pool_id}/subject/arn:aws:sts::${var.aws_account_id}:assumed-role/handlePromptCommandLambdaRole/AIBot-handlePromptCommandLambda"
+  member  = "serviceAccount:${google_service_account.aibot_logic.email}"
 }
 
 # The Compute Engine default service account needs the cloud builds builder role.
