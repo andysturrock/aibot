@@ -11,7 +11,7 @@ resource "google_cloud_run_v2_service" "aibot_webhook" {
       max_instance_count = 10
     }
     containers {
-      image = "gcr.io/${var.gcp_gemini_project_id}/aibot-logic:latest"
+      image = "${var.gcp_region}-docker.pkg.dev/${var.gcp_gemini_project_id}/aibot-images/aibot-logic:latest"
       env {
         name  = "TOPIC_ID"
         value = google_pubsub_topic.slack_events.name
@@ -69,10 +69,14 @@ resource "google_cloud_run_v2_service" "aibot_logic" {
 
   template {
     containers {
-      image = "gcr.io/${var.gcp_gemini_project_id}/aibot-logic:latest"
+      image = "${var.gcp_region}-docker.pkg.dev/${var.gcp_gemini_project_id}/aibot-images/aibot-logic:latest"
       env {
         name  = "MCP_SEARCH_URL"
         value = google_cloud_run_v2_service.mcp_slack_search.uri
+      }
+      env {
+        name  = "GCP_LOCATION"
+        value = var.gcp_region
       }
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
@@ -105,7 +109,7 @@ resource "google_cloud_run_v2_service" "mcp_slack_search" {
 
   template {
     containers {
-      image = "gcr.io/${var.gcp_gemini_project_id}/slack-search-mcp:latest"
+      image = "${var.gcp_region}-docker.pkg.dev/${var.gcp_gemini_project_id}/aibot-images/slack-search-mcp:latest"
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
         value = var.gcp_gemini_project_id
@@ -141,7 +145,7 @@ resource "google_cloud_run_v2_service" "slack_collector" {
 
   template {
     containers {
-      image = "gcr.io/${var.gcp_gemini_project_id}/slack-collector:latest"
+      image = "${var.gcp_region}-docker.pkg.dev/${var.gcp_gemini_project_id}/aibot-images/slack-collector:latest"
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
         value = var.gcp_gemini_project_id

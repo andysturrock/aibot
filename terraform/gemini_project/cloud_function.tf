@@ -1,25 +1,3 @@
-resource "google_storage_bucket" "aibot_gcf_source" {
-  name                        = "aibot_gcf_source_${random_id.name_suffix.hex}"
-  location                    = "EU"
-  uniform_bucket_level_access = true
-  force_destroy               = true
-}
-
-# The zip files must have been created before running tf apply.
-# Use the build_gcf_bundles.sh script to bundle the python source.
-# Then when Terraform takes a snapshot of the filesystem for the apply
-# stage it will include the zip files in the ./dist directory.
-resource "google_storage_bucket_object" "collect_slack_messages_source_zip" {
-  # The timestamp() in the name forces a rebuild.  Without it even if the source code changes the function won't be updated.
-  # It's overly cautious as it will still rebuild the function even if the code hasn't changed, but
-  # better cautious and slightly slow than not deploy changed functionality.
-  name           = "handle_collect_slack_messages.${timestamp()}.zip"
-  bucket         = google_storage_bucket.aibot_gcf_source.name
-  source         = "${path.root}/dist/handle_collect_slack_messages.zip"
-  detect_md5hash = true
-}
-
-
 # --- Service IAM Configuration ---
 
 resource "google_service_account" "collect_slack_messages" {
@@ -132,7 +110,7 @@ resource "google_bigquery_dataset" "aibot_slack_messages" {
   dataset_id    = "aibot_slack_messages"
   friendly_name = "AI Bot Slack Messages"
   description   = "Slack messages for search by AI Bot"
-  location      = "EU"
+  location      = var.gcp_region
 }
 
 # Give the service account access to the dataset
@@ -249,5 +227,5 @@ resource "random_id" "job_name_suffix" {
 #     query          = "CREATE VECTOR INDEX embeddings ON ${google_bigquery_dataset.aibot_slack_messages.dataset_id}.${google_bigquery_table.slack_content.id}(embeddings) OPTIONS(index_type = 'IVF')"
 #     use_legacy_sql = false
 #   }
-#   location = "EU"
+#   location = var.gcp_region
 # }

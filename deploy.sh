@@ -3,36 +3,37 @@ set -e
 
 # Configuration
 PROJECT_ID=$(gcloud config get-value project)
-REGION="europe-west1" # Should match var.gcp_region in terraform
+REGION="europe-west2" # London - matches data residency requirements
 
 echo "Using GCP Project: $PROJECT_ID"
 echo "Using Region: $REGION"
+
+# Artifact Registry Repository
+REPO="${REGION}-docker.pkg.dev/${PROJECT_ID}/aibot-images"
 
 # 1. Build and Push Images
 echo "--- Building and Pushing Docker Images ---"
 
 # Service: Slack Collector
 echo "Building slack-collector..."
-docker build -t gcr.io/$PROJECT_ID/slack-collector:latest \
+docker build -t ${REPO}/slack-collector:latest \
   --build-arg SERVICE_NAME=slack_collector \
   -f python/Dockerfile .
-docker push gcr.io/$PROJECT_ID/slack-collector:latest
+docker push ${REPO}/slack-collector:latest
 
 # Service: MCP Slack Search
 echo "Building slack-search-mcp..."
-docker build -t gcr.io/$PROJECT_ID/slack-search-mcp:latest \
+docker build -t ${REPO}/slack-search-mcp:latest \
   --build-arg SERVICE_NAME=slack_search_mcp \
   -f python/Dockerfile .
-docker push gcr.io/$PROJECT_ID/slack-search-mcp:latest
+docker push ${REPO}/slack-search-mcp:latest
 
 # Service: AIBot Logic (Combined Webhook + Worker)
 echo "Building aibot-logic..."
-docker build -t gcr.io/$PROJECT_ID/aibot-logic:latest \
+docker build -t ${REPO}/aibot-logic:latest \
   --build-arg SERVICE_NAME=aibot_logic \
   -f python/Dockerfile .
-docker push gcr.io/$PROJECT_ID/aibot-logic:latest
-
-
+docker push ${REPO}/aibot-logic:latest
 
 # 2. Terraform Apply
 echo "--- Applying Infrastructure Changes ---"

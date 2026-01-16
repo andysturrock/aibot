@@ -1,6 +1,6 @@
 # Create a bucket for the datastore
 resource "google_storage_bucket" "aibot_search_datastore" {
-  location                    = "EU"
+  location                    = var.gcp_region
   name                        = "aibot_search_datastore_${random_id.name_suffix.hex}"
   force_destroy               = true
   uniform_bucket_level_access = true
@@ -32,7 +32,7 @@ resource "google_discovery_engine_search_engine" "aibot" {
 
 # Create a bucket for the datastore
 resource "google_storage_bucket" "aibot_documents" {
-  location                    = "EU"
+  location                    = var.gcp_region
   name                        = "aibot_documents_${random_id.name_suffix.hex}"
   force_destroy               = true
   uniform_bucket_level_access = true
