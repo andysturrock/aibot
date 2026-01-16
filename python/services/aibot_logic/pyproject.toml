@@ -3,17 +3,17 @@ name = "aibot-logic"
 version = "0.1.0"
 dependencies = [
     "shared",
-    "google-adk",
-    "fastapi",
-    "uvicorn",
-    "google-cloud-pubsub",
-    "google-cloud-firestore",
-    "slack-sdk",
-    "python-dotenv",
-    "mcp[fastapi]",
-    "vertexai",
-    "google-cloud-aiplatform",
-    "pydantic"
+    "google-adk>=1.22.1",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.35.0",
+    "google-cloud-pubsub>=2.34.0",
+    "google-cloud-firestore>=2.20.0",
+    "slack-sdk>=3.39.0",
+    "python-dotenv>=1.0.1",
+    "mcp[fastapi]>=1.13.1",
+    "vertexai>=1.43.0",
+    "google-cloud-aiplatform>=1.43.0",
+    "pydantic>=2.0.0"
 ]
 
 [tool.setuptools]

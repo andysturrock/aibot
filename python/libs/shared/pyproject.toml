@@ -2,11 +2,11 @@
 name = "shared"
 version = "0.1.0"
 dependencies = [
-    "google-cloud-secret-manager",
-    "slack-sdk",
-    "google-cloud-pubsub",
-    "google-cloud-firestore",
-    "python-dotenv"
+    "google-cloud-secret-manager>=2.24.0",
+    "slack-sdk>=3.39.0",
+    "google-cloud-pubsub>=2.34.0",
+    "google-cloud-firestore>=2.20.0",
+    "python-dotenv>=1.0.1"
 ]
 
 [tool.setuptools]
