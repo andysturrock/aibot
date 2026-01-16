@@ -5,6 +5,9 @@
     "packages/cloud-function-source",
     "packages/mcp-slack-search"
   ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
     "@tsconfig/node22": "^22.0.0",
