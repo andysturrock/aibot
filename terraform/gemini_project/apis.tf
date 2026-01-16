@@ -46,6 +46,13 @@ resource "google_project_service" "firestore_api" {
   disable_on_destroy = false
 }
 
+# Enable the Artifact Registry API
+resource "google_project_service" "artifactregistry_api" {
+  project            = var.gcp_gemini_project_id
+  service            = "artifactregistry.googleapis.com"
+  disable_on_destroy = false
+}
+
 resource "google_firestore_database" "database" {
   project     = var.gcp_gemini_project_id
   name        = "(default)"

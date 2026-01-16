@@ -24,8 +24,13 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("slack-search-mcp")
 
+import vertexai
 GOOGLE_CLOUD_PROJECT = os.environ.get("GOOGLE_CLOUD_PROJECT")
-GCP_LOCATION = os.environ.get("GCP_LOCATION", "europe-west1")
+GCP_LOCATION = os.environ.get("GCP_LOCATION")
+if not GCP_LOCATION:
+    raise EnvironmentError("GCP_LOCATION environment variable is required and must be set explicitly.")
+
+vertexai.init(project=GOOGLE_CLOUD_PROJECT, location=GCP_LOCATION)
 
 # --- Middleware: Security Verification ---
 

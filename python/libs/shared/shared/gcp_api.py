@@ -18,7 +18,7 @@ async def get_secret_value(secret_name, secret_key):
     # 2. Fetch from GCP Secret Manager
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
     if not project_id:
-        raise ValueError("GOOGLE_CLOUD_PROJECT not set in environment")
+        raise EnvironmentError("GOOGLE_CLOUD_PROJECT environment variable is required and must be set explicitly.")
 
     # Use the async client
     client = secretmanager_v1.SecretManagerServiceAsyncClient()
@@ -37,7 +37,7 @@ async def publish_to_topic(topic_name: str, payload: str):
     """Publishes a message to a Pub/Sub topic (Async)."""
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
     if not project_id:
-        raise ValueError("GOOGLE_CLOUD_PROJECT not set in environment")
+        raise EnvironmentError("GOOGLE_CLOUD_PROJECT environment variable is required and must be set explicitly.")
 
     # publisher_v1.PublisherClient's publish method is already non-blocking (returns a future),
     # but we can wrap it to be more idiomatic async.
