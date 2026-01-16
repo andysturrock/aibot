@@ -32,9 +32,7 @@ docker build -t gcr.io/$PROJECT_ID/aibot-logic:latest \
   -f python/Dockerfile .
 docker push gcr.io/$PROJECT_ID/aibot-logic:latest
 
-# Build existing TS services if needed (assuming latest images are already there or built via other scripts)
-# But for a full redeploy we should include them or ensure they are present.
-# For now, we focus on the Python services we just migrated.
+
 
 # 2. Terraform Apply
 echo "--- Applying Infrastructure Changes ---"
@@ -47,3 +45,4 @@ terraform apply -auto-approve \
 echo "--- Deployment Complete ---"
 echo "Slack Collector: https://slack-collector-$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)').$REGION.run.app"
 echo "MCP Slack Search: https://slack-search-mcp-$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)').$REGION.run.app"
+echo "AIBot Logic: https://aibot-logic-$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)').$REGION.run.app"
