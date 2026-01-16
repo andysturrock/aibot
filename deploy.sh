@@ -13,17 +13,23 @@ echo "--- Building and Pushing Docker Images ---"
 
 # Service: Slack Collector
 echo "Building slack-collector..."
-docker build -t gcr.io/$PROJECT_ID/slack-collector:latest -f python/services/slack_collector/Dockerfile .
+docker build -t gcr.io/$PROJECT_ID/slack-collector:latest \
+  --build-arg SERVICE_NAME=slack_collector \
+  -f python/Dockerfile .
 docker push gcr.io/$PROJECT_ID/slack-collector:latest
 
 # Service: MCP Slack Search
 echo "Building slack-search-mcp..."
-docker build -t gcr.io/$PROJECT_ID/slack-search-mcp:latest -f python/services/slack_search_mcp/Dockerfile .
+docker build -t gcr.io/$PROJECT_ID/slack-search-mcp:latest \
+  --build-arg SERVICE_NAME=slack_search_mcp \
+  -f python/Dockerfile .
 docker push gcr.io/$PROJECT_ID/slack-search-mcp:latest
 
 # Service: AIBot Logic (Combined Webhook + Worker)
 echo "Building aibot-logic..."
-docker build -t gcr.io/$PROJECT_ID/aibot-logic:latest -f python/services/aibot_logic/Dockerfile .
+docker build -t gcr.io/$PROJECT_ID/aibot-logic:latest \
+  --build-arg SERVICE_NAME=aibot_logic \
+  -f python/Dockerfile .
 docker push gcr.io/$PROJECT_ID/aibot-logic:latest
 
 # Build existing TS services if needed (assuming latest images are already there or built via other scripts)
