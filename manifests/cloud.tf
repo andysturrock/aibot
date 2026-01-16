@@ -1,10 +1,6 @@
 terraform {
-  cloud {
-    organization = "__TF_ORG__"
-
-    workspaces {
-      project = "__TF_PROJECT__"
-      tags = ["__TF_ENV__"]
-    }
+  backend "gcs" {
+    bucket = "__TF_STATE_BUCKET__"
+    prefix = "terraform/state/__TF_ENV__"
   }
 }

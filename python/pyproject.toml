@@ -1,0 +1,7 @@
+[project]
+name = "aibot-python-monorepo"
+version = "0.1.0"
+dependencies = []
+
+[tool.setuptools]
+packages = []

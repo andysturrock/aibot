@@ -2,8 +2,8 @@
   "name": "aibot",
   "type": "module",
   "workspaces": [
-    "packages/cdk",
-    "packages/lambda-src"
+    "packages/cloud-function-source",
+    "packages/mcp-slack-search"
   ],
   "devDependencies": {
     "@eslint/js": "^9.18.0",
@@ -22,8 +22,8 @@
     "vitest": "^4.0.17"
   },
   "scripts": {
-    "lint": "eslint packages/cdk && eslint packages/lambda-src",
-    "fix": "eslint packages/cdk --fix && eslint packages/lambda-src --fix",
+    "lint": "eslint packages/cloud-function-source",
+    "fix": "eslint packages/cloud-function-source --fix",
     "test": "vitest run --passWithNoTests",
     "build": "npm run build --workspaces --if-present"
   }

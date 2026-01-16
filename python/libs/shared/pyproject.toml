@@ -1,0 +1,14 @@
+[project]
+name = "shared"
+version = "0.1.0"
+dependencies = [
+    "google-cloud-secret-manager",
+    "slack-sdk",
+    "google-cloud-pubsub",
+    "google-cloud-firestore",
+    "python-dotenv"
+]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+packages = ["shared"]

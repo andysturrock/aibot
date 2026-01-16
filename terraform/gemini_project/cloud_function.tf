@@ -19,34 +19,8 @@ resource "google_storage_bucket_object" "collect_slack_messages_source_zip" {
   detect_md5hash = true
 }
 
-resource "google_cloudfunctions2_function" "collect_slack_messages" {
-  # Use kebab case for the name rather than snake case so the generated Cloud Run service
-  # has the same name (Cloud Run name are always kebab case).
-  # See https://github.com/hashicorp/terraform-provider-google/issues/15264#issuecomment-2000050883
-  name        = "collect-slack-messages"
-  location    = var.gcp_region
-  description = "Run on a schedule to collect messages from Slack public channels."
 
-  build_config {
-    runtime     = "python312"
-    entry_point = "handle_collect_slack_messages"
-    source {
-      storage_source {
-        bucket = google_storage_bucket.aibot_gcf_source.name
-        object = google_storage_bucket_object.collect_slack_messages_source_zip.name
-      }
-    }
-  }
-  service_config {
-    max_instance_count    = 1
-    available_memory      = "512M"
-    timeout_seconds       = 900 # 15 mins
-    service_account_email = google_service_account.collect_slack_messages.email
-    environment_variables = {
-      GCP_PROJECT = var.gcp_gemini_project_id
-    }
-  }
-}
+# DEPRECATED: Cloud Function replaced by Cloud Run service D in cloud_run.tf
 
 resource "google_service_account" "collect_slack_messages" {
   # GCP account ids must match "^[a-z](?:[-a-z0-9]{4,28}[a-z0-9])$".
@@ -65,25 +39,74 @@ data "google_iam_policy" "collect_slack_messages_run_invoker" {
   }
 }
 
-# Give the service account permissiont to get the AIBot secret
-resource "google_secret_manager_secret_iam_binding" "collect_slack_messages" {
+# Give the service account permission to get the AIBot secret
+resource "google_secret_manager_secret_iam_member" "collect_slack_messages_secrets" {
   secret_id = "AIBot"
   role      = "roles/secretmanager.secretAccessor"
-  members = [
-    "serviceAccount:${google_service_account.collect_slack_messages.email}"
-  ]
+  member    = "serviceAccount:${google_service_account.collect_slack_messages.email}"
 }
 
-resource "google_cloud_run_service_iam_policy" "collect_slack_messages" {
-  # This is the bit where we need the cloud function name and cloud run service name to match.
-  # Note we use the function name in the service section and this is a google_cloud_run_service_iam_policy resource.
-  service     = google_cloudfunctions2_function.collect_slack_messages.name
-  policy_data = data.google_iam_policy.collect_slack_messages_run_invoker.policy_data
-  depends_on  = [google_cloudfunctions2_function.collect_slack_messages]
 
-  lifecycle {
-    replace_triggered_by = [google_cloudfunctions2_function.collect_slack_messages]
-  }
+# IAM for slack-collector Cloud Run service is handled in cloud_run.tf
+
+# --- IAM for New Services ---
+
+# Webhook needs to publish to Pub/Sub (already done in cloud_run.tf)
+
+# MCP Slack Search needs to:
+# 1. Use AI Platform (Vertex AI) for embeddings
+resource "google_project_iam_member" "mcp_aiplatform_user" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.mcp_slack_search.email}"
+}
+
+# 2. Use BigQuery for vector search
+resource "google_project_iam_member" "mcp_bq_jobuser" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.mcp_slack_search.email}"
+}
+
+resource "google_bigquery_dataset_iam_member" "mcp_bq_viewer" {
+  dataset_id = google_bigquery_dataset.aibot_slack_messages.dataset_id
+  role       = "roles/bigquery.dataViewer"
+  member     = "serviceAccount:${google_service_account.mcp_slack_search.email}"
+}
+
+# 3. Access Secrets (allowed team IDs, signing secret etc)
+resource "google_secret_manager_secret_iam_member" "mcp_secrets" {
+  secret_id = "AIBot"
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.mcp_slack_search.email}"
+}
+
+# 2. Access Secrets (user tokens)
+resource "google_secret_manager_secret_iam_member" "logic_secrets" {
+  secret_id = "AIBot"
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.aibot_logic.email}"
+}
+
+# Webhook Access to Secrets
+resource "google_secret_manager_secret_iam_member" "webhook_secrets" {
+  secret_id = "AIBot"
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.aibot_webhook.email}"
+}
+
+# 2. Use AI Platform for the main LLM interaction
+resource "google_project_iam_member" "logic_aiplatform_user" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.aibot_logic.email}"
+}
+
+# 3. Use Firestore for token storage
+resource "google_project_iam_member" "logic_firestore_user" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.aibot_logic.email}"
 }
 
 resource "google_cloud_scheduler_job" "collect_slack_messages" {
@@ -91,23 +114,18 @@ resource "google_cloud_scheduler_job" "collect_slack_messages" {
   description = "Schedule the HTTPS trigger for collect_slack_messages cloud function"
   schedule    = "*/20 * * * *" # every twenty minutes
   time_zone   = "Etc/GMT"
-  project     = google_cloudfunctions2_function.collect_slack_messages.project
-  region      = google_cloudfunctions2_function.collect_slack_messages.location
+  project     = var.gcp_gemini_project_id
+  region      = var.gcp_region
 
   http_target {
-    uri         = "https://collect-slack-messages-${var.gcp_gemini_project_number}.${var.gcp_region}.run.app"
+    uri         = google_cloud_run_v2_service.slack_collector.uri
     http_method = "POST"
     oidc_token {
       service_account_email = google_service_account.collect_slack_messages.email
     }
   }
 
-  # Needs this because the function is replaced (changing its URL).
-  # Therefore this job needs to be updated to match.
-  depends_on = [google_cloudfunctions2_function.collect_slack_messages]
-  lifecycle {
-    replace_triggered_by = [google_cloudfunctions2_function.collect_slack_messages]
-  }
+  # Removed depends_on and lifecycle blocks as function is now a Cloud Run service
 }
 
 resource "google_bigquery_dataset" "aibot_slack_messages" {

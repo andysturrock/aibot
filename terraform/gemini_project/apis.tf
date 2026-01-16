@@ -37,3 +37,18 @@ resource "google_project_service" "secretmanager_api" {
   // Don't disable this API when we run tf destroy.
   disable_on_destroy = false
 }
+
+# Enable the Firestore API
+resource "google_project_service" "firestore_api" {
+  project = var.gcp_gemini_project_id
+  service = "firestore.googleapis.com"
+  // Don't disable this API when we run tf destroy.
+  disable_on_destroy = false
+}
+
+resource "google_firestore_database" "database" {
+  project     = var.gcp_gemini_project_id
+  name        = "(default)"
+  location_id = var.gcp_region
+  type        = "FIRESTORE_NATIVE"
+}
