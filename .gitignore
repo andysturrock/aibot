@@ -51,8 +51,11 @@ _override.tf.json
 .idea/
 .DS_Store
 
-# Legacy (Clean up)
-node_modules/
-npm-debug.log
-cdk.out/
-tsconfig.tsbuildinfo
+# Infrastructure
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+*.tfplan

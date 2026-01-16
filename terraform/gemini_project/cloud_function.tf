@@ -20,7 +20,7 @@ resource "google_storage_bucket_object" "collect_slack_messages_source_zip" {
 }
 
 
-# DEPRECATED: Cloud Function replaced by Cloud Run service D in cloud_run.tf
+# --- Service IAM Configuration ---
 
 resource "google_service_account" "collect_slack_messages" {
   # GCP account ids must match "^[a-z](?:[-a-z0-9]{4,28}[a-z0-9])$".
