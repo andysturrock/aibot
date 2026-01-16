@@ -8,8 +8,19 @@ from google.adk import Agent, Runner
 from google.adk.tools.google_search_tool import google_search
 from google.adk.tools import AgentTool
 from google.genai import types
+import vertexai
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import StreamableHTTPTransport
+
+gcp_location = os.environ.get("GCP_LOCATION")
+if not gcp_location:
+    raise EnvironmentError("GCP_LOCATION environment variable is required and must be set explicitly.")
+
+# Initialize Vertex AI
+vertexai.init(
+    project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
+    location=gcp_location
+)
 
 # Import from shared library
 from shared import get_secret_value, get_history, put_history
