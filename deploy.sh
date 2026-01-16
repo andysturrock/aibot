@@ -11,7 +11,18 @@ echo "Using Region: $REGION"
 # Artifact Registry Repository
 REPO="${REGION}-docker.pkg.dev/${PROJECT_ID}/aibot-images"
 
-# 1. Build and Push Images
+# 1. Terraform Apply (Bootstrap Infrastructure)
+echo "--- Initializing Infrastructure (Registry, Buckets, etc.) ---"
+# We run this first so the Artifact Registry exists before we try to push to it.
+# Note: On the very first run, Cloud Run might warn if the image isn't there yet.
+cd terraform
+./init.sh
+terraform apply -auto-approve \
+  -var="gcp_gemini_project_id=$PROJECT_ID" \
+  -var="gcp_region=$REGION"
+cd ..
+
+# 2. Build and Push Images
 echo "--- Building and Pushing Docker Images ---"
 
 # Service: Slack Collector
@@ -35,13 +46,13 @@ docker build -t ${REPO}/aibot-logic:latest \
   -f python/Dockerfile .
 docker push ${REPO}/aibot-logic:latest
 
-# 2. Terraform Apply
-echo "--- Applying Infrastructure Changes ---"
+# 3. Final Terraform Apply (Update Services with Images)
+echo "--- Finalizing Infrastructure Changes ---"
 cd terraform
-./init.sh
 terraform apply -auto-approve \
   -var="gcp_gemini_project_id=$PROJECT_ID" \
   -var="gcp_region=$REGION"
+cd ..
 
 echo "--- Deployment Complete ---"
 echo "Slack Collector: https://slack-collector-$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)').$REGION.run.app"
