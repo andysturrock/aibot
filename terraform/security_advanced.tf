@@ -124,15 +124,13 @@ resource "google_compute_global_address" "aibot_lb_ip" {
   name = "aibot-lb-ip"
 }
 
+# Standardizing on Modern Certificate Manager as it's the "best" approach for GCP.
 resource "google_certificate_manager_certificate" "aibot_cert" {
   name        = "aibot-cert"
   description = "AIBot managed certificate via Certificate Manager"
   scope       = "DEFAULT"
   managed {
     domains = [var.custom_fqdn]
-  }
-  provisioner "local-exec" {
-    command = "sleep 10" # Brief delay to allow API propagation
   }
 }
 
