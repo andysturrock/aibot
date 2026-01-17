@@ -154,7 +154,7 @@ resource "google_certificate_manager_certificate_map_entry" "aibot_cert_map_entr
 resource "google_compute_target_https_proxy" "aibot_proxy" {
   name            = "aibot-https-proxy"
   url_map         = google_compute_url_map.aibot_lb.id
-  certificate_map = google_certificate_manager_certificate_map.aibot_cert_map.id
+  certificate_map = "//certificatemanager.googleapis.com/${google_certificate_manager_certificate_map.aibot_cert_map.id}"
 }
 
 resource "google_compute_global_forwarding_rule" "aibot_forwarding_rule" {
