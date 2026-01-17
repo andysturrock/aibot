@@ -13,6 +13,12 @@ variable "gcp_region" {
   description = "GCP region, eg europe-west2"
 }
 
+variable "gcp_bq_location" {
+  type        = string
+  description = "GCP BigQuery location, eg EU or europe-west2"
+  default     = "EU"
+}
+
 variable "gcp_zone" {
   type        = string
   description = "GCP zone"
@@ -23,4 +29,21 @@ variable "enable_gemini_apis" {
   type        = bool
   description = "Enable Gemini APIs"
   default     = true
+}
+
+variable "custom_fqdn" {
+  type        = string
+  description = "Fully Qualified Domain Name (FQDN) for the Load Balancer (e.g. aibot.example.com)"
+}
+
+variable "iap_client_id" {
+  type        = string
+  description = "OAuth 2.0 Client ID for IAP"
+  default     = "PLACEHOLDER"
+}
+
+variable "iap_client_secret" {
+  type        = string
+  description = "OAuth 2.0 Client Secret for IAP"
+  default     = "PLACEHOLDER"
 }

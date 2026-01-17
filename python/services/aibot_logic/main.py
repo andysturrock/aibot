@@ -10,14 +10,12 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from dotenv import load_dotenv
 
-# Import from shared library
-from shared import (
-    get_secret_value, 
-    publish_to_topic, 
-    get_history, 
-    put_history, 
-    get_access_token,
-    create_bot_client,
+# Import from shared library submodules
+from shared.logging import setup_logging
+from shared.gcp_api import get_secret_value, publish_to_topic
+from shared.firestore_api import get_history, put_history, get_access_token
+from shared.slack_api import create_bot_client
+from shared.security import (
     verify_slack_request,
     is_team_authorized,
     get_team_id_from_payload,
@@ -25,12 +23,11 @@ from shared import (
 )
 
 # Service specific imports
-from .agents import create_supervisor_agent
+from agents import create_supervisor_agent
 from google.adk import Runner
 
 load_dotenv()
-
-logging.basicConfig(level=logging.INFO)
+setup_logging()
 logger = logging.getLogger("aibot-logic")
 
 # --- Configuration & Constants ---
@@ -44,36 +41,44 @@ class SecurityMiddleware(BaseHTTPMiddleware):
     """
     async def dispatch(self, request: Request, call_next):
         # 1. Skip middleware for some routes
-        if request.url.path == "/health":
+        if request.url.path in ["/health", "/slack/oauth-redirect"]:
             return await call_next(request)
         
-        # 2. Signature Verification & Whitelisting (External /slack/events)
-        if request.url.path == "/slack/events" and request.method == "POST":
+        # 2. Signature Verification & Whitelisting
+        if request.url.path in ["/slack/events", "/slack/interactivity"] and request.method == "POST":
             # Read body for verification
             body = await request.body()
-            try:
-                payload = json.loads(body)
-            except json.JSONDecodeError:
-                return Response(content="Invalid JSON", status_code=400)
-                
-            # URL verification doesn't need signature check usually
-            if payload.get("type") == "url_verification":
-                # We let it through, or handle it here. Handling in route is clearer.
-                return await call_next(request)
             
             # Signature Check
             is_valid = await verify_slack_request(body, dict(request.headers))
             if not is_valid:
                 return Response(content="Invalid Slack signature", status_code=status.HTTP_401_UNAUTHORIZED)
-                
-            # Whitelist Check
-            team_id = get_team_id_from_payload(payload)
-            enterprise_id = get_enterprise_id_from_payload(payload)
+
+            # Extract payload for whitelisting
+            payload = {}
+            content_type = request.headers.get("content-type", "")
             
-            if not await is_team_authorized(team_id, enterprise_id):
-                logger.warning(f"Unauthorized access attempt from Team: {team_id}")
-                # Return 200 to Slack to stop retries, but with descriptive text
-                return Response(content="Unauthorized Workspace", status_code=200)
+            if "application/json" in content_type:
+                payload = json.loads(body)
+            elif "application/x-www-form-urlencoded" in content_type:
+                # Interactivity sends JSON inside a 'payload' form field
+                from urllib.parse import parse_qs
+                form_data = parse_qs(body.decode("utf-8"))
+                if "payload" in form_data:
+                    payload = json.loads(form_data["payload"][0])
+
+            # Whitelist Check
+            if payload:
+                # URL verification doesn't need whitelist check (it's global for the app)
+                if payload.get("type") == "url_verification":
+                    return await call_next(request)
+                    
+                team_id = get_team_id_from_payload(payload)
+                enterprise_id = get_enterprise_id_from_payload(payload)
+                
+                if not await is_team_authorized(team_id, enterprise_id):
+                    logger.warning(f"Unauthorized access attempt from Team: {team_id}")
+                    return Response(content="Unauthorized Workspace", status_code=200)
 
         return await call_next(request)
 
@@ -155,6 +160,54 @@ async def slack_events(request: Request):
     await publish_to_topic(TOPIC_ID, json.dumps(payload))
     return Response(content="OK", status_code=200)
 
+@app.post("/slack/interactivity")
+async def slack_interactivity(request: Request):
+    # Interactivity payloads are URL-encoded form data
+    form_data = await request.form()
+    payload_str = form_data.get("payload")
+    if not payload_str:
+        return Response(content="Missing payload", status_code=400)
+        
+    payload = json.loads(payload_str)
+    
+    # Core Logic: Publish to Pub/Sub
+    await publish_to_topic(TOPIC_ID, json.dumps(payload))
+    return Response(content="OK", status_code=200)
+
+@app.get("/slack/oauth-redirect")
+async def slack_oauth_redirect(code: str):
+    """
+    Handles the Slack OAuth redirect, exchanges the code for a user token,
+    and stores it in Firestore.
+    """
+    try:
+        from shared.slack_api import exchange_oauth_code
+        from shared.firestore_api import put_access_token
+        
+        # 1. Exchange code for token
+        oauth_data = await exchange_oauth_code(code)
+        
+        authed_user = oauth_data.get("authed_user", {})
+        user_id = authed_user.get("id")
+        access_token = authed_user.get("access_token")
+        
+        # Slack v2 OAuth can return email if requested in scopes
+        email = authed_user.get("email")
+        
+        if not user_id or not access_token:
+            return Response(content="Failed to extract user authentication data", status_code=400)
+            
+        # 2. Store in Firestore
+        await put_access_token(user_id, access_token, email=email)
+        
+        return Response(
+            content="<h1>Success!</h1><p>AIBot is now authorized to search your Slack history. You can close this window.</p>",
+            media_type="text/html"
+        )
+    except Exception as e:
+        logger.exception("Slack OAuth redirection failed")
+        return Response(content=f"Error: {str(e)}", status_code=500)
+
 @app.post("/pubsub/worker")
 async def pubsub_worker(request: Request):
     envelope = await request.json()
@@ -185,7 +238,11 @@ async def pubsub_worker(request: Request):
                 # Load history
                 history = await get_history(channel_id, thread_ts, "supervisor") or []
                 
-                supervisor = await create_supervisor_agent()
+                # Fetch user-specific token if available
+                user_id = event.get("user")
+                user_token = await get_access_token(user_id)
+                
+                supervisor = await create_supervisor_agent(user_token=user_token)
                 runner = Runner(agent=supervisor, app_name="AIBot")
                 
                 # Pre-process text (remove bot mention)
