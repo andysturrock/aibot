@@ -41,23 +41,11 @@ fi
 # 2. Foundation Bootstrap
 ( cd terraform && ./init.sh )
 
+# 2. Infrastructure Provisioning
 if [ "$FAST_MODE" = false ]; then
-  echo "--- Provisioning Foundation ---"
-  (
-    cd terraform
-    terraform apply -auto-approve \
-      -target=google_artifact_registry_repository.aibot_images \
-      -target=google_storage_bucket.aibot_documents \
-      -target=google_storage_bucket.aibot_search_datastore \
-      -target=google_bigquery_dataset.aibot_slack_messages \
-      -target=google_bigquery_table.slack_content \
-      -target=google_bigquery_table.slack_content_metadata \
-      -target=google_project_service.artifactregistry \
-      -target=google_project_service.cloudrun \
-      -target=google_project_service.secretmanager \
-      -target=google_project_service.firestore \
-      $TF_VARS
-  )
+  echo "--- Provisioning Infrastructure ---"
+  ( cd terraform && ./init.sh )
+  ( cd terraform && terraform apply -auto-approve $TF_VARS )
 fi
 
 # 3. Optimized Build Process
