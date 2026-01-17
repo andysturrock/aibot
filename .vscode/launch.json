@@ -1,4 +1,5 @@
 {
+  "version": "0.2.0",
   "configurations": [
     {
       "name": "Python Debugger: Current File",
@@ -6,16 +7,6 @@
       "request": "launch",
       "program": "${file}",
       "console": "integratedTerminal"
-    },
-    {
-      "type": "node",
-      "request": "launch",
-      "name": "ts-node - run-local.ts",
-      "runtimeExecutable": "ts-node",
-      "program": "__tests__/run-local.ts",
-      "cwd": "${workspaceFolder}/packages/lambda-src/",
-      "console": "integratedTerminal",
-      "internalConsoleOptions": "neverOpen"
-    },
+    }
   ]
 }

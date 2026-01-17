@@ -12,16 +12,14 @@ from dotenv import load_dotenv
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-# Import from shared library
-from shared import (
-    get_secret_value, 
-    create_client_for_token,
-    is_team_authorized
-)
+# Import from shared library submodules
+from shared.logging import setup_logging
+from shared.gcp_api import get_secret_value
+from shared.slack_api import create_client_for_token
+from shared.security import is_team_authorized
 
 load_dotenv()
-
-logging.basicConfig(level=logging.INFO)
+setup_logging()
 logger = logging.getLogger("slack-search-mcp")
 
 import vertexai
@@ -32,24 +30,48 @@ if not GCP_LOCATION:
 
 vertexai.init(project=GOOGLE_CLOUD_PROJECT, location=GCP_LOCATION)
 
+from contextvars import ContextVar
+
+# ContextVar to store the current request's Slack token
+slack_token_var: ContextVar[Optional[str]] = ContextVar("slack_token", default=None)
+
 # --- Middleware: Security Verification ---
 
 class SecurityMiddleware(BaseHTTPMiddleware):
     """
-    Starlette middleware for MCP SSE backend to verify Slack access.
-    Note: MCP SSE transport usually receives a Bearer token in the header 
-    which we use here to verify whitelisting.
+    Starlette middleware for MCP SSE backend to verify access.
+    Supports both:
+    1. Bearer Token (Directly provided Slack token)
+    2. IAP (Google Identity mapping to Slack ID/Token)
     """
     async def dispatch(self, request, call_next):
-        if request.url.path in ["/mcp/sse", "/mcp/messages"]:
+        if request.url.path not in ["/mcp/sse", "/mcp/messages"]:
+            return await call_next(request)
+
+        from shared.security import get_iap_user_email
+        from shared.firestore_api import get_slack_id_by_email, get_access_token
+        
+        token = None
+        
+        # 1. Check for IAP Identity
+        email = await get_iap_user_email(dict(request.headers))
+        if email:
+            logger.info(f"Authenticating IAP user: {email}")
+            slack_id = await get_slack_id_by_email(email)
+            if slack_id:
+                token = await get_access_token(slack_id)
+            else:
+                logger.warning(f"No Slack ID found for email: {email}")
+                return JSONResponse({"error": "No Slack authorization found for this Google account. Please authorize AIBot in Slack first."}, status_code=403)
+
+        # 2. Fallback to Bearer Token (if no IAP or IAP lookup failed)
+        if not token:
             auth_header = request.headers.get("Authorization")
-            if not auth_header or not auth_header.startswith("Bearer "):
-                # We can't verify yet without a token, so we let it through 
-                # but the tool itself will fail later if token is missing.
-                # However, for true server-level verification, we expect the token.
-                return await call_next(request)
-            
-            token = auth_header.split(" ")[1]
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header.split(" ")[1]
+
+        # 3. Validation & Team Check
+        if token:
             try:
                 slack_client = await create_client_for_token(token)
                 auth_test = await slack_client.auth_test()
@@ -59,11 +81,19 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 
                 if not await is_team_authorized(team_id, enterprise_id):
                     return JSONResponse({"error": "Unauthorized workspace"}, status_code=403)
-            except Exception as e:
-                logger.error(f"Error in security middleware: {e}")
-                return JSONResponse({"error": "Authentication failed"}, status_code=401)
                 
-        return await call_next(request)
+                # Set the token in our context var for tools to use
+                token_token = slack_token_var.set(token)
+                try:
+                    return await call_next(request)
+                finally:
+                    slack_token_var.reset(token_token)
+                    
+            except Exception as e:
+                logger.error(f"Inbound verification failed: {str(e)}")
+                return JSONResponse({"error": "Invalid authentication token"}, status_code=status.HTTP_401_UNAUTHORIZED)
+        else:
+            return JSONResponse({"error": "Authentication required"}, status_code=401)
 
 # --- Service Logic ---
 
@@ -73,9 +103,8 @@ mcp = FastMCP("slack-search-server")
 @mcp.tool()
 async def search_slack_messages(query: str) -> str:
     """Search Slack messages using vector search and return thread context."""
-    # The middleware already verified the token if it was in the header, 
-    # but we still need it here for the search logic.
-    token = os.environ.get("SLACK_USER_TOKEN") or await get_secret_value("AIBot", "slackUserToken")
+    # 1. Get token from context (set by middleware) or fallback to env
+    token = slack_token_var.get() or os.environ.get("SLACK_USER_TOKEN") or await get_secret_value("slackUserToken")
 
     if not token:
         return "No Slack token found."

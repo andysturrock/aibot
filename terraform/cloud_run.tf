@@ -1,8 +1,9 @@
 # --- Service A: aibot-webhook ---
 
 resource "google_cloud_run_v2_service" "aibot_webhook" {
-  name     = "aibot-webhook"
-  location = var.gcp_region
+  name                = "aibot-webhook"
+  location            = var.gcp_region
+  deletion_protection = false
   ingress  = "INGRESS_TRAFFIC_ALL"
 
   template {
@@ -19,6 +20,10 @@ resource "google_cloud_run_v2_service" "aibot_webhook" {
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
         value = var.gcp_gemini_project_id
+      }
+      env {
+        name  = "GCP_LOCATION"
+        value = var.gcp_region
       }
     }
     service_account = google_service_account.aibot_webhook.email
@@ -63,8 +68,9 @@ resource "google_service_account" "pubsub_invoker" {
 # --- Service B: aibot-logic ---
 
 resource "google_cloud_run_v2_service" "aibot_logic" {
-  name     = "aibot-logic"
-  location = var.gcp_region
+  name                = "aibot-logic"
+  location            = var.gcp_region
+  deletion_protection = false
   ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   template {
@@ -103,8 +109,9 @@ resource "google_cloud_run_v2_service_iam_member" "pubsub_logic_invoker" {
 # --- Service C: mcp-slack-search (Python) ---
 
 resource "google_cloud_run_v2_service" "mcp_slack_search" {
-  name     = "mcp-slack-search"
-  location = var.gcp_region
+  name                = "mcp-slack-search"
+  location            = var.gcp_region
+  deletion_protection = false
   ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   template {
@@ -139,8 +146,9 @@ resource "google_cloud_run_v2_service_iam_member" "logic_mcp_invoker" {
 # --- Service D: slack-collector (Python) ---
 
 resource "google_cloud_run_v2_service" "slack_collector" {
-  name     = "slack-collector"
-  location = var.gcp_region
+  name                = "slack-collector"
+  location            = var.gcp_region
+  deletion_protection = false
   ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   template {
