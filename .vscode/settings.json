@@ -1,21 +1,6 @@
 {
-  "eslint.codeActionsOnSave.rules": null,
-  "eslint.workingDirectories": [
-    { "directory": "packages/cdk", "changeProcessCWD": true },
-    { "directory": "packages/lambda-src", "changeProcessCWD": true }
-  ],
   "json.schemaDownload.enable": true,
-  // The path to the `bun` executable.
-  // "bun.runtime": "/path/to/bun",
-
-  // If support for Bun should be added to the default "JavaScript Debug Terminal".
-  "bun.debugTerminal.enabled": true,
-  
-  // If the debugger should stop on the first line of the program.
-  "bun.debugTerminal.stopOnEntry": false,
-
   "[python]": {
-    "editor.defaultFormatter": "ms-python.autopep8",
     "editor.formatOnSave": true
   }
 }

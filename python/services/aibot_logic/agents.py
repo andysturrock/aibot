@@ -23,7 +23,8 @@ vertexai.init(
 )
 
 # Import from shared library
-from shared import get_secret_value, get_history, put_history
+from shared.gcp_api import get_secret_value
+from shared.firestore_api import get_history, put_history
 
 logger = logging.getLogger(__name__)
 
@@ -36,17 +37,19 @@ async def get_gemini_model(model_name: str):
 async def search_slack(query: str, tool_context: Any) -> str:
     """
     Searches through Slack messages and summarizes the results.
-    
-    Args:
-        query: The search query.
-        tool_context: ADK tool context.
     """
     try:
-        slack_user_token = await get_secret_value('AIBot', 'slackUserToken')
-        mcp_server_url = await get_secret_value('AIBot', 'mcpSlackSearchUrl')
+        # 1. Determine which token to use
+        # We can pass the token through tool_context or closure. 
+        # Here we prioritize a token passed in the context metadata if present.
+        user_token = tool_context.metadata.get("user_token")
+        if not user_token:
+            user_token = await get_secret_value('slackUserToken')
+            
+        mcp_server_url = await get_secret_value('mcpSlackSearchUrl')
         
-        # Use MCP Client to call the search tool
-        async with StreamableHTTPTransport(f"{mcp_server_url}/mcp", headers={'Authorization': f'Bearer {slack_user_token}'}) as transport:
+        # 2. Use MCP Client to call the search tool
+        async with StreamableHTTPTransport(f"{mcp_server_url}/mcp", headers={'Authorization': f'Bearer {user_token}'}) as transport:
             async with ClientSession(transport) as session:
                 await session.initialize()
                 result = await session.call_tool("search_slack_messages", arguments={"query": query})
@@ -55,8 +58,6 @@ async def search_slack(query: str, tool_context: Any) -> str:
                     return "No results found in Slack."
                 
                 messages = json.loads(result.content[0].text)
-                
-                # We return the raw messages as text for the agent to summarize
                 return json.dumps(messages, indent=2)
     except Exception as e:
         logger.exception("Error in search_slack tool")
@@ -70,17 +71,19 @@ def create_google_search_agent():
         tools=[google_search]
     )
 
-def create_slack_search_agent():
+def create_slack_search_agent(user_token: Optional[str] = None):
     return Agent(
         name="SlackSearchAgent",
         description="An agent that can search internal Slack messages.",
         instruction="You are an internal researcher. Use Slack Search to find relevant conversations and summarize them.",
-        tools=[search_slack]
+        tools=[search_slack],
+        # Pass the token via tool metadata
+        tool_metadata={"user_token": user_token}
     )
 
-async def create_supervisor_agent():
-    bot_name = await get_secret_value('AIBot', 'botName')
-    model_name = await get_secret_value('AIBot', 'supervisorModel')
+async def create_supervisor_agent(user_token: Optional[str] = None):
+    bot_name = await get_secret_value('botName')
+    model_name = await get_secret_value('supervisorModel')
     
     return Agent(
         name="SupervisorAgent",
@@ -101,7 +104,7 @@ async def create_supervisor_agent():
         """,
         tools=[
             AgentTool(agent=create_google_search_agent()),
-            AgentTool(agent=create_slack_search_agent())
+            AgentTool(agent=create_slack_search_agent(user_token=user_token))
         ],
         generate_content_config=types.GenerateContentConfig(
             safety_settings=[

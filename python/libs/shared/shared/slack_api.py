@@ -10,7 +10,7 @@ rate_limit_handler = RateLimitErrorRetryHandler(max_retry_count=5)
 
 async def create_bot_client() -> AsyncWebClient:
     """Create an async client using the bot token"""
-    bot_token = await get_secret_value('AIBot', 'slackBotToken')
+    bot_token = await get_secret_value('slackBotToken')
     return await create_client_for_token(bot_token)
 
 async def create_client_for_token(user_token: str) -> AsyncWebClient:
@@ -129,3 +129,21 @@ async def get_public_channels(team_id: str) -> List[Dict[str, Any]]:
     conversations_list = await client.conversations_list(
         team_id=team_id, types=["public_channel"])
     return conversations_list["channels"]
+
+async def exchange_oauth_code(code: str) -> Dict[str, Any]:
+    """Exchanges a temporary OAuth code for an access token."""
+    client_id = await get_secret_value('slackClientId')
+    client_secret = await get_secret_value('slackClientSecret')
+    
+    # We use a temporary client without a token for the exchange
+    client = AsyncWebClient()
+    response = await client.oauth_v2_access(
+        client_id=client_id,
+        client_secret=client_secret,
+        code=code
+    )
+    
+    if not response["ok"]:
+        raise Exception(f"Slack OAuth exchange failed: {response['error']}")
+        
+    return response.data

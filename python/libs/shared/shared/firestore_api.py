@@ -57,17 +57,32 @@ async def get_access_token(slack_user_id: str) -> Optional[str]:
     data = doc.to_dict()
     return data.get("access_token")
 
-async def put_access_token(slack_user_id: str, access_token: str):
-    """Saves or overwrites a user's access token in Firestore."""
+async def put_access_token(slack_user_id: str, access_token: str, email: Optional[str] = None):
+    """Saves or overwrites a user's access token and email in Firestore."""
     db = firestore.AsyncClient()
     doc_ref = db.collection(TOKENS_COLLECTION).document(slack_user_id)
-    await doc_ref.set({
+    doc_data = {
         "access_token": access_token,
         "slack_id": slack_user_id,
         "updated_at": datetime.now(timezone.utc).isoformat()
-    })
+    }
+    if email:
+        doc_data["email"] = email
+        
+    await doc_ref.set(doc_data)
 
 async def delete_access_token(slack_user_id: str):
     """Deletes the access token for a given user from Firestore."""
     db = firestore.AsyncClient()
     await db.collection(TOKENS_COLLECTION).document(slack_user_id).delete()
+
+async def get_slack_id_by_email(email: str) -> Optional[str]:
+    """Looks up a Slack ID by user email."""
+    if not email:
+        return None
+        
+    db = firestore.AsyncClient()
+    docs = db.collection(TOKENS_COLLECTION).where("email", "==", email).stream()
+    async for doc in docs:
+        return doc.id  # The doc ID is the Slack user ID
+    return None

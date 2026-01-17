@@ -1,56 +1,57 @@
 {
-    "display_information": {
-        "name": "AIBot",
-        "description": "AI bot",
-        "background_color": "#614b79",
-        "long_description": "You can ask AIBot questions and it will return you a response.\r\nAsk in two ways:\r\n - Via a DM in the Messages tab of the AIBot app\r\n - Via @AIBot in a channel.  It needs to be a member of the channel to be able to respond.\r\n\r\nIn either case AIBot will respond to your question in a thread.  All messages in that thread have the same context, so you can continue your conversation in the thread.  Different threads have different contexts."
+  "display_information": {
+    "name": "AIBot",
+    "description": "AI bot",
+    "background_color": "#614b79",
+    "long_description": "You can ask AIBot questions and it will return you a response.\r\nAsk in two ways:\r\n - Via a DM in the Messages tab of the BetaChatomGPT app\r\n - Via @BetaChatomGPT in a channel.  It needs to be a member of the channel to be able to respond.\r\n\r\nIn either case BetaChatomGPT will respond to your question in a thread.  All messages in that thread have the same context, so you can continue your conversation in the thread.  Different threads have different contexts."
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
     },
-    "features": {
-        "app_home": {
-            "home_tab_enabled": true,
-            "messages_tab_enabled": true,
-            "messages_tab_read_only_enabled": false
-        },
-        "bot_user": {
-            "display_name": "AIBot",
-            "always_online": true
-        }
-    },
-    "oauth_config": {
-        "redirect_urls": [
-            "https://aibot.slackapps.example.com/0_0_1/slack-oauth-redirect"
-        ],
-        "scopes": {
-            "user": [
-                "channels:history",
-                "channels:read",
-                "files:read"
-            ],
-            "bot": [
-                "app_mentions:read",
-                "channels:read",
-                "chat:write",
-                "im:history",
-                "reactions:write",
-                "team:read"
-            ]
-        }
-    },
-    "settings": {
-        "event_subscriptions": {
-            "request_url": "https://aibot.slackapps.example.com/0_0_1/events-endpoint",
-            "bot_events": [
-                "app_home_opened",
-                "app_mention",
-                "message.im"
-            ]
-        },
-        "interactivity": {
-            "is_enabled": true,
-            "request_url": "https://aibot.slackapps.example.com/0_0_1/interactive-endpoint"
-        },
-        "org_deploy_enabled": true,
-        "socket_mode_enabled": false,
-        "token_rotation_enabled": false
+    "bot_user": {
+      "display_name": "AIBot",
+      "always_online": true
     }
+  },
+  "oauth_config": {
+    "redirect_urls": [
+      "https://aibot-webhook-119481532691.europe-west2.run.app/slack/oauth-redirect"
+    ],
+    "scopes": {
+      "user": [
+        "users:read",
+        "channels:history",
+        "channels:read",
+        "users:read.email"
+      ],
+      "bot": [
+        "app_mentions:read",
+        "channels:read",
+        "chat:write",
+        "im:history",
+        "reactions:write",
+        "team:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://aibot-webhook-119481532691.europe-west2.run.app/slack/events",
+      "bot_events": [
+        "app_home_opened",
+        "app_mention",
+        "message.im"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://aibot-webhook-119481532691.europe-west2.run.app/slack/interactivity"
+    },
+    "org_deploy_enabled": true,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
 }

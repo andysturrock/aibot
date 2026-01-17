@@ -14,11 +14,11 @@ async def _get_whitelists():
     global _allowed_team_ids, _allowed_enterprise_ids
     if _allowed_team_ids is None:
         try:
-            team_ids_str = await get_secret_value("AIBot", "teamIdsForSearch")
+            team_ids_str = await get_secret_value("teamIdsForSearch")
             _allowed_team_ids = [id.strip() for id in team_ids_str.split(",") if id.strip()]
-            # For now enterprise IDs are just in env, could move to secret later if needed
-            import os
-            _allowed_enterprise_ids = [id.strip() for id in os.environ.get("ALLOWED_ENTERPRISE_IDS", "").split(",") if id.strip()]
+            # Retrieve enterprise IDs from secret
+            enterprise_ids_str = await get_secret_value("enterpriseIdsForSearch")
+            _allowed_enterprise_ids = [id.strip() for id in (enterprise_ids_str or "").split(",") if id.strip()]
         except Exception as e:
             logger.error(f"Error loading whitelists: {e}")
             _allowed_team_ids = []
@@ -29,7 +29,7 @@ async def _get_whitelists():
 async def verify_slack_request(data: bytes, headers: Dict[str, str]) -> bool:
     """Verifies that the request came from Slack using the signing secret."""
     try:
-        signing_secret = await get_secret_value("AIBot", "slackSigningSecret")
+        signing_secret = await get_secret_value("slackSigningSecret")
         verifier = SignatureVerifier(signing_secret)
         if verifier.is_valid_request(data, headers):
             return True
@@ -67,6 +67,4 @@ def get_team_id_from_payload(payload: Dict[str, Any]) -> Optional[str]:
     )
 
 def get_enterprise_id_from_payload(payload: Dict[str, Any]) -> Optional[str]:
-    """Extracts enterprise_id from various common Slack payload formats."""
-    event = payload.get("event") or {}
     return payload.get("enterprise_id") or event.get("enterprise")

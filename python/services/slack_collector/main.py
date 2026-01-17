@@ -10,18 +10,18 @@ from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
 from google.cloud import bigquery
 from dotenv import load_dotenv
 
-# Import from shared library
-from shared import (
-    get_secret_value, 
+# Import from shared library submodules
+from shared.logging import setup_logging
+from shared.gcp_api import get_secret_value
+from shared.slack_api import (
     Message, 
     get_public_channels, 
-    get_channel_messages_using_token,
-    is_team_authorized
+    get_channel_messages_using_token
 )
+from shared.security import is_team_authorized
 
 load_dotenv()
-
-logging.basicConfig(level=logging.INFO)
+setup_logging()
 logger = logging.getLogger("slack-collector")
 
 DATASET_NAME = "aibot_slack_messages"
@@ -56,14 +56,14 @@ class ChannelMetadata:
         }
 
 async def collect_slack_messages():
-    team_ids_from_secret = await get_secret_value('AIBot', 'teamIdsForSearch')
+    team_ids_from_secret = await get_secret_value('teamIdsForSearch')
     team_ids_for_search = [id.strip() for id in team_ids_from_secret.split(',') if id.strip()]
     
     if not team_ids_for_search:
         logger.error("Security risk: No whitelisted teams configured for collection. Denying all processing.")
         return "Access Denied: No whitelisted teams"
 
-    slack_user_token = await get_secret_value('AIBot', 'slackUserToken')
+    slack_user_token = await get_secret_value('slackUserToken')
     bigquery_client = bigquery.Client()
 
     now = datetime.now(timezone.utc)

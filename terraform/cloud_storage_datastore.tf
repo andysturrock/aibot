@@ -15,6 +15,12 @@ resource "google_discovery_engine_data_store" "aibot_search" {
   content_config              = "CONTENT_REQUIRED"
   solution_types              = ["SOLUTION_TYPE_SEARCH"]
   create_advanced_site_search = false
+
+  document_processing_config {
+    default_parsing_config {
+      digital_parsing_config {}
+    }
+  }
 }
 
 # This is only really needed to turn on the enterprise features for the data store.

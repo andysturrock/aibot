@@ -110,7 +110,7 @@ resource "google_bigquery_dataset" "aibot_slack_messages" {
   dataset_id    = "aibot_slack_messages"
   friendly_name = "AI Bot Slack Messages"
   description   = "Slack messages for search by AI Bot"
-  location      = var.gcp_region
+  location      = var.gcp_bq_location
 }
 
 # Give the service account access to the dataset
@@ -227,5 +227,5 @@ resource "random_id" "job_name_suffix" {
 #     query          = "CREATE VECTOR INDEX embeddings ON ${google_bigquery_dataset.aibot_slack_messages.dataset_id}.${google_bigquery_table.slack_content.id}(embeddings) OPTIONS(index_type = 'IVF')"
 #     use_legacy_sql = false
 #   }
-#   location = var.gcp_region
+#   location = var.gcp_bq_location
 # }
