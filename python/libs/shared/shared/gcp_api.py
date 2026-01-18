@@ -1,45 +1,56 @@
 import os
 import json
 import logging
-from google.cloud import secretmanager_v1, pubsub_v1
 import asyncio
+from typing import Optional
+from google.cloud import secretmanager_v1, pubsub_v1
+import google.auth
+from google.auth.transport.requests import Request
+import google.oauth2.id_token
 
 logger = logging.getLogger(__name__)
 
+async def _access_secret(project_id, secret_name):
+    """Internal helper to fetch and parse JSON secret."""
+    client = secretmanager_v1.SecretManagerServiceAsyncClient()
+    name = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
+    try:
+        response = await client.access_secret_version(request={"name": name})
+        payload = response.payload.data.decode("UTF-8")
+        return json.loads(payload)
+    except Exception as e:
+        logger.error(f"Failed to access secret {secret_name}: {e}", exc_info=True)
+        return None
+
 async def get_secret_value(secret_key: str) -> str:
-    """Retrieves a secret from GCP Secret Manager (Async) following naming convention."""
+    """Retrieves a secret from GCP Secret Manager (Async). 
+    Checks AIBot-shared-config first, then falls back to [service]-config.
+    """
     # 1. Check local environment variables first
     env_secret = os.environ.get(secret_key)
     if env_secret:
         return env_secret
- 
-    # 2. Determine Secret Name via convention
-    service_name = os.environ.get("K_SERVICE")
-    if not service_name:
-         raise EnvironmentError("K_SERVICE environment variable is required to determine secret name.")
-    secret_name = f"{service_name}-config"
 
-    # 3. Fetch from GCP Secret Manager
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
     if not project_id:
         import google.auth
         _, project_id = google.auth.default()
 
-    client = secretmanager_v1.SecretManagerServiceAsyncClient()
-    name = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
-    
-    try:
-        response = await client.access_secret_version(request={"name": name})
-        payload = response.payload.data.decode("UTF-8")
-        secrets = json.loads(payload)
-        
-        val = secrets.get(secret_key)
-        if val is None:
-             logger.warning(f"Secret key '{secret_key}' not found in secret '{secret_name}'")
-        return val
-    except Exception as e:
-        logger.error(f"Error accessing secret {secret_name}/{secret_key}: {e}")
-        return None
+    # 2. Check AIBot-shared-config
+    shared_secrets = await _access_secret(project_id, "AIBot-shared-config")
+    if shared_secrets and secret_key in shared_secrets:
+        return shared_secrets[secret_key]
+
+    # 3. Fallback to Service-Specific config
+    service_name = os.environ.get("K_SERVICE")
+    if service_name:
+        secret_name = f"{service_name}-config"
+        service_secrets = await _access_secret(project_id, secret_name)
+        if service_secrets and secret_key in service_secrets:
+            return service_secrets[secret_key]
+
+    logger.warning(f"Secret key '{secret_key}' not found in any known secret store.")
+    return None
 
 async def publish_to_topic(topic_name: str, payload: str):
     """Publishes a message to a Pub/Sub topic (Async)."""
@@ -65,3 +76,17 @@ async def publish_to_topic(topic_name: str, payload: str):
     except Exception as e:
         logger.error(f"Error publishing to {topic_name}: {e}")
         raise
+
+async def get_id_token(audience: str) -> str:
+    """Fetches a Google OIDC ID token for the given audience (Async)."""
+    # Requesting an ID token from the metadata server
+    auth_request = Request()
+    
+    # metadata server is very fast, run in executor to keep loop free
+    loop = asyncio.get_event_loop()
+    try:
+        token = await loop.run_in_executor(None, lambda: google.oauth2.id_token.fetch_id_token(auth_request, audience))
+        return token
+    except Exception as e:
+        logger.error(f"Failed to fetch ID token for audience {audience}: {e}")
+        return None

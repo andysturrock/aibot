@@ -59,6 +59,12 @@ resource "google_project_service" "certificatemanager_api" {
   disable_on_destroy = false
 }
 
+resource "google_project_service" "iap_api" {
+  project            = var.gcp_gemini_project_id
+  service            = "iap.googleapis.com"
+  disable_on_destroy = false
+}
+
 resource "google_firestore_database" "database" {
   project     = var.gcp_gemini_project_id
   name        = "(default)"
