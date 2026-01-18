@@ -17,8 +17,9 @@ if not gcp_location:
     raise EnvironmentError("GCP_LOCATION environment variable is required and must be set explicitly.")
 
 # Initialize Vertex AI
+PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
 vertexai.init(
-    project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
+    project=PROJECT_ID,
     location=gcp_location
 )
 
@@ -28,11 +29,39 @@ from shared.firestore_api import get_history, put_history
 
 logger = logging.getLogger(__name__)
 
-async def get_gemini_model(model_name: str):
-    """Helper to get model name (ADK in Python handles the model resolution)."""
-    # In Python ADK, we can just pass the model name string to the agent
-    # or a BaseLlm instance. For now, strings are easier.
-    return model_name
+from google.adk.models.google_llm import Gemini
+from google.genai import Client
+from functools import cached_property
+
+class VertexGemini(Gemini):
+    """Subclass of Gemini that forces Vertex AI backend and configures project/location."""
+    
+    @cached_property
+    def api_client(self) -> Client:
+        from google.genai import Client
+        return Client(
+            vertexai=True,
+            project=PROJECT_ID,
+            location=gcp_location,
+            http_options=types.HttpOptions(
+                headers=self._tracking_headers(),
+                retry_options=self.retry_options,
+            )
+        )
+
+async def get_gemini_model(model_name: str) -> Gemini:
+    """Factory to create a model with enterprise security settings."""
+    return VertexGemini(
+        model=model_name,
+        generate_content_config=types.GenerateContentConfig(
+            safety_settings=[
+                types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+                types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+                types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+                types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+            ]
+        )
+    )
 
 async def search_slack(query: str, user_token: Optional[str] = None) -> str:
     """
@@ -95,7 +124,6 @@ async def create_supervisor_agent(user_token: Optional[str] = None):
     
     return Agent(
         name="SupervisorAgent",
-        model=model_name,
         description="Orchestrates specialized agents to answer user queries.",
         instruction=f"""
             Your name is {bot_name}.
@@ -110,13 +138,9 @@ async def create_supervisor_agent(user_token: Optional[str] = None):
               "attributions": [{{ "title": "title", "uri": "uri" }}]
             }}
         """,
+        model=await get_gemini_model(model_name),
         tools=[
             AgentTool(agent=create_google_search_agent()),
             AgentTool(agent=create_slack_search_agent(user_token=user_token))
-        ],
-        generate_content_config=types.GenerateContentConfig(
-            safety_settings=[
-                types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE")
-            ]
-        )
+        ]
     )

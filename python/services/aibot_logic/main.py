@@ -233,7 +233,7 @@ if service_role == "aibot-webhook":
         event = payload.get("event", {})
         inner_type = event.get("type")
         channel_id = event.get("channel")
-        thread_ts = event.get("thread_ts") or event.get("ts")
+        message_ts = event.get("ts")
         
         # We handle app_mentions and non-bot DM messages
         should_react = inner_type == "app_mention" or (
@@ -243,9 +243,9 @@ if service_role == "aibot-webhook":
             not event.get("subtype") == "bot_message"
         )
         
-        if should_react and channel_id and thread_ts:
+        if should_react and channel_id and message_ts:
             try:
-                await add_reaction(channel_id, thread_ts, "eyes")
+                await add_reaction(channel_id, message_ts, "eyes")
             except Exception:
                 logger.exception("Failed to add eyes reaction")
 
@@ -338,7 +338,8 @@ elif service_role == "aibot-logic":
             if should_handle:
                 logger.info(f"Handling {inner_type} event")
                 channel_id = event.get("channel")
-                thread_ts = event.get("ts")
+                message_ts = event.get("ts")
+                thread_ts = event.get("thread_ts") or message_ts
                 text = event.get("text")
                 
                 # Check for bot loops just in case
@@ -348,11 +349,11 @@ elif service_role == "aibot-logic":
                 
                 # 1. Swap eyes for thinking face
                 try:
-                    await remove_reaction(channel_id, thread_ts, "eyes")
+                    await remove_reaction(channel_id, message_ts, "eyes")
                 except Exception:
                     pass # Might not have been added or already removed
                 
-                await add_reaction(channel_id, thread_ts, "thinking_face")
+                await add_reaction(channel_id, message_ts, "thinking_face")
                 
                 # 2. Run Agent
                 try:
@@ -412,7 +413,6 @@ elif service_role == "aibot-logic":
                     
                     # Try to parse as JSON (Supervisor format)
                     try:
-                        import json
                         # Sometimes the model wraps JSON in markdown blocks
                         data_str = final_response
                         if data_str.startswith("```"):
@@ -458,7 +458,7 @@ elif service_role == "aibot-logic":
                 finally:
                     # 3. Cleanup thinking face
                     try:
-                        await remove_reaction(channel_id, thread_ts, "thinking_face")
+                        await remove_reaction(channel_id, message_ts, "thinking_face")
                     except Exception:
                         pass
 
