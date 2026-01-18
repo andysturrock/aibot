@@ -6,36 +6,25 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
-async def get_secret_value(secret_key: str, secret_name: str = None) -> str:
-    """
-    Get a secret from GCP Secret Manager or environment (Async).
-    Defaults secret_name to {K_SERVICE}-config if not provided.
-    """
-    # 1. Check if it's already in the Environment (highest priority)
+async def get_secret_value(secret_key: str) -> str:
+    """Retrieves a secret from GCP Secret Manager (Async) following naming convention."""
+    # 1. Check local environment variables first
     env_secret = os.environ.get(secret_key)
     if env_secret:
         return env_secret
-
-    # 2. Determine Secret Name
-    if not secret_name:
-        # Fallback to current service name (Cloud Run convention)
-        service_name = os.environ.get("K_SERVICE")
-        if service_name:
-            secret_name = f"{service_name}-config"
-        else:
-            # Global fallback for local testing
-            secret_name = "aibot-logic-config"
+ 
+    # 2. Determine Secret Name via convention
+    service_name = os.environ.get("K_SERVICE")
+    if not service_name:
+         raise EnvironmentError("K_SERVICE environment variable is required to determine secret name.")
+    secret_name = f"{service_name}-config"
 
     # 3. Fetch from GCP Secret Manager
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
     if not project_id:
-         # Local dev fallback - assuming project is set via gcloud
         import google.auth
         _, project_id = google.auth.default()
-        if not project_id:
-            raise EnvironmentError("GOOGLE_CLOUD_PROJECT environment variable is required.")
 
-    # Use the async client
     client = secretmanager_v1.SecretManagerServiceAsyncClient()
     name = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
     
@@ -50,7 +39,7 @@ async def get_secret_value(secret_key: str, secret_name: str = None) -> str:
         return val
     except Exception as e:
         logger.error(f"Error accessing secret {secret_name}/{secret_key}: {e}")
-        return None # Return None instead of raising to allow fallbacks
+        return None
 
 async def publish_to_topic(topic_name: str, payload: str):
     """Publishes a message to a Pub/Sub topic (Async)."""

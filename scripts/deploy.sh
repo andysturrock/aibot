@@ -68,30 +68,68 @@ for SVC in "${SERVICES[@]}"; do
   docker push ${REPO}/${IMG_NAME}:latest
 done
 
+# Step C: Forced Update of Cloud Run (Ensure latest image is pulled)
+echo "Forcing Cloud Run updates to pull latest images..."
+# Services now use consistent naming: (kebab-case matches image name)
+# Exceptions are handled explicitly.
+for SVC in "aibot-webhook" "aibot-logic" "slack-collector" "slack-search-mcp"; do
+  # Default: Image name matches Service name
+  IMG="$SVC"
+  
+  # Exception: aibot-webhook uses aibot-logic image
+  if [ "$SVC" == "aibot-webhook" ]; then
+    IMG="aibot-logic"
+  fi
+
+  echo "Updating $SVC with image ${REPO}/${IMG}:latest..."
+  gcloud run services update $SVC --image ${REPO}/${IMG}:latest --region $REGION --quiet || echo "Warning: Could not update $SVC"
+done
+
 # 4. Final Infrastructure Update
 echo "--- Finalizing Deployment ---"
 ( cd terraform && terraform apply -auto-approve $TF_VARS )
 
 # 5. Secret Synchronization
 echo "--- Synchronizing Secrets ---"
+# Function to disable older versions of a secret
+disable_old_versions() {
+  local SECRET_ID=$1
+  echo "Disabling older versions of $SECRET_ID..."
+  # List all enabled versions, skip the first one (latest), and disable the rest
+  VERSIONS=$(gcloud secrets versions list "$SECRET_ID" --filter="state=enabled" --format="value(name)" | tail -n +2)
+  for V in $VERSIONS; do
+    gcloud secrets versions disable "$V" --secret="$SECRET_ID" --quiet || true
+  done
+}
+
 if [ -n "$SLACK_BOT_TOKEN" ]; then
   # aibot-logic-config
   echo "Updating aibot-logic-config..."
   JSON_LOGIC=$(printf '{"slackBotToken":"%s","slackSigningSecret":"%s","slackClientId":"%s","slackClientSecret":"%s","teamIdsForSearch":"%s","enterpriseIdsForSearch":"%s","mcpSlackSearchUrl":"%s"}' \
     "$SLACK_BOT_TOKEN" "$SLACK_SIGNING_SECRET" "$SLACK_CLIENT_ID" "$SLACK_CLIENT_SECRET" "$ALLOWED_TEAM_IDS" "$ALLOWED_ENTERPRISE_IDS" "https://${CUSTOM_FQDN}/mcp")
   echo "$JSON_LOGIC" | gcloud secrets versions add aibot-logic-config --data-file=-
+  disable_old_versions "aibot-logic-config"
 
-  # mcp-slack-search-config
-  echo "Updating mcp-slack-search-config..."
+  # aibot-webhook-config
+  echo "Updating aibot-webhook-config..."
+  JSON_WEBHOOK=$(printf '{"slackBotToken":"%s","slackSigningSecret":"%s","slackClientId":"%s","slackClientSecret":"%s","teamIdsForSearch":"%s","enterpriseIdsForSearch":"%s"}' \
+    "$SLACK_BOT_TOKEN" "$SLACK_SIGNING_SECRET" "$SLACK_CLIENT_ID" "$SLACK_CLIENT_SECRET" "$ALLOWED_TEAM_IDS" "$ALLOWED_ENTERPRISE_IDS")
+  echo "$JSON_WEBHOOK" | gcloud secrets versions add aibot-webhook-config --data-file=-
+  disable_old_versions "aibot-webhook-config"
+
+  # slack-search-mcp-config
+  echo "Updating slack-search-mcp-config..."
   JSON_MCP=$(printf '{"slackUserToken":"%s","teamIdsForSearch":"%s","enterpriseIdsForSearch":"%s","iapClientId":"%s","iapClientSecret":"%s"}' \
     "$SLACK_USER_TOKEN" "$ALLOWED_TEAM_IDS" "$ALLOWED_ENTERPRISE_IDS" "$IAP_CLIENT_ID" "$IAP_CLIENT_SECRET")
-  echo "$JSON_MCP" | gcloud secrets versions add mcp-slack-search-config --data-file=-
+  echo "$JSON_MCP" | gcloud secrets versions add slack-search-mcp-config --data-file=-
+  disable_old_versions "slack-search-mcp-config"
 
   # slack-collector-config
   echo "Updating slack-collector-config..."
   JSON_COLL=$(printf '{"slackUserToken":"%s","teamIdsForSearch":"%s","enterpriseIdsForSearch":"%s"}' \
     "$SLACK_USER_TOKEN" "$ALLOWED_TEAM_IDS" "$ALLOWED_ENTERPRISE_IDS")
   echo "$JSON_COLL" | gcloud secrets versions add slack-collector-config --data-file=-
+  disable_old_versions "slack-collector-config"
 else
   echo "Warning: Slack tokens not found in environment. Skipping secret synchronization."
 fi
