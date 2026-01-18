@@ -4,8 +4,12 @@ from typing import List, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import asyncio
+import traceback
+import json
 
 from fastapi import FastAPI, Response, Request
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
 from google.cloud import bigquery
 from dotenv import load_dotenv
@@ -28,8 +32,53 @@ DATASET_NAME = "aibot_slack_messages"
 CONTENT_TABLE_NAME = "slack_content"
 METADATA_TABLE_NAME = "slack_content_metadata"
 
+# --- Middleware: Structured Logging ---
+
+class SecurityMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        method = request.method
+        
+        if path == "/health":
+            return await call_next(request)
+
+        if path != "/":
+            logger.warning(f"Stealth security: Unauthorized access attempt to {path} from {request.client.host}")
+            return JSONResponse({"error": "Forbidden"}, status_code=403)
+
+        try:
+            response = await call_next(request)
+            logger.debug(f"Path {path} returned {response.status_code}")
+            return response
+        except Exception as e:
+            logger.error(f"Error processing path {path}", extra={
+                "path": path,
+                "method": method,
+                "exception": str(e)
+            }, exc_info=True)
+            raise
+
 # --- FastAPI App ---
-app = FastAPI(title="Slack Collector (FastAPI)")
+app = FastAPI(
+    title="Slack Collector (FastAPI)",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None
+)
+app.add_middleware(SecurityMiddleware)
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception in Slack Collector", extra={
+        "path": request.url.path,
+        "method": request.method,
+        "exception": str(exc),
+        "traceback": traceback.format_exc()
+    })
+    return JSONResponse(
+        status_code=500,
+        content={"message": f"Internal Server Error: {str(exc)}"}
+    )
 
 # --- Service Logic ---
 
