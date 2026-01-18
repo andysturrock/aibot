@@ -23,7 +23,7 @@ vertexai.init(
 )
 
 # Import from shared library
-from shared.gcp_api import get_secret_value
+from shared.gcp_api import get_secret_value, get_id_token
 from shared.firestore_api import get_history, put_history
 
 logger = logging.getLogger(__name__)
@@ -34,22 +34,27 @@ async def get_gemini_model(model_name: str):
     # or a BaseLlm instance. For now, strings are easier.
     return model_name
 
-async def search_slack(query: str, tool_context: Any) -> str:
+async def search_slack(query: str, user_token: Optional[str] = None) -> str:
     """
     Searches through Slack messages and summarizes the results.
     """
     try:
-        # 1. Determine which token to use
-        # We can pass the token through tool_context or closure. 
-        # Here we prioritize a token passed in the context metadata if present.
-        user_token = tool_context.metadata.get("user_token")
         if not user_token:
             user_token = await get_secret_value('slackUserToken')
             
         mcp_server_url = await get_secret_value('mcpSlackSearchUrl')
+        iap_client_id = os.environ.get("IAP_CLIENT_ID")
         
-        # 2. Use MCP Client to call the search tool
-        async with StreamableHTTPTransport(f"{mcp_server_url}/mcp", headers={'Authorization': f'Bearer {user_token}'}) as transport:
+        # 2. Get ID Token for IAP if configured
+        headers = {'X-Slack-Token': user_token}
+        if iap_client_id:
+            logger.debug(f"Fetching ID token for IAP audience: {iap_client_id}")
+            id_token = await get_id_token(iap_client_id)
+            if id_token:
+                headers['Authorization'] = f'Bearer {id_token}'
+
+        # 3. Use MCP Client to call the search tool
+        async with StreamableHTTPTransport(f"{mcp_server_url}/mcp", headers=headers) as transport:
             async with ClientSession(transport) as session:
                 await session.initialize()
                 result = await session.call_tool("search_slack_messages", arguments={"query": query})
@@ -72,13 +77,16 @@ def create_google_search_agent():
     )
 
 def create_slack_search_agent(user_token: Optional[str] = None):
+    # Capture user_token in a closure
+    async def search_slack_tool(query: str) -> str:
+        """Searches through Slack messages and summarizes the results."""
+        return await search_slack(query, user_token=user_token)
+
     return Agent(
         name="SlackSearchAgent",
         description="An agent that can search internal Slack messages.",
         instruction="You are an internal researcher. Use Slack Search to find relevant conversations and summarize them.",
-        tools=[search_slack],
-        # Pass the token via tool metadata
-        tool_metadata={"user_token": user_token}
+        tools=[search_slack_tool]
     )
 
 async def create_supervisor_agent(user_token: Optional[str] = None):

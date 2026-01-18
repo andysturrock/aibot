@@ -3,6 +3,7 @@ import json
 import logging
 import asyncio
 import base64
+import traceback
 from typing import Dict, Any
 
 from fastapi import FastAPI, Request, Response, HTTPException, status
@@ -25,6 +26,9 @@ from shared.security import (
 # Service specific imports
 from agents import create_supervisor_agent
 from google.adk import Runner
+from google.adk.runners import InMemorySessionService
+from google.adk.events.event import Event
+from google.genai import types
 
 load_dotenv()
 setup_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
@@ -44,12 +48,30 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         method = request.method
         logger.debug(f"Middleware processing {method} {path}")
 
-        # 1. Skip middleware for some routes
-        if path in ["/health", "/slack/oauth-redirect"]:
+        if path == "/health":
             return await call_next(request)
+
+        # 403 on unauthenticated access to non-app paths
+        # Differentiation based on service role (Webhook vs Logic Worker)
+        service_name = os.environ.get("K_SERVICE", "aibot-logic")
         
-        # 2. Signature Verification & Whitelisting
-        if request.url.path in ["/slack/events", "/slack/interactivity"] and request.method == "POST":
+        allowed_paths = []
+        if service_name == "aibot-webhook":
+            allowed_paths = [
+                "/slack/events", 
+                "/slack/interactivity", 
+                "/slack/install", 
+                "/slack/oauth-redirect"
+            ]
+        elif service_name == "aibot-logic":
+            allowed_paths = ["/pubsub/worker"]
+        
+        if path not in allowed_paths:
+             logger.warning(f"Stealth security: Unauthorized access attempt to {path} on service {service_name} from {request.client.host}")
+             return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+
+        payload = None
+        if path in ["/slack/events", "/slack/interactivity"] and method == "POST":
             # Read body for verification
             body = await request.body()
             
@@ -89,12 +111,34 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             logger.debug(f"Path {path} returned {response.status_code}")
             return response
         except Exception as e:
-            logger.exception(f"Error processing path {path}")
+            logger.error(f"Error processing path {path}", extra={
+                "path": path,
+                "method": method,
+                "exception": str(e)
+            }, exc_info=True)
             raise
 
 # --- FastAPI App ---
-app = FastAPI(title="AIBot Logic (FastAPI)")
+app = FastAPI(
+    title="AIBot Logic (FastAPI)",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None
+)
 app.add_middleware(SecurityMiddleware)
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception in FastAPI", extra={
+        "path": request.url.path,
+        "method": request.method,
+        "exception": str(exc),
+        "traceback": traceback.format_exc()
+    })
+    return JSONResponse(
+        status_code=500,
+        content={"message": f"Internal Server Error: {str(exc)}"}
+    )
 
 @app.on_event("startup")
 async def startup_event():
@@ -118,7 +162,7 @@ async def post_message(channel, text, thread_ts=None):
 
 async def handle_home_tab_event(event):
     user_id = event.get("user")
-    bot_name = await get_secret_value("AIBot", "botName")
+    bot_name = await get_secret_value("botName")
     access_token = await get_access_token(user_id)
     
     blocks = []
@@ -133,7 +177,13 @@ async def handle_home_tab_event(event):
             }
         ]
     else:
-        auth_url = await get_secret_value("AIBot", "authUrl")
+        auth_url = await get_secret_value("authUrl")
+        logger.debug(f"Retrieved authUrl: {auth_url}")
+        if not auth_url:
+            # Fallback to reconstructing it or logging warning
+            logger.warning("authUrl is missing from secrets. Check AIBot-shared-config.")
+            auth_url = "#" # Avoid Slack API error but broken link
+
         blocks = [
             {
                 "type": "section",
@@ -158,145 +208,264 @@ async def handle_home_tab_event(event):
     client = await create_bot_client()
     await client.views_publish(user_id=user_id, view={"type": "home", "blocks": blocks})
 
+# --- Service Role Identification ---
+service_role = os.environ.get("K_SERVICE", "aibot-logic")
+
 # --- Routes ---
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
 
-@app.post("/slack/events")
-async def slack_events(request: Request):
-    payload = await request.json()
+if service_role == "aibot-webhook":
+    logger.info("Registering Webhook routes")
     
-    # URL Verification (Challenge)
-    if payload.get("type") == "url_verification":
-        return {"challenge": payload.get("challenge")}
-    
-    # Core Logic: Publish to Pub/Sub (Already verified by Middleware)
-    await publish_to_topic(TOPIC_ID, json.dumps(payload))
-    return Response(content="OK", status_code=200)
-
-@app.post("/slack/interactivity")
-async def slack_interactivity(request: Request):
-    # Interactivity payloads are URL-encoded form data
-    form_data = await request.form()
-    payload_str = form_data.get("payload")
-    if not payload_str:
-        return Response(content="Missing payload", status_code=400)
+    @app.post("/slack/events")
+    async def slack_events(request: Request):
+        payload = await request.json()
         
-    payload = json.loads(payload_str)
-    
-    # Core Logic: Publish to Pub/Sub
-    await publish_to_topic(TOPIC_ID, json.dumps(payload))
-    return Response(content="OK", status_code=200)
-
-@app.get("/slack/oauth-redirect")
-async def slack_oauth_redirect(code: str):
-    """
-    Handles the Slack OAuth redirect, exchanges the code for a user token,
-    and stores it in Firestore.
-    """
-    try:
-        from shared.slack_api import exchange_oauth_code
-        from shared.firestore_api import put_access_token
+        # URL Verification (Challenge)
+        if payload.get("type") == "url_verification":
+            return {"challenge": payload.get("challenge")}
         
-        # 1. Exchange code for token
-        oauth_data = await exchange_oauth_code(code)
-        
-        authed_user = oauth_data.get("authed_user", {})
-        user_id = authed_user.get("id")
-        access_token = authed_user.get("access_token")
-        
-        # Slack v2 OAuth can return email if requested in scopes
-        email = authed_user.get("email")
-        
-        if not user_id or not access_token:
-            return Response(content="Failed to extract user authentication data", status_code=400)
-            
-        # 2. Store in Firestore
-        await put_access_token(user_id, access_token, email=email)
-        
-        return Response(
-            content="<h1>Success!</h1><p>AIBot is now authorized to search your Slack history. You can close this window.</p>",
-            media_type="text/html"
-        )
-    except Exception as e:
-        logger.exception("Slack OAuth redirection failed")
-        return Response(content=f"Error: {str(e)}", status_code=500)
-
-@app.post("/pubsub/worker")
-async def pubsub_worker(request: Request):
-    envelope = await request.json()
-    if not envelope or "message" not in envelope:
-        raise HTTPException(status_code=400, detail="Bad Request")
-    
-    message = envelope["message"]
-    data = base64.b64decode(message["data"]).decode("utf-8")
-    payload = json.loads(data)
-    
-    event_type = payload.get("type")
-    event = payload.get("event") or {}
-    
-    # Dispatching
-    if event_type == "event_callback":
+        # Core Logic: Publish to Pub/Sub (Already verified by Middleware)
+        # Check if it's a message we should acknowledge with eyes
+        event = payload.get("event", {})
         inner_type = event.get("type")
+        channel_id = event.get("channel")
+        thread_ts = event.get("thread_ts") or event.get("ts")
         
-        if inner_type == "app_mention":
-            channel_id = event.get("channel")
-            thread_ts = event.get("ts")
-            text = event.get("text")
-            
-            # 1. Add reaction
-            await add_reaction(channel_id, thread_ts, "eyes")
-            
-            # 2. Run Agent
+        # We handle app_mentions and non-bot DM messages
+        should_react = inner_type == "app_mention" or (
+            inner_type == "message" and 
+            event.get("channel_type") == "im" and 
+            not event.get("bot_id") and 
+            not event.get("subtype") == "bot_message"
+        )
+        
+        if should_react and channel_id and thread_ts:
             try:
-                # Load history
-                history = await get_history(channel_id, thread_ts, "supervisor") or []
-                
-                # Fetch user-specific token if available
-                user_id = event.get("user")
-                user_token = await get_access_token(user_id)
-                
-                supervisor = await create_supervisor_agent(user_token=user_token)
-                runner = Runner(agent=supervisor, app_name="AIBot")
-                
-                # Pre-process text (remove bot mention)
-                bot_info = await (await create_bot_client()).auth_test()
-                bot_user_id = bot_info["user_id"]
-                prompt = text.replace(f"<@{bot_user_id}>", "").strip()
-                
-                # Execute agent flow
-                result = await runner.run(prompt, history=history)
-                
-                # Format response
-                final_response = result
-                if isinstance(result, dict) and "answer" in result:
-                    final_response = result["answer"]
-                    if result.get("attributions"):
-                        final_response += "\n\n*Sources:*\n" + "\n".join(result["attributions"])
-                
-                await post_message(channel_id, final_response, thread_ts=thread_ts)
-                
-                # 3. Remove reaction
-                await remove_reaction(channel_id, thread_ts, "eyes")
-                
-                # 4. Save history
-                new_history = history + [
-                    {"role": "user", "parts": [{"text": prompt}]},
-                    {"role": "model", "parts": [{"text": final_response}]}
-                ]
-                await put_history(channel_id, thread_ts, new_history, "supervisor")
-                
-            except Exception as e:
-                logger.exception("Error in processing bot logic")
-                await post_message(channel_id, f"Sorry, I encountered an error: {str(e)}", thread_ts=thread_ts)
-                await remove_reaction(channel_id, thread_ts, "eyes")
+                await add_reaction(channel_id, thread_ts, "eyes")
+            except Exception:
+                logger.exception("Failed to add eyes reaction")
 
-        elif inner_type == "app_home_opened":
-            await handle_home_tab_event(event)
+        await publish_to_topic(TOPIC_ID, json.dumps(payload))
+        return Response(content="OK", status_code=200)
 
-    return Response(content="OK", status_code=200)
+    @app.post("/slack/interactivity")
+    async def slack_interactivity(request: Request):
+        # Interactivity payloads are URL-encoded form data
+        form_data = await request.form()
+        payload_str = form_data.get("payload")
+        if not payload_str:
+            return Response(content="Missing payload", status_code=400)
+            
+        payload = json.loads(payload_str)
+        
+        # Core Logic: Publish to Pub/Sub
+        await publish_to_topic(TOPIC_ID, json.dumps(payload))
+        return Response(content="OK", status_code=200)
+
+    @app.get("/slack/oauth-redirect")
+    async def slack_oauth_redirect(code: str):
+        """
+        Handles the Slack OAuth redirect, exchanges the code for a user token,
+        and stores it in Firestore.
+        """
+        try:
+            from shared.slack_api import exchange_oauth_code
+            from shared.firestore_api import put_access_token
+            
+            # 1. Exchange code for token
+            oauth_data = await exchange_oauth_code(code)
+            
+            authed_user = oauth_data.get("authed_user", {})
+            user_id = authed_user.get("id")
+            access_token = authed_user.get("access_token")
+            
+            # Slack v2 OAuth can return email if requested in scopes
+            email = authed_user.get("email")
+            
+            if not user_id or not access_token:
+                return Response(content="Failed to extract user authentication data", status_code=400)
+                
+            # 2. Store in Firestore
+            await put_access_token(user_id, access_token, email=email)
+            
+            return Response(
+                content="<h1>Success!</h1><p>AIBot is now authorized to search your Slack history. You can close this window.</p>",
+                media_type="text/html"
+            )
+        except Exception as e:
+            logger.exception("Slack OAuth redirection failed")
+            return Response(content=f"Error: {str(e)}", status_code=500)
+
+elif service_role == "aibot-logic":
+    logger.info("Registering Logic Worker routes")
+
+    @app.post("/pubsub/worker")
+    async def pubsub_worker(request: Request):
+        envelope = await request.json()
+        logger.info(f"Received Pub/Sub envelope: {json.dumps(envelope)}")
+        if not envelope or "message" not in envelope:
+            logger.error("Missing 'message' in Pub/Sub envelope")
+            raise HTTPException(status_code=400, detail="Bad Request")
+        
+        message = envelope["message"]
+        data = base64.b64decode(message["data"]).decode("utf-8")
+        payload = json.loads(data)
+        logger.info(f"Pub/Sub Payload: {json.dumps(payload)}")
+        
+        event_type = payload.get("type")
+        event = payload.get("event") or {}
+        
+        # Dispatching
+        if event_type == "event_callback":
+            inner_type = event.get("type")
+            logger.info(f"Processing event_callback: {inner_type}")
+            
+            # Check if this is a message we should respond to
+            should_handle = False
+            if inner_type == "app_mention":
+                should_handle = True
+            elif inner_type == "message":
+                # Handle Direct Messages (IMs)
+                if event.get("channel_type") == "im" and not event.get("bot_id"):
+                    should_handle = True
+                # Optional: Support group messages if bot is mentioned by name, 
+                # but app_mention usually covers this if @bot is used.
+            
+            if should_handle:
+                logger.info(f"Handling {inner_type} event")
+                channel_id = event.get("channel")
+                thread_ts = event.get("ts")
+                text = event.get("text")
+                
+                # Check for bot loops just in case
+                if event.get("bot_id") or event.get("subtype") == "bot_message":
+                    logger.info("Ignoring bot message")
+                    return Response(content="OK", status_code=200)
+                
+                # 1. Swap eyes for thinking face
+                try:
+                    await remove_reaction(channel_id, thread_ts, "eyes")
+                except Exception:
+                    pass # Might not have been added or already removed
+                
+                await add_reaction(channel_id, thread_ts, "thinking_face")
+                
+                # 2. Run Agent
+                try:
+                    # Load history
+                    history = await get_history(channel_id, thread_ts, "supervisor") or []
+                    
+                    # Fetch user-specific token if available
+                    user_id = event.get("user")
+                    user_token = await get_access_token(user_id)
+                    
+                    supervisor = await create_supervisor_agent(user_token=user_token)
+                    session_service = InMemorySessionService()
+                    session = await session_service.create_session(
+                        app_name="AIBot",
+                        user_id=user_id,
+                        session_id=thread_ts
+                    )
+                    
+                    # Seed History
+                    for i, item in enumerate(history):
+                        inv_id = f"hist_{i // 2}"
+                        evt = Event(
+                            author=item["role"],
+                            content=types.Content(parts=[types.Part(text=p["text"]) for p in item["parts"]]),
+                            invocation_id=inv_id
+                        )
+                        await session_service.append_event(session=session, event=evt)
+                    
+                    runner = Runner(
+                        agent=supervisor, 
+                        app_name="AIBot",
+                        session_service=session_service
+                    )
+                    
+                    # Pre-process text (remove bot mention)
+                    bot_info = await (await create_bot_client()).auth_test()
+                    bot_user_id = bot_info["user_id"]
+                    prompt = text.replace(f"<@{bot_user_id}>", "").strip()
+                    
+                    # Execute agent flow
+                    # Convert history to Adk Event objects if necessary, or just use run_async
+                    # For now, let's use run_async with the new message
+                    new_message = types.Content(role="user", parts=[types.Part(text=prompt)])
+                    
+                    responses = []
+                    async for event in runner.run_async(
+                        user_id=user_id,
+                        session_id=thread_ts,
+                        new_message=new_message
+                    ):
+                        if event.content and event.content.parts:
+                            for part in event.content.parts:
+                                if part.text:
+                                    responses.append(part.text)
+                    
+                    final_response = "".join(responses).strip()
+                    
+                    # Try to parse as JSON (Supervisor format)
+                    try:
+                        import json
+                        # Sometimes the model wraps JSON in markdown blocks
+                        data_str = final_response
+                        if data_str.startswith("```"):
+                            # Simple markdown block extraction
+                            lines = data_str.split("\n")
+                            if lines[0].startswith("```json"):
+                                data_str = "\n".join(lines[1:-1])
+                            elif lines[0].startswith("```"):
+                                data_str = "\n".join(lines[1:-1])
+
+                        data = json.loads(data_str)
+                        if isinstance(data, dict) and "answer" in data:
+                            final_text = data["answer"]
+                            if data.get("attributions"):
+                                final_text += "\n\n*Sources:*\n"
+                                for attr in data["attributions"]:
+                                    title = attr.get("title", "Link")
+                                    uri = attr.get("uri", "#")
+                                    final_text += f"• <{uri}|{title}>\n"
+                            final_response = final_text
+                    except Exception:
+                        logger.debug("Response was not valid JSON, using raw text")
+
+                    if not final_response:
+                        final_response = "I couldn't generate a response."
+                    
+                    await post_message(channel_id, final_response, thread_ts=thread_ts)
+                    
+                    # 3. Save history is handled by Runner if using a real session service, 
+                    # but we are using InMemorySessionService so we might still want manual persistence 
+                    # if we want to survive worker restarts.
+                    
+                    # 4. Save history
+                    new_history = history + [
+                        {"role": "user", "parts": [{"text": prompt}]},
+                        {"role": "model", "parts": [{"text": final_response}]}
+                    ]
+                    await put_history(channel_id, thread_ts, new_history, "supervisor")
+                    
+                except Exception as e:
+                    logger.exception("Error in processing bot logic")
+                    await post_message(channel_id, f"Sorry, I encountered an error: {str(e)}", thread_ts=thread_ts)
+                finally:
+                    # 3. Cleanup thinking face
+                    try:
+                        await remove_reaction(channel_id, thread_ts, "thinking_face")
+                    except Exception:
+                        pass
+
+            elif inner_type == "app_home_opened":
+                await handle_home_tab_event(event)
+
+        return Response(content="OK", status_code=200)
 
 if __name__ == "__main__":
     import uvicorn

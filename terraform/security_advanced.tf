@@ -75,6 +75,14 @@ resource "google_compute_backend_service" "mcp_backend" {
   }
 }
 
+# Allow aibot-logic to access this IAP-protected backend
+resource "google_iap_web_backend_service_iam_member" "mcp_iap_access" {
+  project             = var.gcp_gemini_project_id
+  web_backend_service = google_compute_backend_service.mcp_backend.name
+  role                = "roles/iap.httpsResourceAccessor"
+  member              = "serviceAccount:${google_service_account.aibot_logic.email}"
+}
+
 # 3. Backend Service for Webhook (No IAP)
 resource "google_compute_region_network_endpoint_group" "webhook_neg" {
   name                  = "aibot-webhook-neg"
@@ -190,7 +198,7 @@ resource "google_secret_manager_secret_version" "logic_config" {
   })
 }
 
-# 2. aibot-webhook-config (follows convention for the webhook service)
+# 2. aibot-webhook-config
 resource "google_secret_manager_secret" "webhook_config" {
   secret_id = "aibot-webhook-config"
   replication {
@@ -199,18 +207,39 @@ resource "google_secret_manager_secret" "webhook_config" {
 }
 resource "google_secret_manager_secret_version" "webhook_config" {
   secret = google_secret_manager_secret.webhook_config.id
-  # Webhook needs the same Slack credentials for synchronous verification
   secret_data = jsonencode({
-    slackBotToken          = "REPLACE_ME"
-    slackSigningSecret     = "REPLACE_ME"
-    slackClientId          = "REPLACE_ME"
-    slackClientSecret      = "REPLACE_ME"
-    teamIdsForSearch       = "REPLACE_ME"
-    enterpriseIdsForSearch = "REPLACE_ME"
+    placeholder = "managed_by_deploy_sh"
   })
 }
 
-# 3. mcp-slack-search-config
+# 3. AIBot-shared-config (Unified shared secrets)
+resource "google_secret_manager_secret" "shared_config" {
+  secret_id = "AIBot-shared-config"
+  replication {
+    auto {}
+  }
+}
+resource "google_secret_manager_secret_version" "shared_config" {
+  secret = google_secret_manager_secret.shared_config.id
+  secret_data = jsonencode({
+    placeholder = "managed_by_deploy_sh"
+  })
+}
+
+# Grant all services access to the shared secret
+resource "google_secret_manager_secret_iam_member" "shared_secret_access" {
+  for_each = toset([
+    "serviceAccount:${google_service_account.aibot_webhook.email}",
+    "serviceAccount:${google_service_account.aibot_logic.email}",
+    "serviceAccount:${google_service_account.slack_search_mcp.email}",
+    "serviceAccount:${google_service_account.collect_slack_messages.email}"
+  ])
+  secret_id = google_secret_manager_secret.shared_config.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = each.value
+}
+
+# 4. mcp-slack-search-config
 resource "google_secret_manager_secret" "mcp_config" {
   secret_id = "slack-search-mcp-config"
   replication {

@@ -1,33 +1,21 @@
 import os
 import json
 import logging
-from typing import List, Dict, Any, Optional
 import asyncio
 import sys
 import subprocess
+import traceback
+from typing import List, Dict, Any, Optional
+from contextvars import ContextVar
 
-print("--- DEBUG DIAGNOSTICS ---")
-print(f"Python executable: {sys.executable}")
-print(f"sys.path: {sys.path}")
-try:
-    print("pip list:")
-    subprocess.run(["/home/aibot/venv/bin/pip", "list"], check=False)
-except Exception as e:
-    print(f"Failed to run pip list: {e}")
-print("--- END DIAGNOSTICS ---")
-
-try:
-    from mcp.server.fastmcp import FastMCP
-    from google.cloud import bigquery
-    from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
-    from dotenv import load_dotenv
-
-    from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.responses import JSONResponse
-except ImportError as e:
-    import traceback
-    traceback.print_exc()
-    raise
+from mcp.server.fastmcp import FastMCP
+from google.cloud import bigquery
+from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
+from dotenv import load_dotenv
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
+from starlette.requests import Request
+import vertexai
 
 # Import from shared library submodules
 from shared.logging import setup_logging
@@ -39,15 +27,12 @@ load_dotenv()
 setup_logging()
 logger = logging.getLogger("slack-search-mcp")
 
-import vertexai
 GOOGLE_CLOUD_PROJECT = os.environ.get("GOOGLE_CLOUD_PROJECT")
 GCP_LOCATION = os.environ.get("GCP_LOCATION")
 if not GCP_LOCATION:
     raise EnvironmentError("GCP_LOCATION environment variable is required and must be set explicitly.")
 
 vertexai.init(project=GOOGLE_CLOUD_PROJECT, location=GCP_LOCATION)
-
-from contextvars import ContextVar
 
 # ContextVar to store the current request's Slack token
 slack_token_var: ContextVar[Optional[str]] = ContextVar("slack_token", default=None)
@@ -62,8 +47,12 @@ class SecurityMiddleware(BaseHTTPMiddleware):
     2. IAP (Google Identity mapping to Slack ID/Token)
     """
     async def dispatch(self, request, call_next):
-        if request.url.path not in ["/mcp/sse", "/mcp/messages"]:
+        if request.url.path == "/health":
             return await call_next(request)
+
+        if request.url.path not in ["/mcp/sse", "/mcp/messages"]:
+            logger.warning(f"Stealth security: Unauthorized access attempt to {request.url.path} from {request.client.host}")
+            return JSONResponse({"error": "Forbidden"}, status_code=403)
 
         from shared.security import get_iap_user_email
         from shared.firestore_api import get_slack_id_by_email, get_access_token
@@ -81,11 +70,15 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 logger.warning(f"No Slack ID found for email: {email}")
                 return JSONResponse({"error": "No Slack authorization found for this Google account. Please authorize AIBot in Slack first."}, status_code=403)
 
-        # 2. Fallback to Bearer Token (if no IAP or IAP lookup failed)
+        # 2. Fallback to Bearer Token or X-Slack-Token (if no IAP or IAP lookup failed)
         if not token:
-            auth_header = request.headers.get("Authorization")
-            if auth_header and auth_header.startswith("Bearer "):
-                token = auth_header.split(" ")[1]
+            # Check X-Slack-Token first (preferred for service-to-service IAP bypass)
+            token = request.headers.get("X-Slack-Token")
+            
+            if not token:
+                auth_header = request.headers.get("Authorization")
+                if auth_header and auth_header.startswith("Bearer "):
+                    token = auth_header.split(" ")[1]
 
         # 3. Validation & Team Check
         if token:
@@ -97,18 +90,24 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 enterprise_id = auth_test.get("enterprise_id")
                 
                 if not await is_team_authorized(team_id, enterprise_id):
+                    logger.warning(f"Unauthorized team access attempt: {team_id}")
                     return JSONResponse({"error": "Unauthorized workspace"}, status_code=403)
                 
                 # Set the token in our context var for tools to use
                 token_token = slack_token_var.set(token)
                 try:
-                    return await call_next(request)
+                    response = await call_next(request)
+                    logger.debug(f"Path {request.url.path} returned {response.status_code}")
+                    return response
                 finally:
                     slack_token_var.reset(token_token)
                     
             except Exception as e:
-                logger.error(f"Inbound verification failed: {str(e)}")
-                return JSONResponse({"error": "Invalid authentication token"}, status_code=status.HTTP_401_UNAUTHORIZED)
+                logger.error(f"Inbound verification failed for {request.url.path}", extra={
+                    "path": request.url.path,
+                    "exception": str(e)
+                }, exc_info=True)
+                return JSONResponse({"error": "Invalid authentication token"}, status_code=401)
         else:
             return JSONResponse({"error": "Authentication required"}, status_code=401)
 
@@ -187,6 +186,20 @@ async def perform_vector_search(embeddings: List[float]):
 
 # FastMCP provides an SSE app (Starlette based)
 app = mcp.sse_app(mount_path="/mcp")
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception in slack-search-mcp", extra={
+        "path": request.url.path,
+        "method": request.method,
+        "exception": str(exc),
+        "traceback": traceback.format_exc()
+    })
+    return JSONResponse(
+        status_code=500,
+        content={"message": f"Internal Server Error: {str(exc)}"}
+    )
+
 # Add the security middleware
 app.add_middleware(SecurityMiddleware)
 

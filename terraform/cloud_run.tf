@@ -9,7 +9,7 @@ resource "google_cloud_run_v2_service" "aibot_webhook" {
   template {
     scaling {
       min_instance_count = 1
-      max_instance_count = 10
+      max_instance_count = 5
     }
     containers {
       image = "${var.gcp_region}-docker.pkg.dev/${var.gcp_gemini_project_id}/aibot-images/aibot-logic:latest"
@@ -92,6 +92,10 @@ resource "google_cloud_run_v2_service" "aibot_logic" {
   ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   template {
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 5
+    }
     containers {
       image = "${var.gcp_region}-docker.pkg.dev/${var.gcp_gemini_project_id}/aibot-images/aibot-logic:latest"
       env {
@@ -105,6 +109,14 @@ resource "google_cloud_run_v2_service" "aibot_logic" {
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
         value = var.gcp_gemini_project_id
+      }
+      env {
+        name  = "IAP_CLIENT_ID"
+        value = var.iap_client_id
+      }
+      env {
+        name  = "LOG_LEVEL"
+        value = "DEBUG"
       }
     }
     service_account = google_service_account.aibot_logic.email
@@ -159,6 +171,10 @@ resource "google_cloud_run_v2_service" "slack_search_mcp" {
   ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
   template {
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 5
+    }
     containers {
       image = "${var.gcp_region}-docker.pkg.dev/${var.gcp_gemini_project_id}/aibot-images/slack-search-mcp:latest"
       env {
@@ -204,6 +220,10 @@ resource "google_cloud_run_v2_service" "slack_collector" {
   ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   template {
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 5
+    }
     containers {
       image = "${var.gcp_region}-docker.pkg.dev/${var.gcp_gemini_project_id}/aibot-images/slack-collector:latest"
       env {
