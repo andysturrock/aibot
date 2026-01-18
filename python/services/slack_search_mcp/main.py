@@ -1,16 +1,33 @@
 import os
 import json
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import asyncio
+import sys
+import subprocess
 
-from mcp.server.fastmcp import FastMCP
-from google.cloud import bigquery
-from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
-from dotenv import load_dotenv
+print("--- DEBUG DIAGNOSTICS ---")
+print(f"Python executable: {sys.executable}")
+print(f"sys.path: {sys.path}")
+try:
+    print("pip list:")
+    subprocess.run(["/home/aibot/venv/bin/pip", "list"], check=False)
+except Exception as e:
+    print(f"Failed to run pip list: {e}")
+print("--- END DIAGNOSTICS ---")
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse
+try:
+    from mcp.server.fastmcp import FastMCP
+    from google.cloud import bigquery
+    from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
+    from dotenv import load_dotenv
+
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse
+except ImportError as e:
+    import traceback
+    traceback.print_exc()
+    raise
 
 # Import from shared library submodules
 from shared.logging import setup_logging

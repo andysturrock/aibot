@@ -13,20 +13,20 @@ COPY --chown=aibot:aibot python/services/${SERVICE_NAME}/pyproject.toml /app/ser
 # Using a cache mount to persist downloads on the host filesystem.
 # We extraction deps from pyproject.toml, stripping out the local 'shared' lib which we handle next.
 RUN --mount=type=cache,target=/home/aibot/.cache/pip,uid=999,gid=999 \
-  pip install $(python3 -c "import tomllib; print(' '.join(tomllib.load(open('/app/services/${SERVICE_NAME}/pyproject.toml', 'rb'))['project']['dependencies']))" | sed 's/shared//g')
+  python3 -c "import tomllib; deps = tomllib.load(open('/app/services/${SERVICE_NAME}/pyproject.toml', 'rb'))['project']['dependencies']; print('\n'.join(d for d in deps if d != 'shared'))" > deps.txt && /home/aibot/venv/bin/pip install -r deps.txt && /home/aibot/venv/bin/pip list
 
 # STEP 2: CACHE SHARED LIBRARY
 # This layer invalidates ONLY when files in python/libs/shared change.
 COPY --chown=aibot:aibot python/libs/shared /app/libs/shared
 RUN --mount=type=cache,target=/home/aibot/.cache/pip,uid=999,gid=999 \
-  pip install ./libs/shared
+  /home/aibot/venv/bin/pip install ./libs/shared
 
 # STEP 3: INSTALL SERVICE CODE
 # This layer invalidates on ANY change to the service code (the most frequent trigger).
 COPY --chown=aibot:aibot python/services/${SERVICE_NAME} /app/services/${SERVICE_NAME}
 
 # Final install (installs the package itself without re-installing deps)
-RUN pip install --no-deps ./services/${SERVICE_NAME}
+RUN /home/aibot/venv/bin/pip install --no-deps ./services/${SERVICE_NAME}
 
 # Set the working directory to the service
 WORKDIR /app/services/${SERVICE_NAME}
@@ -36,4 +36,4 @@ ENV PORT=8080
 EXPOSE 8080
 
 # Start the service
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 8080"]
+CMD ["sh", "-c", "/home/aibot/venv/bin/uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}"]

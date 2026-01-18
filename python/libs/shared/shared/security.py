@@ -67,4 +67,6 @@ def get_team_id_from_payload(payload: Dict[str, Any]) -> Optional[str]:
     )
 
 def get_enterprise_id_from_payload(payload: Dict[str, Any]) -> Optional[str]:
+    """Extracts enterprise_id from various common Slack payload formats."""
+    event = payload.get("event") or {}
     return payload.get("enterprise_id") or event.get("enterprise")

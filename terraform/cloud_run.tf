@@ -4,7 +4,7 @@ resource "google_cloud_run_v2_service" "aibot_webhook" {
   name                = "aibot-webhook"
   location            = var.gcp_region
   deletion_protection = false
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
   template {
     scaling {
@@ -16,6 +16,10 @@ resource "google_cloud_run_v2_service" "aibot_webhook" {
       env {
         name  = "TOPIC_ID"
         value = google_pubsub_topic.slack_events.name
+      }
+      env {
+        name  = "LOG_LEVEL"
+        value = "DEBUG"
       }
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
@@ -30,9 +34,23 @@ resource "google_cloud_run_v2_service" "aibot_webhook" {
   }
 }
 
+# Allow unauthenticated access (Protected by Load Balancer/Cloud Armor)
+resource "google_cloud_run_v2_service_iam_member" "webhook_public_invoker" {
+  location = google_cloud_run_v2_service.aibot_webhook.location
+  name     = google_cloud_run_v2_service.aibot_webhook.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
 resource "google_service_account" "aibot_webhook" {
   account_id   = "aibot-webhook"
   display_name = "Service Account for Slack Webhook"
+}
+
+resource "google_project_iam_member" "webhook_secrets" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.aibot_webhook.email}"
 }
 
 # Allow Webhook to publish to the Topic
@@ -71,14 +89,14 @@ resource "google_cloud_run_v2_service" "aibot_logic" {
   name                = "aibot-logic"
   location            = var.gcp_region
   deletion_protection = false
-  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   template {
     containers {
       image = "${var.gcp_region}-docker.pkg.dev/${var.gcp_gemini_project_id}/aibot-images/aibot-logic:latest"
       env {
         name  = "MCP_SEARCH_URL"
-        value = google_cloud_run_v2_service.mcp_slack_search.uri
+        value = google_cloud_run_v2_service.slack_search_mcp.uri
       }
       env {
         name  = "GCP_LOCATION"
@@ -93,9 +111,35 @@ resource "google_cloud_run_v2_service" "aibot_logic" {
   }
 }
 
+# Allow unauthenticated access (Protected by IAP on the Load Balancer)
+resource "google_cloud_run_v2_service_iam_member" "logic_public_invoker" {
+  location = google_cloud_run_v2_service.aibot_logic.location
+  name     = google_cloud_run_v2_service.aibot_logic.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
 resource "google_service_account" "aibot_logic" {
   account_id   = "aibot-logic"
   display_name = "Service Account for Bot Logic"
+}
+
+resource "google_project_iam_member" "logic_secrets" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.aibot_logic.email}"
+}
+
+resource "google_project_iam_member" "logic_firestore" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.aibot_logic.email}"
+}
+
+resource "google_project_iam_member" "logic_vertex" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.aibot_logic.email}"
 }
 
 # Allow Pub/Sub to invoke the Logic service
@@ -108,11 +152,11 @@ resource "google_cloud_run_v2_service_iam_member" "pubsub_logic_invoker" {
 
 # --- Service C: mcp-slack-search (Python) ---
 
-resource "google_cloud_run_v2_service" "mcp_slack_search" {
-  name                = "mcp-slack-search"
+resource "google_cloud_run_v2_service" "slack_search_mcp" {
+  name                = "slack-search-mcp"
   location            = var.gcp_region
   deletion_protection = false
-  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
   template {
     containers {
@@ -126,19 +170,27 @@ resource "google_cloud_run_v2_service" "mcp_slack_search" {
         value = var.gcp_region
       }
     }
-    service_account = google_service_account.mcp_slack_search.email
+    service_account = google_service_account.slack_search_mcp.email
   }
 }
 
-resource "google_service_account" "mcp_slack_search" {
-  account_id   = "mcp-slack-search"
-  display_name = "Service Account for MCP Slack Search"
+# Allow unauthenticated access (Protected by IAP on the Load Balancer)
+resource "google_cloud_run_v2_service_iam_member" "mcp_public_invoker" {
+  location = google_cloud_run_v2_service.slack_search_mcp.location
+  name     = google_cloud_run_v2_service.slack_search_mcp.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }
 
-# Allow aibot-logic to invoke mcp-slack-search
+resource "google_service_account" "slack_search_mcp" {
+  account_id   = "slack-search-mcp"
+  display_name = "Service Account for Slack Search MCP"
+}
+
+# Allow aibot-logic to invoke slack-search-mcp
 resource "google_cloud_run_v2_service_iam_member" "logic_mcp_invoker" {
-  location = google_cloud_run_v2_service.mcp_slack_search.location
-  name     = google_cloud_run_v2_service.mcp_slack_search.name
+  location = google_cloud_run_v2_service.slack_search_mcp.location
+  name     = google_cloud_run_v2_service.slack_search_mcp.name
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.aibot_logic.email}"
 }
@@ -149,7 +201,7 @@ resource "google_cloud_run_v2_service" "slack_collector" {
   name                = "slack-collector"
   location            = var.gcp_region
   deletion_protection = false
-  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   template {
     containers {

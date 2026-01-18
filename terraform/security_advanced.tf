@@ -48,17 +48,17 @@ resource "google_compute_security_policy" "aibot_policy" {
 
 # 1. Serverless Network Endpoint Group (NEG)
 resource "google_compute_region_network_endpoint_group" "mcp_neg" {
-  name                  = "mcp-slack-search-neg"
+  name                  = "slack-search-mcp-neg"
   network_endpoint_type = "SERVERLESS"
   region                = var.gcp_region
   cloud_run {
-    service = google_cloud_run_v2_service.mcp_slack_search.name
+    service = google_cloud_run_v2_service.slack_search_mcp.name
   }
 }
 
 # 2. Backend Service with IAP
 resource "google_compute_backend_service" "mcp_backend" {
-  name                  = "mcp-slack-search-backend"
+  name                  = "slack-search-mcp-backend"
   protocol              = "HTTP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
 
@@ -94,7 +94,7 @@ resource "google_compute_backend_service" "webhook_backend" {
     group = google_compute_region_network_endpoint_group.webhook_neg.id
   }
 
-  security_policy = google_compute_security_policy.aibot_policy.id
+  # security_policy = google_compute_security_policy.aibot_policy.id
 }
 
 # 4. URL Map and Routing
@@ -190,9 +190,29 @@ resource "google_secret_manager_secret_version" "logic_config" {
   })
 }
 
-# 2. mcp-slack-search-config
+# 2. aibot-webhook-config (follows convention for the webhook service)
+resource "google_secret_manager_secret" "webhook_config" {
+  secret_id = "aibot-webhook-config"
+  replication {
+    auto {}
+  }
+}
+resource "google_secret_manager_secret_version" "webhook_config" {
+  secret = google_secret_manager_secret.webhook_config.id
+  # Webhook needs the same Slack credentials for synchronous verification
+  secret_data = jsonencode({
+    slackBotToken          = "REPLACE_ME"
+    slackSigningSecret     = "REPLACE_ME"
+    slackClientId          = "REPLACE_ME"
+    slackClientSecret      = "REPLACE_ME"
+    teamIdsForSearch       = "REPLACE_ME"
+    enterpriseIdsForSearch = "REPLACE_ME"
+  })
+}
+
+# 3. mcp-slack-search-config
 resource "google_secret_manager_secret" "mcp_config" {
-  secret_id = "mcp-slack-search-config"
+  secret_id = "slack-search-mcp-config"
   replication {
     auto {}
   }
@@ -208,7 +228,7 @@ resource "google_secret_manager_secret_version" "mcp_config" {
   })
 }
 
-# 3. slack-collector-config
+# 4. slack-collector-config
 resource "google_secret_manager_secret" "collector_config" {
   secret_id = "slack-collector-config"
   replication {

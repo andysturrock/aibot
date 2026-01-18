@@ -27,7 +27,7 @@ from agents import create_supervisor_agent
 from google.adk import Runner
 
 load_dotenv()
-setup_logging()
+setup_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("aibot-logic")
 
 # --- Configuration & Constants ---
@@ -40,8 +40,12 @@ class SecurityMiddleware(BaseHTTPMiddleware):
     Modular FastAPI (Starlette) middleware to verify Slack signatures and Whitelisting.
     """
     async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        method = request.method
+        logger.debug(f"Middleware processing {method} {path}")
+
         # 1. Skip middleware for some routes
-        if request.url.path in ["/health", "/slack/oauth-redirect"]:
+        if path in ["/health", "/slack/oauth-redirect"]:
             return await call_next(request)
         
         # 2. Signature Verification & Whitelisting
@@ -77,14 +81,26 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 enterprise_id = get_enterprise_id_from_payload(payload)
                 
                 if not await is_team_authorized(team_id, enterprise_id):
-                    logger.warning(f"Unauthorized access attempt from Team: {team_id}")
+                    logger.warning(f"Unauthorized access attempt from Team: {team_id}, Enterprise: {enterprise_id} at {path}")
                     return Response(content="Unauthorized Workspace", status_code=200)
 
-        return await call_next(request)
+        try:
+            response = await call_next(request)
+            logger.debug(f"Path {path} returned {response.status_code}")
+            return response
+        except Exception as e:
+            logger.exception(f"Error processing path {path}")
+            raise
 
 # --- FastAPI App ---
 app = FastAPI(title="AIBot Logic (FastAPI)")
 app.add_middleware(SecurityMiddleware)
+
+@app.on_event("startup")
+async def startup_event():
+    # Log all registered routes for debugging 404s
+    for route in app.routes:
+        logger.info(f"Registered route: {route.path} [{','.join(route.methods)}]")
 
 # --- Slack Helpers ---
 

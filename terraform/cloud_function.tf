@@ -36,27 +36,27 @@ resource "google_secret_manager_secret_iam_member" "collect_slack_messages_secre
 resource "google_project_iam_member" "mcp_aiplatform_user" {
   project = var.gcp_gemini_project_id
   role    = "roles/aiplatform.user"
-  member  = "serviceAccount:${google_service_account.mcp_slack_search.email}"
+  member  = "serviceAccount:${google_service_account.slack_search_mcp.email}"
 }
 
 # 2. Use BigQuery for vector search
 resource "google_project_iam_member" "mcp_bq_jobuser" {
   project = var.gcp_gemini_project_id
   role    = "roles/bigquery.jobUser"
-  member  = "serviceAccount:${google_service_account.mcp_slack_search.email}"
+  member  = "serviceAccount:${google_service_account.slack_search_mcp.email}"
 }
 
 resource "google_bigquery_dataset_iam_member" "mcp_bq_viewer" {
   dataset_id = google_bigquery_dataset.aibot_slack_messages.dataset_id
   role       = "roles/bigquery.dataViewer"
-  member     = "serviceAccount:${google_service_account.mcp_slack_search.email}"
+  member     = "serviceAccount:${google_service_account.slack_search_mcp.email}"
 }
 
 # 3. Access Secrets (allowed team IDs, signing secret etc)
 resource "google_secret_manager_secret_iam_member" "mcp_secrets" {
   secret_id = "AIBot"
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.mcp_slack_search.email}"
+  member    = "serviceAccount:${google_service_account.slack_search_mcp.email}"
 }
 
 # 2. Access Secrets (user tokens)
