@@ -372,15 +372,28 @@ elif service_role == "aibot-logic":
                         session_id=thread_ts
                     )
                     
-                    # Seed History
+                    # Seed history from Firestore
+                    logger.info(f"Seeding history for session {thread_ts} with {len(history)} items")
                     for i, item in enumerate(history):
-                        inv_id = f"hist_{i // 2}"
-                        evt = Event(
-                            author=item["role"],
-                            content=types.Content(parts=[types.Part(text=p["text"]) for p in item["parts"]]),
-                            invocation_id=inv_id
+                        role = item.get("role")
+                        # Join parts to form a single text string per turn
+                        content_text = " ".join([p.get("text", "") for p in item.get("parts", []) if p.get("text")])
+                        
+                        content = types.Content(
+                            role=role,
+                            parts=[types.Part(text=content_text)]
                         )
-                        await session_service.append_event(session=session, event=evt)
+                        # ADK filters by author match. 'user' is fixed, model author must match agent name.
+                        author = "user" if role == "user" else supervisor.name
+                        
+                        await session_service.append_event(
+                            session=session,
+                            event=Event(
+                                author=author,
+                                content=content,
+                                invocation_id=f"hist_{i//2}" # Group pairs into virtual invocations
+                            )
+                        )
                     
                     runner = Runner(
                         agent=supervisor, 
