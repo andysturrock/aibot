@@ -97,15 +97,16 @@ async def search_slack(query: str, user_token: Optional[str] = None) -> str:
         logger.exception("Error in search_slack tool")
         return f"Error searching Slack: {str(e)}"
 
-def create_google_search_agent():
+def create_google_search_agent(model: Gemini):
     return Agent(
         name="GoogleSearchAgent",
         description="An agent that can search Google for current public information.",
         instruction="You are a research expert. Use Google Search to find current facts. Always cite your sources with URLs.",
-        tools=[google_search]
+        tools=[google_search],
+        model=model
     )
 
-def create_slack_search_agent(user_token: Optional[str] = None):
+def create_slack_search_agent(model: Gemini, user_token: Optional[str] = None):
     # Capture user_token in a closure
     async def search_slack_tool(query: str) -> str:
         """Searches through Slack messages and summarizes the results."""
@@ -115,12 +116,18 @@ def create_slack_search_agent(user_token: Optional[str] = None):
         name="SlackSearchAgent",
         description="An agent that can search internal Slack messages.",
         instruction="You are an internal researcher. Use Slack Search to find relevant conversations and summarize them.",
-        tools=[search_slack_tool]
+        tools=[search_slack_tool],
+        model=model
     )
 
 async def create_supervisor_agent(user_token: Optional[str] = None):
     bot_name = await get_secret_value('botName')
     model_name = await get_secret_value('supervisorModel')
+    
+    # Create models for all agents (can share or have individual configs)
+    supervisor_model = await get_gemini_model(model_name)
+    google_search_model = await get_gemini_model(model_name)
+    slack_search_model = await get_gemini_model(model_name)
     
     return Agent(
         name="SupervisorAgent",
@@ -138,9 +145,9 @@ async def create_supervisor_agent(user_token: Optional[str] = None):
               "attributions": [{{ "title": "title", "uri": "uri" }}]
             }}
         """,
-        model=await get_gemini_model(model_name),
+        model=supervisor_model,
         tools=[
-            AgentTool(agent=create_google_search_agent()),
-            AgentTool(agent=create_slack_search_agent(user_token=user_token))
+            AgentTool(agent=create_google_search_agent(model=google_search_model)),
+            AgentTool(agent=create_slack_search_agent(model=slack_search_model, user_token=user_token))
         ]
     )
