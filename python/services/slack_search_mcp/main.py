@@ -47,10 +47,12 @@ class SecurityMiddleware(BaseHTTPMiddleware):
     2. IAP (Google Identity mapping to Slack ID/Token)
     """
     async def dispatch(self, request, call_next):
+        logger.info(f"DEBUG: Middleware received request: {request.method} {request.url.path}")
         if request.url.path == "/health":
             return await call_next(request)
 
-        if request.url.path not in ["/mcp/sse", "/mcp/messages"]:
+        # Updated whitelist to match FastMCP's default paths (no /mcp prefix)
+        if request.url.path not in ["/sse", "/messages", "/messages/"]:
             logger.warning(f"Stealth security: Unauthorized access attempt to {request.url.path} from {request.client.host}")
             return JSONResponse({"error": "Forbidden"}, status_code=403)
 
@@ -67,12 +69,11 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             if slack_id:
                 token = await get_access_token(slack_id)
             else:
-                logger.warning(f"No Slack ID found for email: {email}")
-                return JSONResponse({"error": "No Slack authorization found for this Google account. Please authorize AIBot in Slack first."}, status_code=403)
+                logger.warning(f"No Slack ID found for email: {email}. Falling back to explicit token check.")
+                pass
 
         # 2. Fallback to Bearer Token or X-Slack-Token (if no IAP or IAP lookup failed)
         if not token:
-            # Check X-Slack-Token first (preferred for service-to-service IAP bypass)
             token = request.headers.get("X-Slack-Token")
             
             if not token:
@@ -185,7 +186,8 @@ async def perform_vector_search(embeddings: List[float]):
     return [dict(row) for row in rows]
 
 # FastMCP provides an SSE app (Starlette based)
-app = mcp.sse_app(mount_path="/mcp")
+# Removing mount_path="/mcp" so it defaults to "/"
+app = mcp.sse_app()
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):

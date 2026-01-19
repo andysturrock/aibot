@@ -10,7 +10,7 @@ from google.adk.tools import AgentTool
 from google.genai import types
 import vertexai
 from mcp.client.session import ClientSession
-from mcp.client.streamable_http import StreamableHTTPTransport
+from mcp.client.sse import sse_client
 
 gcp_location = os.environ.get("GCP_LOCATION")
 if not gcp_location:
@@ -71,28 +71,59 @@ async def search_slack(query: str, user_token: Optional[str] = None) -> str:
         if not user_token:
             user_token = await get_secret_value('slackUserToken')
             
-        mcp_server_url = await get_secret_value('mcpSlackSearchUrl')
+        # Prefer env var for internal communication (bypasses IAP)
+        mcp_server_url = os.environ.get("MCP_SEARCH_URL") or await get_secret_value('mcpSlackSearchUrl')
+        
         iap_client_id = os.environ.get("IAP_CLIENT_ID")
         
-        # 2. Get ID Token for IAP if configured
+        # 2. Authenticate: Determine if we need IAP token or Service Identity Token
         headers = {'X-Slack-Token': user_token}
-        if iap_client_id:
-            logger.debug(f"Fetching ID token for IAP audience: {iap_client_id}")
-            id_token = await get_id_token(iap_client_id)
-            if id_token:
-                headers['Authorization'] = f'Bearer {id_token}'
+        
+        token_audience = None
+        if "run.app" in mcp_server_url:
+            # Internal Cloud Run URL -> Audience is the URL itself
+            # We need to strip the protocol and path to get the audience if strictly required,
+            # but usually the full service URL or base URL works.
+            # However, for Service-to-Service on Cloud Run:
+            # Audience should be the receiving service's URL.
+            token_audience = mcp_server_url
+            logger.info(f"debug: Detected internal Cloud Run URL. Using audience: {token_audience}")
+        elif iap_client_id:
+            # External IAP URL -> Audience is the IAP Client ID
+            token_audience = iap_client_id
+            logger.info(f"debug: Detected external IAP URL. Using audience: {token_audience}")
+            
+        if token_audience:
+            try:
+                id_token = await get_id_token(token_audience)
+                if id_token:
+                    logger.info(f"debug: ID Token generated successfully (len={len(id_token)})")
+                    headers['Authorization'] = f'Bearer {id_token}'
+                else:
+                    logger.error("debug: get_id_token returned None")
+            except Exception as e:
+                logger.error(f"debug: Exception fetching ID token: {e}")
+        else:
+             logger.warning("debug: No suitable audience found for ID token generation")
+
+        logger.info(f"debug: Headers keys prepared: {list(headers.keys())}")
+        logger.info(f"debug: Connecting to MCP URL: {mcp_server_url}/mcp/sse")
 
         # 3. Use MCP Client to call the search tool
-        async with StreamableHTTPTransport(f"{mcp_server_url}/mcp", headers=headers) as transport:
-            async with ClientSession(transport) as session:
+        # Ensure we append the correct path. logic: base_url + /sse (since server is mounted at root)
+        # Use sse_client which takes (read, write) as return
+        async with sse_client(f"{mcp_server_url}/sse", headers=headers) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 result = await session.call_tool("search_slack_messages", arguments={"query": query})
                 
                 if not result.content or result.content[0].type != "text":
                     return "No results found in Slack."
                 
-                messages = json.loads(result.content[0].text)
-                return json.dumps(messages, indent=2)
+                messages = result.content[0].text
+                # Since messages is likely already a JSON string or a list of items,
+                # we just return it. The Supervisor will summarize it anyway.
+                return messages
     except Exception as e:
         logger.exception("Error in search_slack tool")
         return f"Error searching Slack: {str(e)}"

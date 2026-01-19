@@ -353,7 +353,11 @@ elif service_role == "aibot-logic":
                 except Exception:
                     pass # Might not have been added or already removed
                 
-                await add_reaction(channel_id, message_ts, "thinking_face")
+                try:
+                    await add_reaction(channel_id, message_ts, "thinking_face")
+                except Exception as e:
+                    if "already_reacted" not in str(e):
+                        logger.warning(f"Failed to add thinking_face reaction: {e}")
                 
                 # 2. Run Agent
                 try:
