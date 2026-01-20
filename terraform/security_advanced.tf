@@ -1,4 +1,7 @@
 # --- Cloud Armor Security Policy ---
+data "google_project" "project" {
+}
+
 
 resource "google_compute_security_policy" "aibot_policy" {
   name        = "aibot-security-policy"
@@ -30,9 +33,21 @@ resource "google_compute_security_policy" "aibot_policy" {
     description = "WAF: XSS protection"
   }
 
-  # Default rule: Allow all (Signature verification handles the rest)
+  # Rule 3: Allow expected paths and health checks
   rule {
     action   = "allow"
+    priority = "2000"
+    match {
+      expr {
+        expression = "request.path.matches('/slack/events') || request.path.matches('/auth/.*') || request.path.matches('/mcp/.*') || request.path.matches('/health') || request.path.matches('/_gcp_iap/.*')"
+      }
+    }
+    description = "Allow only expected application paths"
+  }
+
+  # Default rule: Deny all (Principle of Deny by Default)
+  rule {
+    action   = "deny(403)"
     priority = "2147483647"
     match {
       versioned_expr = "SRC_IPS_V1"
@@ -40,7 +55,7 @@ resource "google_compute_security_policy" "aibot_policy" {
         src_ip_ranges = ["*"]
       }
     }
-    description = "Default: Allow all"
+    description = "Default: Deny all"
   }
 }
 
@@ -66,6 +81,11 @@ resource "google_compute_backend_service" "mcp_backend" {
     group = google_compute_region_network_endpoint_group.mcp_neg.id
   }
 
+  log_config {
+    enable      = true
+    sample_rate = 1.0
+  }
+
   security_policy = google_compute_security_policy.aibot_policy.id
 
   iap {
@@ -81,6 +101,13 @@ resource "google_iap_web_backend_service_iam_member" "mcp_iap_access" {
   web_backend_service = google_compute_backend_service.mcp_backend.name
   role                = "roles/iap.httpsResourceAccessor"
   member              = "serviceAccount:${google_service_account.aibot_logic.email}"
+}
+
+resource "google_iap_web_backend_service_iam_member" "mcp_iap_access_user" {
+  project             = var.gcp_gemini_project_id
+  web_backend_service = google_compute_backend_service.mcp_backend.name
+  role                = "roles/iap.httpsResourceAccessor"
+  member              = "user:andy.sturrock@atombank.co.uk"
 }
 
 # 3. Backend Service for Webhook (No IAP)
@@ -102,7 +129,7 @@ resource "google_compute_backend_service" "webhook_backend" {
     group = google_compute_region_network_endpoint_group.webhook_neg.id
   }
 
-  # security_policy = google_compute_security_policy.aibot_policy.id
+  security_policy = google_compute_security_policy.aibot_policy.id
 }
 
 # 4. URL Map and Routing
@@ -249,11 +276,11 @@ resource "google_secret_manager_secret" "mcp_config" {
 resource "google_secret_manager_secret_version" "mcp_config" {
   secret = google_secret_manager_secret.mcp_config.id
   secret_data = jsonencode({
-    slackUserToken         = "REPLACE_ME"
     teamIdsForSearch       = "REPLACE_ME"
     enterpriseIdsForSearch = "REPLACE_ME"
     iapClientId            = var.iap_client_id
     iapClientSecret        = var.iap_client_secret
+    iapAudience            = "/projects/${data.google_project.project.number}/global/backendServices/${google_compute_backend_service.mcp_backend.generated_id}"
   })
 }
 

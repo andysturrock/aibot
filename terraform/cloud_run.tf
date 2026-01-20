@@ -99,20 +99,12 @@ resource "google_cloud_run_v2_service" "aibot_logic" {
     containers {
       image = "${var.gcp_region}-docker.pkg.dev/${var.gcp_gemini_project_id}/aibot-images/aibot-logic:latest"
       env {
-        name  = "MCP_SEARCH_URL"
-        value = google_cloud_run_v2_service.slack_search_mcp.uri
-      }
-      env {
         name  = "GCP_LOCATION"
         value = var.gcp_region
       }
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
         value = var.gcp_gemini_project_id
-      }
-      env {
-        name  = "IAP_CLIENT_ID"
-        value = var.iap_client_id
       }
       env {
         name  = "LOG_LEVEL"
