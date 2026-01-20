@@ -70,3 +70,22 @@ def get_enterprise_id_from_payload(payload: Dict[str, Any]) -> Optional[str]:
     """Extracts enterprise_id from various common Slack payload formats."""
     event = payload.get("event") or {}
     return payload.get("enterprise_id") or event.get("enterprise")
+
+async def get_iap_user_email(headers: Dict[str, Any]) -> Optional[str]:
+    """
+    Retrieves the user email from the X-Goog-Authenticated-User-Email header 
+    added by IAP.
+    """
+    iap_email_header = headers.get("X-Goog-Authenticated-User-Email")
+    if not iap_email_header:
+        return None
+
+    # The header format is usually 'accounts.google.com:email@example.com'
+    # We need to strip the prefix.
+    try:
+        if ":" in iap_email_header:
+            return iap_email_header.split(":")[-1]
+        return iap_email_header
+    except Exception as e:
+        logger.error(f"Error parsing IAP email header: {e}")
+        return None

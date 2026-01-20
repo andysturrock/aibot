@@ -24,8 +24,10 @@ vertexai.init(
 )
 
 # Import from shared library
-from shared.gcp_api import get_secret_value, get_id_token
-from shared.firestore_api import get_history, put_history
+from shared.gcp_api import get_secret_value
+from shared.firestore_api import get_history, put_history, get_google_token, put_google_token
+from shared.google_auth import refresh_google_id_token
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -63,55 +65,59 @@ async def get_gemini_model(model_name: str) -> Gemini:
         )
     )
 
-async def search_slack(query: str, user_token: Optional[str] = None) -> str:
+async def get_valid_google_id_token(slack_user_id: str) -> tuple[Optional[str], Optional[str]]:
     """
-    Searches through Slack messages and summarizes the results.
+    Retrieves a valid Google ID token for the given Slack user.
+    Refreshes the token if it's expired.
+    Returns (id_token, None) on success, or (None, error_message) on failure.
+    """
+    token_data = await get_google_token(slack_user_id)
+    if not token_data:
+        return None, "I cannot search Slack because you are not signed in with Google. Please go to my Home tab and click 'Sign in with Google'."
+
+    id_token = token_data.get("id_token")
+    refresh_token = token_data.get("refresh_token")
+    expires_at = token_data.get("expires_at", 0)
+
+    # Refresh if expired (or close to it)
+    if time.time() > expires_at - 300: # 5 minute buffer
+        if refresh_token:
+            logger.info(f"Refreshing Google ID token for user {slack_user_id}")
+            new_id_token = await refresh_google_id_token(refresh_token)
+            if new_id_token:
+                id_token = new_id_token
+                # Update Firestore with new expiration
+                token_data["id_token"] = id_token
+                token_data["expires_at"] = time.time() + 3600
+                await put_google_token(slack_user_id, token_data)
+            else:
+                return None, "Your Google session has expired and I couldn't refresh it. Please sign in again on my Home tab."
+        else:
+            return None, "Your Google session has expired. Please sign in again on my Home tab."
+            
+    return id_token, None
+
+async def search_slack(query: str, slack_user_id: str) -> str:
+    """
+    Searches through Slack messages using the user's Google ID token for IAP.
     """
     try:
-        if not user_token:
-            user_token = await get_secret_value('slackUserToken')
-            
-        # Prefer env var for internal communication (bypasses IAP)
-        mcp_server_url = os.environ.get("MCP_SEARCH_URL") or await get_secret_value('mcpSlackSearchUrl')
-        
-        iap_client_id = os.environ.get("IAP_CLIENT_ID")
-        
-        # 2. Authenticate: Determine if we need IAP token or Service Identity Token
-        headers = {'X-Slack-Token': user_token}
-        
-        token_audience = None
-        if "run.app" in mcp_server_url:
-            # Internal Cloud Run URL -> Audience is the URL itself
-            # We need to strip the protocol and path to get the audience if strictly required,
-            # but usually the full service URL or base URL works.
-            # However, for Service-to-Service on Cloud Run:
-            # Audience should be the receiving service's URL.
-            token_audience = mcp_server_url
-            logger.info(f"debug: Detected internal Cloud Run URL. Using audience: {token_audience}")
-        elif iap_client_id:
-            # External IAP URL -> Audience is the IAP Client ID
-            token_audience = iap_client_id
-            logger.info(f"debug: Detected external IAP URL. Using audience: {token_audience}")
-            
-        if token_audience:
-            try:
-                id_token = await get_id_token(token_audience)
-                if id_token:
-                    logger.info(f"debug: ID Token generated successfully (len={len(id_token)})")
-                    headers['Authorization'] = f'Bearer {id_token}'
-                else:
-                    logger.error("debug: get_id_token returned None")
-            except Exception as e:
-                logger.error(f"debug: Exception fetching ID token: {e}")
-        else:
-             logger.warning("debug: No suitable audience found for ID token generation")
+        if not slack_user_id or slack_user_id == "unknown":
+             return "I cannot search Slack because I don't know who you are. Please interact with me from a Slack workspace."
 
-        logger.info(f"debug: Headers keys prepared: {list(headers.keys())}")
-        logger.info(f"debug: Connecting to MCP URL: {mcp_server_url}/mcp/sse")
+        # 1. Get a valid Google ID Token
+        id_token, error_msg = await get_valid_google_id_token(slack_user_id)
+        if error_msg:
+            return error_msg
 
-        # 3. Use MCP Client to call the search tool
-        # Ensure we append the correct path. logic: base_url + /sse (since server is mounted at root)
-        # Use sse_client which takes (read, write) as return
+        # 3. Connect to MCP
+        mcp_server_url = await get_secret_value('mcpSlackSearchUrl')
+        headers = {
+            'Authorization': f'Bearer {id_token}'
+        }
+
+        logger.info(f"Connecting to MCP URL: {mcp_server_url}/sse for user {slack_user_id}")
+
         async with sse_client(f"{mcp_server_url}/sse", headers=headers) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
@@ -120,10 +126,7 @@ async def search_slack(query: str, user_token: Optional[str] = None) -> str:
                 if not result.content or result.content[0].type != "text":
                     return "No results found in Slack."
                 
-                messages = result.content[0].text
-                # Since messages is likely already a JSON string or a list of items,
-                # we just return it. The Supervisor will summarize it anyway.
-                return messages
+                return result.content[0].text
     except Exception as e:
         logger.exception("Error in search_slack tool")
         return f"Error searching Slack: {str(e)}"
@@ -137,11 +140,11 @@ def create_google_search_agent(model: Gemini):
         model=model
     )
 
-def create_slack_search_agent(model: Gemini, user_token: Optional[str] = None):
-    # Capture user_token in a closure
+def create_slack_search_agent(model: Gemini, slack_user_id: str):
+    # Capture slack_user_id in a closure
     async def search_slack_tool(query: str) -> str:
         """Searches through Slack messages and summarizes the results."""
-        return await search_slack(query, user_token=user_token)
+        return await search_slack(query, slack_user_id=slack_user_id)
 
     return Agent(
         name="SlackSearchAgent",
@@ -151,7 +154,7 @@ def create_slack_search_agent(model: Gemini, user_token: Optional[str] = None):
         model=model
     )
 
-async def create_supervisor_agent(user_token: Optional[str] = None):
+async def create_supervisor_agent(slack_user_id: str):
     bot_name = await get_secret_value('botName')
     model_name = await get_secret_value('supervisorModel')
     
@@ -179,6 +182,6 @@ async def create_supervisor_agent(user_token: Optional[str] = None):
         model=supervisor_model,
         tools=[
             AgentTool(agent=create_google_search_agent(model=google_search_model)),
-            AgentTool(agent=create_slack_search_agent(model=slack_search_model, user_token=user_token))
+            AgentTool(agent=create_slack_search_agent(model=slack_search_model, slack_user_id=slack_user_id))
         ]
     )
