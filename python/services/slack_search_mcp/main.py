@@ -6,7 +6,6 @@ import sys
 import subprocess
 import traceback
 from typing import List, Dict, Any, Optional
-from contextvars import ContextVar
 
 from mcp.server.fastmcp import FastMCP
 from google.cloud import bigquery
@@ -22,6 +21,8 @@ from shared.logging import setup_logging
 from shared.gcp_api import get_secret_value
 from shared.slack_api import create_client_for_token
 from shared.security import is_team_authorized
+from shared.google_auth import verify_iap_jwt
+from slack_sdk import WebClient
 
 load_dotenv()
 setup_logging()
@@ -34,9 +35,6 @@ if not GCP_LOCATION:
 
 vertexai.init(project=GOOGLE_CLOUD_PROJECT, location=GCP_LOCATION)
 
-# ContextVar to store the current request's Slack token
-slack_token_var: ContextVar[Optional[str]] = ContextVar("slack_token", default=None)
-
 # --- Middleware: Security Verification ---
 
 class SecurityMiddleware(BaseHTTPMiddleware):
@@ -47,81 +45,103 @@ class SecurityMiddleware(BaseHTTPMiddleware):
     2. IAP (Google Identity mapping to Slack ID/Token)
     """
     async def dispatch(self, request, call_next):
-        logger.info(f"DEBUG: Middleware received request: {request.method} {request.url.path}")
         if request.url.path == "/health":
             return await call_next(request)
 
-        # Updated whitelist to match FastMCP's default paths (no /mcp prefix)
-        if request.url.path not in ["/sse", "/messages", "/messages/"]:
+        # 1. Whitelist Verification
+        if request.url.path not in ["/mcp/sse", "/mcp/messages", "/mcp/messages/"]:
             logger.warning(f"Stealth security: Unauthorized access attempt to {request.url.path} from {request.client.host}")
             return JSONResponse({"error": "Forbidden"}, status_code=403)
 
-        from shared.security import get_iap_user_email
-        from shared.firestore_api import get_slack_id_by_email, get_access_token
-        
-        token = None
-        
-        # 1. Check for IAP Identity
-        email = await get_iap_user_email(dict(request.headers))
-        if email:
-            logger.info(f"Authenticating IAP user: {email}")
-            slack_id = await get_slack_id_by_email(email)
-            if slack_id:
-                token = await get_access_token(slack_id)
-            else:
-                logger.warning(f"No Slack ID found for email: {email}. Falling back to explicit token check.")
-                pass
+        # 2. Extract and Verify IAP JWT Assertion
+        iap_jwt = request.headers.get("X-Goog-IAP-JWT-Assertion")
+        if not iap_jwt:
+            logger.warning("Missing X-Goog-IAP-JWT-Assertion header")
+            return JSONResponse({"error": "Authentication required (IAP)"}, status_code=401)
 
-        # 2. Fallback to Bearer Token or X-Slack-Token (if no IAP or IAP lookup failed)
-        if not token:
-            token = request.headers.get("X-Slack-Token")
+        iap_audience = await get_secret_value("iapAudience")
+        payload = await verify_iap_jwt(iap_jwt, expected_audience=iap_audience)
+        if not payload:
+            logger.error(f"IAP JWT Verification failed for audience: {iap_audience}")
+            return JSONResponse({"error": "Invalid IAP Assertion"}, status_code=403)
+
+        email = payload.get("email")
+        if not email:
+            logger.error(f"IAP JWT payload missing 'email' claim. Payload keys: {list(payload.keys())}")
+            return JSONResponse({"error": "Email missing from identity"}, status_code=403)
+
+        # 3. Verify Slack Membership using Bot Token
+        try:
+            bot_token = await get_secret_value("slackBotToken")
+            slack_client = WebClient(token=bot_token)
             
-            if not token:
-                auth_header = request.headers.get("Authorization")
-                if auth_header and auth_header.startswith("Bearer "):
-                    token = auth_header.split(" ")[1]
+            loop = asyncio.get_event_loop()
+            slack_user_resp = await loop.run_in_executor(None, lambda: slack_client.users_lookupByEmail(email=email))
+            
+            if not slack_user_resp.get("ok"):
+                logger.warning(f"User {email} not found in Slack: {slack_user_resp.get('error')}")
+                return JSONResponse({"error": "User not recognized in Slack workspace"}, status_code=403)
+            
+            # 4. Check team ID matches whitelist
+            team_id = slack_user_resp.get("user", {}).get("team_id")
+            if not await is_team_authorized(team_id):
+                logger.warning(f"User {email} belongs to unauthorized team {team_id}")
+                return JSONResponse({"error": "Workspace not authorized"}, status_code=403)
 
-        # 3. Validation & Team Check
-        if token:
-            try:
-                slack_client = await create_client_for_token(token)
-                auth_test = await slack_client.auth_test()
-                
-                team_id = auth_test.get("team_id")
-                enterprise_id = auth_test.get("enterprise_id")
-                
-                if not await is_team_authorized(team_id, enterprise_id):
-                    logger.warning(f"Unauthorized team access attempt: {team_id}")
-                    return JSONResponse({"error": "Unauthorized workspace"}, status_code=403)
-                
-                # Set the token in our context var for tools to use
-                token_token = slack_token_var.set(token)
-                try:
-                    response = await call_next(request)
-                    logger.debug(f"Path {request.url.path} returned {response.status_code}")
-                    return response
-                finally:
-                    slack_token_var.reset(token_token)
-                    
-            except Exception as e:
-                logger.error(f"Inbound verification failed for {request.url.path}", extra={
-                    "path": request.url.path,
-                    "exception": str(e)
-                }, exc_info=True)
-                return JSONResponse({"error": "Invalid authentication token"}, status_code=401)
-        else:
-            return JSONResponse({"error": "Authentication required"}, status_code=401)
+        except Exception as e:
+            logger.exception(f"Internal security validation error for {email}")
+            return JSONResponse({"error": "Security validation failed"}, status_code=500)
+
+        # 5. Success - Proceed with request
+        return await call_next(request)
+
+class PreconditionSuppressionMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware to strip 'Expect' and conditional headers to prevent 412/417 errors.
+    Useful when upstream proxies (LB, Cloud Run) or downstream frameworks (Starlette) 
+    misinterpret these headers.
+    """
+    async def dispatch(self, request: Request, call_next):
+        # 1. Log Headers for Debugging
+        headers_log = {k: v for k, v in request.headers.items() if k.lower() not in ["authorization", "x-slack-token"]}
+        logger.info(f"DEBUG INBOUND HEADERS: {json.dumps(headers_log)}")
+
+        # 2. Modify Headers (Mutable copy requires messing with scope or creating new request? 
+        # Standard Starlette Request headers are immutable. 
+        # But we can modify the receive channel or scope, typically done by modifying scope['headers'])
+        
+        # Access the raw scope headers
+        scope = request.scope
+        if scope['type'] == 'http':
+            new_headers = []
+            headers_to_strip = ['if-match', 'if-none-match', 'if-modified-since', 'if-unmodified-since', 'expect', 'if-range']
+            for k, v in scope['headers']:
+                key_str = k.decode('latin-1').lower()
+                if key_str in headers_to_strip:
+                    logger.warning(f"Stripping problematic header: {key_str}")
+                    continue
+                new_headers.append((k, v))
+            scope['headers'] = new_headers
+
+        return await call_next(request)
 
 # --- Service Logic ---
 
-# Initialize FastMCP
-mcp = FastMCP("slack-search-server")
+# Initialize FastMCP with explicit paths to match LB routing
+# sse_path and message_path control the Starlette routes.
+# mount_path defaults to "/" and is used for constructing the callback URL.
+mcp = FastMCP(
+    "slack-search-server", 
+    sse_path="/mcp/sse", 
+    message_path="/mcp/messages", 
+    mount_path="/" 
+)
 
 @mcp.tool()
 async def search_slack_messages(query: str) -> str:
     """Search Slack messages using vector search and return thread context."""
-    # 1. Get token from context (set by middleware) or fallback to env
-    token = slack_token_var.get() or os.environ.get("SLACK_USER_TOKEN") or await get_secret_value("slackUserToken")
+    # Use Bot Token for fetching thread context (User Token is isolated)
+    token = await get_secret_value("slackBotToken")
 
     if not token:
         return "No Slack token found."
@@ -186,7 +206,6 @@ async def perform_vector_search(embeddings: List[float]):
     return [dict(row) for row in rows]
 
 # FastMCP provides an SSE app (Starlette based)
-# Removing mount_path="/mcp" so it defaults to "/"
 app = mcp.sse_app()
 
 @app.exception_handler(Exception)
@@ -202,8 +221,19 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"message": f"Internal Server Error: {str(exc)}"}
     )
 
-# Add the security middleware
+# Add the security middleware (last added = first executed)
 app.add_middleware(SecurityMiddleware)
+# Add header suppression middleware (runs BEFORE SecurityMiddleware)
+app.add_middleware(PreconditionSuppressionMiddleware)
+
+# Log registered routes for debugging 404s (Runs on import)
+logger.info("DEBUG: Registering Routes during Import:")
+for route in app.routes:
+    # Use getattr to safely access path/methods if they exist
+    path = getattr(route, "path", str(route))
+    methods = getattr(route, "methods", "N/A")
+    name = getattr(route, "name", "N/A")
+    logger.info(f" - {path} [methods={methods}] ({route.__class__.__name__})")
 
 if __name__ == "__main__":
     import uvicorn

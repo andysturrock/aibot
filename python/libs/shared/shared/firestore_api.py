@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 from google.cloud import firestore
 
 HISTORY_COLLECTION = "AIBot_History"
-TOKENS_COLLECTION = "AIBot_Tokens"
+GOOGLE_TOKENS_COLLECTION = "AIBot_Google_Tokens"
 TTL_IN_DAYS = 30
 
 async def get_history(channel_id: str, thread_ts: str, agent_name: str) -> Optional[List[Dict[str, Any]]]:
@@ -45,44 +45,37 @@ async def delete_history(channel_id: str, thread_ts: str, agent_name: str):
     doc_id = f"{channel_id}_{thread_ts}_{agent_name}"
     await db.collection(HISTORY_COLLECTION).document(doc_id).delete()
 
-async def get_access_token(slack_user_id: str) -> Optional[str]:
-    """Gets the user access token for the given user id from Firestore."""
+async def get_google_token(slack_user_id: str) -> Optional[Dict[str, Any]]:
+    """Gets the Google token data for the given Slack user ID from Firestore."""
     db = firestore.AsyncClient()
-    doc_ref = db.collection(TOKENS_COLLECTION).document(slack_user_id)
+    doc_ref = db.collection(GOOGLE_TOKENS_COLLECTION).document(slack_user_id)
     doc = await doc_ref.get()
     
     if not doc.exists:
         return None
         
-    data = doc.to_dict()
-    return data.get("access_token")
+    return doc.to_dict()
 
-async def put_access_token(slack_user_id: str, access_token: str, email: Optional[str] = None):
-    """Saves or overwrites a user's access token and email in Firestore."""
+async def put_google_token(slack_user_id: str, token_data: Dict[str, Any]):
+    """Saves or overwrites a user's Google token data in Firestore."""
     db = firestore.AsyncClient()
-    doc_ref = db.collection(TOKENS_COLLECTION).document(slack_user_id)
-    doc_data = {
-        "access_token": access_token,
-        "slack_id": slack_user_id,
-        "updated_at": datetime.now(timezone.utc).isoformat()
-    }
-    if email:
-        doc_data["email"] = email
-        
-    await doc_ref.set(doc_data)
+    doc_ref = db.collection(GOOGLE_TOKENS_COLLECTION).document(slack_user_id)
+    token_data["slack_id"] = slack_user_id
+    token_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await doc_ref.set(token_data)
 
-async def delete_access_token(slack_user_id: str):
-    """Deletes the access token for a given user from Firestore."""
+async def delete_google_token(slack_user_id: str):
+    """Deletes the Google token for a given Slack user from Firestore."""
     db = firestore.AsyncClient()
-    await db.collection(TOKENS_COLLECTION).document(slack_user_id).delete()
+    await db.collection(GOOGLE_TOKENS_COLLECTION).document(slack_user_id).delete()
 
 async def get_slack_id_by_email(email: str) -> Optional[str]:
-    """Looks up a Slack ID by user email."""
+    """Looks up a Slack ID by user email using the Google tokens collection."""
     if not email:
         return None
         
     db = firestore.AsyncClient()
-    docs = db.collection(TOKENS_COLLECTION).where("email", "==", email).stream()
+    docs = db.collection(GOOGLE_TOKENS_COLLECTION).where("email", "==", email).stream()
     async for doc in docs:
         return doc.id  # The doc ID is the Slack user ID
     return None
