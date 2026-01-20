@@ -174,7 +174,7 @@ if [ "$NO_SECRETS" = false ]; then
   if [ -n "$SLACK_BOT_TOKEN" ]; then
     # aibot-logic-config (Service-specific only)
     echo "Updating aibot-logic-config..."
-    JSON_LOGIC=$(printf '{"mcpSlackSearchUrl":"%s"}' "https://${CUSTOM_FQDN}/mcp")
+    JSON_LOGIC=$(printf '{"mcpSlackSearchUrl":"%s","iapClientId":"%s","iapClientSecret":"%s"}' "https://${CUSTOM_FQDN}/mcp" "$IAP_CLIENT_ID" "$IAP_CLIENT_SECRET")
     echo "$JSON_LOGIC" | gcloud secrets versions add aibot-logic-config --data-file=-
     disable_old_versions "aibot-logic-config"
 
@@ -186,7 +186,11 @@ if [ "$NO_SECRETS" = false ]; then
 
     # slack-search-mcp-config (Service-specific only)
     echo "Updating slack-search-mcp-config..."
-    JSON_MCP=$(printf '{"iapClientId":"%s","iapClientSecret":"%s"}' "$IAP_CLIENT_ID" "$IAP_CLIENT_SECRET")
+    # Retrieve Backend Service ID for IAP Audience
+    BACKEND_SERVICE_ID=$(gcloud compute backend-services describe slack-search-mcp-backend --global --format='value(id)' 2>/dev/null || echo "PENDING")
+    IAP_AUDIENCE="/projects/${PROJECT_NUMBER}/global/backendServices/${BACKEND_SERVICE_ID}"
+    
+    JSON_MCP=$(printf '{"iapClientId":"%s","iapClientSecret":"%s","iapAudience":"%s"}' "$IAP_CLIENT_ID" "$IAP_CLIENT_SECRET" "$IAP_AUDIENCE")
     echo "$JSON_MCP" | gcloud secrets versions add slack-search-mcp-config --data-file=-
     disable_old_versions "slack-search-mcp-config"
 
@@ -198,8 +202,8 @@ if [ "$NO_SECRETS" = false ]; then
 
     # AIBot-shared-config (Shared/Global)
     echo "Updating AIBot-shared-config..."
-    JSON_SHARED=$(printf '{"slackBotToken":"%s","slackSigningSecret":"%s","slackClientId":"%s","slackClientSecret":"%s","slackUserToken":"%s","teamIdsForSearch":"%s","enterpriseIdsForSearch":"%s","botName":"%s","supervisorModel":"%s","authUrl":"%s"}' \
-      "$SLACK_BOT_TOKEN" "$SLACK_SIGNING_SECRET" "$SLACK_CLIENT_ID" "$SLACK_CLIENT_SECRET" "$SLACK_USER_TOKEN" "$ALLOWED_TEAM_IDS" "$ALLOWED_ENTERPRISE_IDS" "$BOT_NAME" "$SUPERVISOR_MODEL" "$AUTH_URL")
+    JSON_SHARED=$(printf '{"slackBotToken":"%s","slackSigningSecret":"%s","slackClientId":"%s","slackClientSecret":"%s","slackUserToken":"%s","teamIdsForSearch":"%s","enterpriseIdsForSearch":"%s","botName":"%s","supervisorModel":"%s","authUrl":"%s","customFqdn":"%s"}' \
+      "$SLACK_BOT_TOKEN" "$SLACK_SIGNING_SECRET" "$SLACK_CLIENT_ID" "$SLACK_CLIENT_SECRET" "$SLACK_USER_TOKEN" "$ALLOWED_TEAM_IDS" "$ALLOWED_ENTERPRISE_IDS" "$BOT_NAME" "$SUPERVISOR_MODEL" "$AUTH_URL" "$CUSTOM_FQDN")
     echo "$JSON_SHARED" | gcloud secrets versions add AIBot-shared-config --data-file=-
     disable_old_versions "AIBot-shared-config"
   else

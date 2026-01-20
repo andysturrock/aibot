@@ -14,7 +14,8 @@ from dotenv import load_dotenv
 # Import from shared library submodules
 from shared.logging import setup_logging
 from shared.gcp_api import get_secret_value, publish_to_topic
-from shared.firestore_api import get_history, put_history, get_access_token
+from shared.firestore_api import get_history, put_history, get_google_token, put_google_token
+from shared.google_auth import get_google_auth_url, exchange_google_code
 from shared.slack_api import create_bot_client
 from shared.security import (
     verify_slack_request,
@@ -66,7 +67,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         elif service_name == "aibot-logic":
             allowed_paths = ["/pubsub/worker"]
         
-        if path not in allowed_paths:
+        if path not in allowed_paths and not path.startswith("/auth/"):
              logger.warning(f"Stealth security: Unauthorized access attempt to {path} on service {service_name} from {request.client.host}")
              return JSONResponse(status_code=403, content={"detail": "Forbidden"})
 
@@ -163,47 +164,61 @@ async def post_message(channel, text, thread_ts=None):
 async def handle_home_tab_event(event):
     user_id = event.get("user")
     bot_name = await get_secret_value("botName")
-    access_token = await get_access_token(user_id)
+    google_token_data = await get_google_token(user_id)
     
     blocks = []
-    if access_token:
+    if google_token_data:
+        email = google_token_data.get("email", "Unknown")
         blocks = [
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Successfully Authorised*\n\nYou are logged in as <@{user_id}> to {bot_name}."
+                    "text": f"*Successfully Authorised*\n\nYou are signed in as *{email}* to {bot_name}."
                 }
             }
         ]
     else:
-        auth_url = await get_secret_value("authUrl")
-        logger.debug(f"Retrieved authUrl: {auth_url}")
-        if not auth_url:
-            # Fallback to reconstructing it or logging warning
-            logger.warning("authUrl is missing from secrets. Check AIBot-shared-config.")
-            auth_url = "#" # Avoid Slack API error but broken link
-
-        blocks = [
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"*Authorisation Required*\n\nPlease sign in to allow {bot_name} to search your Slack history."
-                }
-            },
-            {
-                "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "Authorize Slack Search"},
-                        "url": auth_url,
-                        "action_id": "authorize_slack"
+        # Generate Auth URL
+        custom_fqdn = await get_secret_value("customFqdn")
+        if not custom_fqdn:
+            logger.error("Configuration Error: 'customFqdn' is missing from secrets configuration.")
+            blocks = [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "🔴 *Configuration Error*\n\nI am unable to initiate login because the application is not fully configured (missing FQDN). Please contact your administrator or support."
                     }
-                ]
-            }
-        ]
+                }
+            ]
+        else:
+            redirect_uri = f"https://{custom_fqdn}/auth/callback/google"
+            client_id = await get_secret_value("iapClientId")
+            
+            auth_url = get_google_auth_url(client_id, redirect_uri, state=user_id)
+            
+            blocks = [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*Google Login Required*\n\nPlease sign in with Google to allow {bot_name} to search your Slack history and access protected resources."
+                    }
+                },
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "Sign in with Google"},
+                            "url": auth_url,
+                            "style": "primary",
+                            "action_id": "authorize_google"
+                        }
+                    ]
+                }
+            ]
     
     client = await create_bot_client()
     await client.views_publish(user_id=user_id, view={"type": "home", "blocks": blocks})
@@ -266,39 +281,61 @@ if service_role == "aibot-webhook":
         await publish_to_topic(TOPIC_ID, json.dumps(payload))
         return Response(content="OK", status_code=200)
 
-    @app.get("/slack/oauth-redirect")
-    async def slack_oauth_redirect(code: str):
+    @app.get("/auth/login/google")
+    async def google_login(request: Request):
+        # This is a convenience endpoint if someone goes there directly
+        # But usually they click the button in Slack
+        user_id = "manual_login" # State should ideally pass through
+        custom_fqdn = os.environ.get("CUSTOM_FQDN")
+        redirect_uri = f"https://{custom_fqdn}/auth/callback/google"
+        client_id = await get_secret_value("iapClientId")
+        auth_url = get_google_auth_url(client_id, redirect_uri, state=user_id)
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=auth_url)
+
+    @app.get("/auth/callback/google")
+    async def google_callback(code: str, state: str = None):
         """
-        Handles the Slack OAuth redirect, exchanges the code for a user token,
-        and stores it in Firestore.
+        Handles the Google OAuth callback, exchanges code for tokens, 
+        and stores in Firestore.
         """
         try:
-            from shared.slack_api import exchange_oauth_code
-            from shared.firestore_api import put_access_token
+            custom_fqdn = os.environ.get("CUSTOM_FQDN")
+            redirect_uri = f"https://{custom_fqdn}/auth/callback/google"
             
-            # 1. Exchange code for token
-            oauth_data = await exchange_oauth_code(code)
+            # 1. Exchange code for tokens
+            tokens = await exchange_google_code(code, redirect_uri)
             
-            authed_user = oauth_data.get("authed_user", {})
-            user_id = authed_user.get("id")
-            access_token = authed_user.get("access_token")
+            # 2. Decode ID Token to get email (for verification/display)
+            import jwt # Use PyJWT or similar to decode without verification if we trust Google or use our library
+            id_token_payload = jwt.decode(tokens["id_token"], options={"verify_signature": False})
+            email = id_token_payload.get("email")
             
-            # Slack v2 OAuth can return email if requested in scopes
-            email = authed_user.get("email")
+            # 3. Store in Firestore
+            # state contains the Slack user_id if initiated from Slack
+            slack_user_id = state if state and state != "manual_login" else "unknown"
             
-            if not user_id or not access_token:
-                return Response(content="Failed to extract user authentication data", status_code=400)
-                
-            # 2. Store in Firestore
-            await put_access_token(user_id, access_token, email=email)
+            await put_google_token(slack_user_id, {
+                "id_token": tokens.get("id_token"),
+                "refresh_token": tokens.get("refresh_token"),
+                "email": email,
+                "expires_at": time.time() + tokens.get("expires_in", 3600)
+            })
             
+            # 4. Success Page
             return Response(
-                content="<h1>Success!</h1><p>AIBot is now authorized to search your Slack history. You can close this window.</p>",
+                content=f"<h1>Success!</h1><p>You are now signed in as <b>{email}</b>. You can close this window and return to Slack.</p>",
                 media_type="text/html"
             )
         except Exception as e:
-            logger.exception("Slack OAuth redirection failed")
+            logger.exception("Google OAuth callback failed")
             return Response(content=f"Error: {str(e)}", status_code=500)
+
+    @app.get("/slack/oauth-redirect")
+    async def slack_oauth_redirect(code: str):
+        # We KEEP this for Slack Bot installation if needed, 
+        # but user authentication is now via Google.
+        return Response(content="Slack Bot Auth successful. Please use 'Sign in with Google' on the Home tab for search access.", status_code=200)
 
 elif service_role == "aibot-logic":
     logger.info("Registering Logic Worker routes")
@@ -364,11 +401,9 @@ elif service_role == "aibot-logic":
                     # Load history
                     history = await get_history(channel_id, thread_ts, "supervisor") or []
                     
-                    # Fetch user-specific token if available
+                    # Create Supervisor Agent with Slack User ID
                     user_id = event.get("user")
-                    user_token = await get_access_token(user_id)
-                    
-                    supervisor = await create_supervisor_agent(user_token=user_token)
+                    supervisor = await create_supervisor_agent(slack_user_id=user_id)
                     session_service = InMemorySessionService()
                     session = await session_service.create_session(
                         app_name="AIBot",
