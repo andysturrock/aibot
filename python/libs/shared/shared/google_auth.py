@@ -52,7 +52,9 @@ async def exchange_google_code(code: str, redirect_uri: str) -> Dict[str, Any]:
                 "grant_type": "authorization_code"
             }
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            logger.error(f"Google token exchange failed: {resp.status_code} - {resp.text}")
+            resp.raise_for_status()
         return resp.json()
 
 async def refresh_google_id_token(refresh_token: str) -> Optional[str]:
@@ -79,6 +81,7 @@ async def refresh_google_id_token(refresh_token: str) -> Optional[str]:
 
 def get_google_auth_url(client_id: str, redirect_uri: str, state: str) -> str:
     """Generates the Google OAuth 2.0 authorization URL."""
+    from urllib.parse import urlencode
     base_url = "https://accounts.google.com/o/oauth2/v2/auth"
     params = {
         "client_id": client_id,
@@ -89,5 +92,4 @@ def get_google_auth_url(client_id: str, redirect_uri: str, state: str) -> str:
         "prompt": "consent", # Ensure we get a refresh token
         "state": state
     }
-    encoded_params = "&".join([f"{k}={v}" for k, v in params.items()])
-    return f"{base_url}?{encoded_params}"
+    return f"{base_url}?{urlencode(params)}"

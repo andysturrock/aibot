@@ -7,8 +7,19 @@ resource "google_compute_security_policy" "aibot_policy" {
   name        = "aibot-security-policy"
   description = "Security policy for AIBot public endpoints"
 
-  # Rule 1: Allow Slack IP ranges (Optional/Broad if stable list unknown)
-  # For now, we rely on WAF + Signature Verification
+  # Rule 0: Allow Slack event endpoints (Bypass WAF)
+  # Slack payloads are JSON and often contain characters that trigger SQLi/XSS false positives.
+  # We verify signatures in the application, so bypassing WAF for these specific paths is safe.
+  rule {
+    action   = "allow"
+    priority = "500"
+    match {
+      expr {
+        expression = "request.path.startsWith('/slack/')"
+      }
+    }
+    description = "Allow Slack events and interactivity (Bypass WAF)"
+  }
 
   # Rule 2: WAF Rules (SQLi, XSS, etc.)
   rule {
@@ -33,16 +44,17 @@ resource "google_compute_security_policy" "aibot_policy" {
     description = "WAF: XSS protection"
   }
 
-  # Rule 3: Allow expected paths and health checks
+  # Rule 3: Allow remaining expected paths and health checks (High Priority to bypass WAF)
+  # Paths like /auth/ often contain parameters that trigger WAF false positives.
   rule {
     action   = "allow"
-    priority = "2000"
+    priority = "600"
     match {
       expr {
-        expression = "request.path.matches('/slack/events') || request.path.matches('/auth/.*') || request.path.matches('/mcp/.*') || request.path.matches('/health') || request.path.matches('/_gcp_iap/.*')"
+        expression = "request.path.matches('/auth/.*') || request.path.matches('/mcp/.*') || request.path.matches('/health') || request.path.matches('/_gcp_iap/.*')"
       }
     }
-    description = "Allow only expected application paths"
+    description = "Allow critical application paths (Bypass WAF)"
   }
 
   # Default rule: Deny all (Principle of Deny by Default)
@@ -110,6 +122,21 @@ resource "google_iap_web_backend_service_iam_member" "mcp_iap_access_user" {
   member              = "user:andy.sturrock@atombank.co.uk"
 }
 
+# Ensure the IAP Service Agent exists
+resource "google_project_service_identity" "iap_sa" {
+  provider = google-beta
+  project  = var.gcp_gemini_project_id
+  service  = "iap.googleapis.com"
+}
+
+# Grant the IAP service account permission to invoke the Cloud Run service
+resource "google_cloud_run_v2_service_iam_member" "mcp_iap_invoker" {
+  location = google_cloud_run_v2_service.slack_search_mcp.location
+  name     = google_cloud_run_v2_service.slack_search_mcp.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_project_service_identity.iap_sa.email}"
+}
+
 # 3. Backend Service for Webhook (No IAP)
 resource "google_compute_region_network_endpoint_group" "webhook_neg" {
   name                  = "aibot-webhook-neg"
@@ -127,6 +154,11 @@ resource "google_compute_backend_service" "webhook_backend" {
 
   backend {
     group = google_compute_region_network_endpoint_group.webhook_neg.id
+  }
+
+  log_config {
+    enable      = true
+    sample_rate = 1.0
   }
 
   security_policy = google_compute_security_policy.aibot_policy.id
@@ -223,6 +255,10 @@ resource "google_secret_manager_secret_version" "logic_config" {
     enterpriseIdsForSearch = "REPLACE_ME"
     mcpSlackSearchUrl      = "https://${var.custom_fqdn}/mcp"
   })
+
+  lifecycle {
+    ignore_changes = [secret_data]
+  }
 }
 
 # 2. aibot-webhook-config
@@ -237,6 +273,10 @@ resource "google_secret_manager_secret_version" "webhook_config" {
   secret_data = jsonencode({
     placeholder = "managed_by_deploy_sh"
   })
+
+  lifecycle {
+    ignore_changes = [secret_data]
+  }
 }
 
 # 3. AIBot-shared-config (Unified shared secrets)
@@ -251,6 +291,10 @@ resource "google_secret_manager_secret_version" "shared_config" {
   secret_data = jsonencode({
     placeholder = "managed_by_deploy_sh"
   })
+
+  lifecycle {
+    ignore_changes = [secret_data]
+  }
 }
 
 # Grant all services access to the shared secret
@@ -282,6 +326,10 @@ resource "google_secret_manager_secret_version" "mcp_config" {
     iapClientSecret        = var.iap_client_secret
     iapAudience            = "/projects/${data.google_project.project.number}/global/backendServices/${google_compute_backend_service.mcp_backend.generated_id}"
   })
+
+  lifecycle {
+    ignore_changes = [secret_data]
+  }
 }
 
 # 4. slack-collector-config
@@ -298,6 +346,10 @@ resource "google_secret_manager_secret_version" "collector_config" {
     teamIdsForSearch       = "REPLACE_ME"
     enterpriseIdsForSearch = "REPLACE_ME"
   })
+
+  lifecycle {
+    ignore_changes = [secret_data]
+  }
 }
 
 # --- Outputs for deploy.sh ---
