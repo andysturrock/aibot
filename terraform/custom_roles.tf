@@ -32,6 +32,24 @@ resource "google_project_iam_member" "aibot_logic_bigquery_job_user" {
   member  = "serviceAccount:${google_service_account.aibot_logic.email}"
 }
 
+resource "google_project_iam_member" "mcp_bigquery_data_viewer" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/bigquery.dataViewer"
+  member  = "serviceAccount:${google_service_account.slack_search_mcp.email}"
+}
+
+resource "google_project_iam_member" "mcp_bigquery_job_user" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.slack_search_mcp.email}"
+}
+
+resource "google_project_iam_member" "mcp_vertex" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.slack_search_mcp.email}"
+}
+
 # The Compute Engine default service account needs the cloud builds builder role.
 # It uses Cloud Build to create the container for the service.
 resource "google_project_iam_member" "compute_service_account" {

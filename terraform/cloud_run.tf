@@ -53,6 +53,12 @@ resource "google_project_iam_member" "webhook_secrets" {
   member  = "serviceAccount:${google_service_account.aibot_webhook.email}"
 }
 
+resource "google_project_iam_member" "webhook_firestore" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.aibot_webhook.email}"
+}
+
 # Allow Webhook to publish to the Topic
 resource "google_pubsub_topic_iam_member" "webhook_publisher" {
   topic  = google_pubsub_topic.slack_events.name
@@ -177,6 +183,10 @@ resource "google_cloud_run_v2_service" "slack_search_mcp" {
         name  = "GCP_LOCATION"
         value = var.gcp_region
       }
+      env {
+        name  = "LOG_LEVEL"
+        value = "DEBUG"
+      }
     }
     service_account = google_service_account.slack_search_mcp.email
   }
@@ -193,6 +203,12 @@ resource "google_cloud_run_v2_service_iam_member" "mcp_public_invoker" {
 resource "google_service_account" "slack_search_mcp" {
   account_id   = "slack-search-mcp"
   display_name = "Service Account for Slack Search MCP"
+}
+
+resource "google_project_iam_member" "mcp_secrets" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.slack_search_mcp.email}"
 }
 
 # Allow aibot-logic to invoke slack-search-mcp
@@ -221,6 +237,10 @@ resource "google_cloud_run_v2_service" "slack_collector" {
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
         value = var.gcp_gemini_project_id
+      }
+      env {
+        name  = "LOG_LEVEL"
+        value = "DEBUG"
       }
     }
     service_account = google_service_account.collect_slack_messages.email
