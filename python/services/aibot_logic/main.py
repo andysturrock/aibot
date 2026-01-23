@@ -3,6 +3,7 @@ import json
 import logging
 import asyncio
 import base64
+import time
 import traceback
 from typing import Dict, Any
 
@@ -79,6 +80,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             # Signature Check
             is_valid = await verify_slack_request(body, dict(request.headers))
             if not is_valid:
+                logger.warning(f"Rejected: Invalid Slack signature. Path: {path}, Method: {method}")
                 return Response(content="Invalid Slack signature", status_code=status.HTTP_401_UNAUTHORIZED)
 
             # Extract payload for whitelisting
@@ -104,7 +106,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 enterprise_id = get_enterprise_id_from_payload(payload)
                 
                 if not await is_team_authorized(team_id, enterprise_id):
-                    logger.warning(f"Unauthorized access attempt from Team: {team_id}, Enterprise: {enterprise_id} at {path}")
+                    logger.warning(f"Rejected: Unauthorized access attempt from Team: {team_id}, Enterprise: {enterprise_id}. Path: {path}")
                     return Response(content="Unauthorized Workspace", status_code=200)
 
         try:
@@ -162,14 +164,32 @@ async def post_message(channel, text, thread_ts=None):
     await client.chat_postMessage(channel=channel, text=text, thread_ts=thread_ts)
 
 async def handle_home_tab_event(event):
+    from datetime import datetime
+    import pytz
+    
     user_id = event.get("user")
     bot_name = await get_secret_value("botName")
     google_token_data = await get_google_token(user_id)
     
-    blocks = []
+    # Get current time for diagnostics
+    now = datetime.now(pytz.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    logger.info(f"Rendering Home tab for user {user_id} at {now}")
+    
+    blocks = [
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"🕒 *Last Refreshed:* {now}"
+                }
+            ]
+        },
+        {"type": "divider"}
+    ]
     if google_token_data:
         email = google_token_data.get("email", "Unknown")
-        blocks = [
+        blocks.append(
             {
                 "type": "section",
                 "text": {
@@ -177,13 +197,13 @@ async def handle_home_tab_event(event):
                     "text": f"*Successfully Authorised*\n\nYou are signed in as *{email}* to {bot_name}."
                 }
             }
-        ]
+        )
     else:
         # Generate Auth URL
         custom_fqdn = await get_secret_value("customFqdn")
         if not custom_fqdn:
             logger.error("Configuration Error: 'customFqdn' is missing from secrets configuration.")
-            blocks = [
+            blocks.append(
                 {
                     "type": "section",
                     "text": {
@@ -191,14 +211,16 @@ async def handle_home_tab_event(event):
                         "text": "🔴 *Configuration Error*\n\nI am unable to initiate login because the application is not fully configured (missing FQDN). Please contact your administrator or support."
                     }
                 }
-            ]
+            )
         else:
             redirect_uri = f"https://{custom_fqdn}/auth/callback/google"
             client_id = await get_secret_value("iapClientId")
             
             auth_url = get_google_auth_url(client_id, redirect_uri, state=user_id)
+            logger.info(f"Generated Google Auth URL for user {user_id}: {auth_url}")
+            logger.debug(f"Using Redirect URI: {redirect_uri}")
             
-            blocks = [
+            blocks.extend([
                 {
                     "type": "section",
                     "text": {
@@ -218,10 +240,14 @@ async def handle_home_tab_event(event):
                         }
                     ]
                 }
-            ]
+            ])
     
     client = await create_bot_client()
-    await client.views_publish(user_id=user_id, view={"type": "home", "blocks": blocks})
+    response = await client.views_publish(user_id=user_id, view={"type": "home", "blocks": blocks})
+    if response["ok"]:
+        logger.info(f"Successfully published Home tab for user {user_id}")
+    else:
+        logger.error(f"Failed to publish Home tab for user {user_id}: {response['error']}")
 
 # --- Service Role Identification ---
 service_role = os.environ.get("K_SERVICE", "aibot-logic")
@@ -286,7 +312,10 @@ if service_role == "aibot-webhook":
         # This is a convenience endpoint if someone goes there directly
         # But usually they click the button in Slack
         user_id = "manual_login" # State should ideally pass through
-        custom_fqdn = os.environ.get("CUSTOM_FQDN")
+        custom_fqdn = await get_secret_value("customFqdn")
+        if not custom_fqdn:
+             return Response(content="Error: customFqdn not configured", status_code=500)
+             
         redirect_uri = f"https://{custom_fqdn}/auth/callback/google"
         client_id = await get_secret_value("iapClientId")
         auth_url = get_google_auth_url(client_id, redirect_uri, state=user_id)
@@ -300,21 +329,39 @@ if service_role == "aibot-webhook":
         and stores in Firestore.
         """
         try:
-            custom_fqdn = os.environ.get("CUSTOM_FQDN")
+            # Construct redirect URI (must EXACTLY match the one in Google Console)
+            custom_fqdn = await get_secret_value("customFqdn")
+            if not custom_fqdn:
+                return Response(content="Error: customFqdn secret missing", status_code=500)
+                
             redirect_uri = f"https://{custom_fqdn}/auth/callback/google"
-            
-            # 1. Exchange code for tokens
-            tokens = await exchange_google_code(code, redirect_uri)
-            
-            # 2. Decode ID Token to get email (for verification/display)
-            import jwt # Use PyJWT or similar to decode without verification if we trust Google or use our library
-            id_token_payload = jwt.decode(tokens["id_token"], options={"verify_signature": False})
-            email = id_token_payload.get("email")
-            
-            # 3. Store in Firestore
-            # state contains the Slack user_id if initiated from Slack
+            logger.info(f"Exchanging code for tokens. Redirect URI: {redirect_uri}")
+
+            # Determine the Slack user ID from the state parameter
             slack_user_id = state if state and state != "manual_login" else "unknown"
-            
+
+            # 1. Exchange code for tokens
+            try:
+                tokens = await exchange_google_code(code, redirect_uri)
+            except Exception as e:
+                logger.error(f"Token exchange failed: {e}")
+                return Response(
+                    content=f"<html><body><h1>Authentication Failed</h1><p>Google rejected the token exchange. This is usually due to an unauthorized redirect_uri or an expired code.</p><p>Detail: {str(e)}</p><p>Please try again from Slack.</p></body></html>", 
+                    status_code=400,
+                    media_type="text/html"
+                )
+
+            # 2. Decode ID Token to get email (for verification/display)
+            import jwt
+            try:
+                id_token_payload = jwt.decode(tokens["id_token"], options={"verify_signature": False})
+                email = id_token_payload.get("email", "Unknown")
+            except Exception as decode_err:
+                logger.warning(f"Failed to decode ID token: {decode_err}")
+                email = "Decryption Failed"
+
+            # 3. Store tokens in Firestore
+            # The put_google_token function expects a dictionary with specific keys
             await put_google_token(slack_user_id, {
                 "id_token": tokens.get("id_token"),
                 "refresh_token": tokens.get("refresh_token"),
@@ -322,7 +369,8 @@ if service_role == "aibot-webhook":
                 "expires_at": time.time() + tokens.get("expires_in", 3600)
             })
             
-            # 4. Success Page
+            logger.info(f"Successfully authenticated Google user: {email} (Slack User ID: {slack_user_id})")
+            
             return Response(
                 content=f"<h1>Success!</h1><p>You are now signed in as <b>{email}</b>. You can close this window and return to Slack.</p>",
                 media_type="text/html"
