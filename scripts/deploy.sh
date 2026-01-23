@@ -22,9 +22,15 @@ CUSTOM_FQDN=${CUSTOM_FQDN:-"aibot.example.com"}
 echo "Using Project: $PROJECT_ID ($PROJECT_NUMBER)"
 echo "Region: $REGION"
 echo "FQDN: $CUSTOM_FQDN"
+
+# Foundation: Ensure IAP Service Identity is provisioned (required for Cloud Run IAP)
+echo "Ensuring IAP Service Identity is provisioned..."
+gcloud beta services identity create --service=iap.googleapis.com --project=$PROJECT_ID || true
 BOT_NAME=${BOT_NAME:-"AIBot"}
 SUPERVISOR_MODEL=${SUPERVISOR_MODEL:-"gemini-2.5-flash"}
-AUTH_URL=${AUTH_URL:-"https://${CUSTOM_FQDN}/slack/oauth-redirect"}
+# AUTH_URL is optional, if not set it will be empty in secrets.
+# Historically it was used for Slack OAuth, but for Google Login we calculate it dynamically.
+AUTH_URL=${AUTH_URL:-""}
 
 # Common Terraform Vars
 TF_VARS="-var=gcp_gemini_project_id=$PROJECT_ID \
@@ -38,6 +44,7 @@ TF_VARS="-var=gcp_gemini_project_id=$PROJECT_ID \
 FAST_MODE=false
 NO_TF=false
 NO_SECRETS=false
+SECRETS_ONLY=false
 TARGET_SERVICE=""
 
 while [[ "$#" -gt 0 ]]; do
@@ -45,6 +52,7 @@ while [[ "$#" -gt 0 ]]; do
     --fast) FAST_MODE=true ;;
     --no-tf) NO_TF=true ;;
     --no-secrets) NO_SECRETS=true ;;
+    --secrets-only) SECRETS_ONLY=true ;;
     --service) TARGET_SERVICE="$2"; shift ;;
     *) echo "Unknown parameter passed: $1"; exit 1 ;;
   esac
@@ -63,6 +71,11 @@ if [ "$NO_SECRETS" = true ]; then
   echo "--- NO-SECRETS MODE: Skipping Secret Synchronization ---"
 fi
 
+if [ "$SECRETS_ONLY" = true ]; then
+  echo "--- SECRETS-ONLY MODE: Skipping TF, Builds, and service updates ---"
+  NO_TF=true
+fi
+
 if [ -n "$TARGET_SERVICE" ]; then
   echo "--- TARGET SERVICE: $TARGET_SERVICE ---"
 fi
@@ -79,7 +92,8 @@ if [[ "$FAST_MODE" = false && "$NO_TF" = false ]]; then
 fi
 
 # 3. Optimized Build Process
-echo "--- Optimized Docker Build ---"
+if [ "$SECRETS_ONLY" = false ]; then
+  echo "--- Optimized Docker Build ---"
 export DOCKER_BUILDKIT=1
 REPO="${REGION}-docker.pkg.dev/${PROJECT_ID}/aibot-images"
 
@@ -150,6 +164,7 @@ for SVC in "aibot-webhook" "aibot-logic" "slack-collector" "slack-search-mcp"; d
     --region $REGION \
     --quiet || echo "Warning: Could not update $SVC"
 done
+fi
 
 # 4. Final Infrastructure Update
 if [ "$NO_TF" = false ]; then
@@ -202,8 +217,8 @@ if [ "$NO_SECRETS" = false ]; then
 
     # AIBot-shared-config (Shared/Global)
     echo "Updating AIBot-shared-config..."
-    JSON_SHARED=$(printf '{"slackBotToken":"%s","slackSigningSecret":"%s","slackClientId":"%s","slackClientSecret":"%s","slackUserToken":"%s","teamIdsForSearch":"%s","enterpriseIdsForSearch":"%s","botName":"%s","supervisorModel":"%s","authUrl":"%s","customFqdn":"%s"}' \
-      "$SLACK_BOT_TOKEN" "$SLACK_SIGNING_SECRET" "$SLACK_CLIENT_ID" "$SLACK_CLIENT_SECRET" "$SLACK_USER_TOKEN" "$ALLOWED_TEAM_IDS" "$ALLOWED_ENTERPRISE_IDS" "$BOT_NAME" "$SUPERVISOR_MODEL" "$AUTH_URL" "$CUSTOM_FQDN")
+    JSON_SHARED=$(printf '{"slackBotToken":"%s","slackSigningSecret":"%s","slackClientId":"%s","slackClientSecret":"%s","slackUserToken":"%s","teamIdsForSearch":"%s","enterpriseIdsForSearch":"%s","botName":"%s","supervisorModel":"%s","authUrl":"%s","customFqdn":"%s","iapClientId":"%s","iapClientSecret":"%s"}' \
+      "$SLACK_BOT_TOKEN" "$SLACK_SIGNING_SECRET" "$SLACK_CLIENT_ID" "$SLACK_CLIENT_SECRET" "$SLACK_USER_TOKEN" "$ALLOWED_TEAM_IDS" "$ALLOWED_ENTERPRISE_IDS" "$BOT_NAME" "$SUPERVISOR_MODEL" "$AUTH_URL" "$CUSTOM_FQDN" "$IAP_CLIENT_ID" "$IAP_CLIENT_SECRET")
     echo "$JSON_SHARED" | gcloud secrets versions add AIBot-shared-config --data-file=-
     disable_old_versions "AIBot-shared-config"
   else

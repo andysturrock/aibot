@@ -8,7 +8,9 @@ dependencies = [
     "google-cloud-firestore>=2.20.0",
     "python-dotenv>=1.0.1",
     "aiohttp>=3.11.0",
-    "google-cloud-logging>=3.11.0"
+    "google-cloud-logging>=3.11.0",
+    "httpx>=0.28.1",
+    "pyjwt>=2.10.1"
 ]
 
 [tool.setuptools]
