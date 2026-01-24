@@ -7,7 +7,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.35.0",
     "google-cloud-bigquery>=3.20.0",
-    "google-cloud-aiplatform>=1.43.0",
+    "google-genai>=0.1.0",
     "python-dotenv>=1.0.1",
     "slack-sdk>=3.39.0"
 ]
