@@ -143,13 +143,13 @@ def create_google_search_agent(model: Gemini):
 def create_slack_search_agent(model: Gemini, slack_user_id: str):
     # Capture slack_user_id in a closure
     async def search_slack_tool(query: str) -> str:
-        """Searches through Slack messages and summarizes the results."""
+        """Searches through Slack messages and returns the raw message data."""
         return await search_slack(query, slack_user_id=slack_user_id)
 
     return Agent(
         name="SlackSearchAgent",
         description="An agent that can search internal Slack messages.",
-        instruction="You are an internal researcher. Use Slack Search to find relevant conversations and summarize them.",
+        instruction="You are an internal researcher. Use the Slack Search tool to find relevant conversations. IMPORTANT: Return the raw result data exactly as received from the tool. Do NOT summarize the messages yourself; the Supervisor will handle the summarization and formatting.",
         tools=[search_slack_tool],
         model=model
     )
@@ -168,16 +168,19 @@ async def create_supervisor_agent(slack_user_id: str):
         description="Orchestrates specialized agents to answer user queries.",
         instruction=f"""
             Your name is {bot_name}.
-            You are a supervisor that helps users.
+            You are a supervisor that helps users by orchestrating specialized agents.
             
             When you need to search for current public information, use the GoogleSearchAgent.
             When you need to find internal conversations or messages from Slack, use the SlackSearchAgent.
             
-            Always provide the final answer in a structured JSON format:
-            {{
-              "answer": "your response here",
-              "attributions": [{{ "title": "title", "uri": "uri" }}]
-            }}
+            **Response Guidelines**:
+            1. **Summarize**: Combine findings from agents into a concise, non-repetitive narrative.
+            2. **Deduplicate**: If the same information appears multiple times, only include it once.
+            3. **Formatting**: Output your response **DIRECTLY in Slack mrkdwn**. Do NOT wrap your answer in JSON or code blocks.
+                - Use `*bold*` for emphasis.
+                - Use `-` or `*` for lists.
+                - Use `<url|text>` for embedded links.
+            4. **Citations**: Whenever you reference information from Slack or Google, you MUST include an inline link using the URL provided by the agent. For example: "...as discussed in <https://...|this conversation>."
         """,
         model=supervisor_model,
         tools=[
