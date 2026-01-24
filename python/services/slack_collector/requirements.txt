@@ -1,0 +1,7 @@
+flask
+google-cloud-bigquery
+google-cloud-aiplatform
+vertexai
+slack-sdk
+python-dotenv
+google-cloud-secret-manager

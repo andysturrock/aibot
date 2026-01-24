@@ -1,8 +1,0 @@
-functions-framework==3.*
-python-dotenv
-vertexai
-grpcio
-grpcio-status
-slack_sdk
-dataclasses
-google-cloud-secret-manager

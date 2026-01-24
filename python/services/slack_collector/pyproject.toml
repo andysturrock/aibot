@@ -1,0 +1,16 @@
+[project]
+name = "slack-collector"
+version = "0.1.0"
+dependencies = [
+    "shared",
+    "google-cloud-bigquery>=3.20.0",
+    "google-cloud-aiplatform>=1.43.0",
+    "vertexai>=1.43.0",
+    "python-dotenv>=1.0.1",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.35.0"
+]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+packages = []
