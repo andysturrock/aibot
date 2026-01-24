@@ -25,7 +25,8 @@
         "users:read",
         "channels:history",
         "channels:read",
-        "users:read.email"
+        "users:read.email",
+        "team:read"
       ],
       "bot": [
         "app_mentions:read",

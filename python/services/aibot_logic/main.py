@@ -5,6 +5,7 @@ import asyncio
 import base64
 import time
 import traceback
+import random
 from typing import Dict, Any
 
 from fastapi import FastAPI, Request, Response, HTTPException, status
@@ -163,6 +164,10 @@ async def post_message(channel, text, thread_ts=None):
     client = await create_bot_client()
     await client.chat_postMessage(channel=channel, text=text, thread_ts=thread_ts)
 
+async def post_ephemeral(channel, user, text, thread_ts=None):
+    client = await create_bot_client()
+    await client.chat_postEphemeral(channel=channel, user=user, text=text, thread_ts=thread_ts)
+
 async def handle_home_tab_event(event):
     from datetime import datetime
     import pytz
@@ -257,6 +262,47 @@ service_role = os.environ.get("K_SERVICE", "aibot-logic")
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# --- Background Tasks ---
+
+async def keep_alive_status_updates(channel_id: str, user_id: str, thread_ts: str):
+    """Periodically sends ephemeral messages to keep the user informed."""
+    messages = [
+        "Polishing the dilithium crystals...",
+        "Consulting the oracle (and maybe some Slack archives)...",
+        "Reticulating splines and searching for answers...",
+        "Herding digital cats into a coherent response...",
+        "Brewing a fresh pot of data tea while I search...",
+        "Teaching the hamsters to run faster on the search wheel...",
+        "Decoding the secret language of Slack threads...",
+        "Engaging warp drive on the search engine...",
+        "Calculating the ultimate answer to life, the universe, and everything...",
+        "Dusting off the ancient scrolls of knowledge...",
+        "Optimizing the flux capacitor for maximum research speed...",
+        "Bending the space-time continuum to find that message...",
+        "Asking the rubber ducks for their expert opinion...",
+        "Calibrating the resonance cascades...",
+        "Feeding the internet trolls so they leave our search alone...",
+        "Spinning up the infinite monkey theorem...",
+        "Aligning the planets for better search relevance...",
+        "Defragmenting the collective consciousness...",
+        "Sifting through the digital sands of time...",
+        "Reversing the polarity of the neutron flow..."
+    ]
+    random.shuffle(messages)
+    idx = 0
+    try:
+        while True:
+            await asyncio.sleep(15)
+            msg = messages[idx % len(messages)]
+            try:
+                await post_ephemeral(channel_id, user_id, msg, thread_ts=thread_ts)
+            except Exception as e:
+                logger.warning(f"Failed to send keep-alive ephemeral: {e}")
+            idx += 1
+    except asyncio.CancelledError:
+        logger.debug("Keep-alive task cancelled.")
 
 if service_role == "aibot-webhook":
     logger.info("Registering Webhook routes")
@@ -415,7 +461,8 @@ elif service_role == "aibot-logic":
                 should_handle = True
             elif inner_type == "message":
                 # Handle Direct Messages (IMs)
-                if event.get("channel_type") == "im" and not event.get("bot_id"):
+                # Ignore messages with subtypes (like message_changed) and bot messages
+                if event.get("channel_type") == "im" and not event.get("bot_id") and not event.get("subtype"):
                     should_handle = True
                 # Optional: Support group messages if bot is mentioned by name, 
                 # but app_mention usually covers this if @bot is used.
@@ -450,7 +497,15 @@ elif service_role == "aibot-logic":
                     history = await get_history(channel_id, thread_ts, "supervisor") or []
                     
                     # Create Supervisor Agent with Slack User ID
-                    user_id = event.get("user")
+                    # Slack events can have 'user' or 'user_id' depending on the type
+                    user_id = event.get("user") or event.get("user_id") or payload.get("at_user")
+                    logger.info(f"Extracted user_id: {user_id} from event_type: {inner_type}")
+                    
+                    if not user_id:
+                        logger.error(f"Failed to extract user_id from payload: {json.dumps(payload)}")
+                        await post_message(channel_id, "Sorry, I couldn't identify your Slack user ID. This might be due to an unsupported event type.", thread_ts=thread_ts)
+                        return Response(content="User identification failed", status_code=200)
+                    
                     supervisor = await create_supervisor_agent(slack_user_id=user_id)
                     session_service = InMemorySessionService()
                     session = await session_service.create_session(
@@ -488,6 +543,13 @@ elif service_role == "aibot-logic":
                         session_service=session_service
                     )
                     
+                    # Start keep-alive background task
+                    keep_alive_task = None
+                    if user_id:
+                        keep_alive_task = asyncio.create_task(
+                            keep_alive_status_updates(channel_id, user_id, thread_ts)
+                        )
+
                     # Pre-process text (remove bot mention)
                     bot_info = await (await create_bot_client()).auth_test()
                     bot_user_id = bot_info["user_id"]
@@ -511,31 +573,6 @@ elif service_role == "aibot-logic":
                     
                     final_response = "".join(responses).strip()
                     
-                    # Try to parse as JSON (Supervisor format)
-                    try:
-                        # Sometimes the model wraps JSON in markdown blocks
-                        data_str = final_response
-                        if data_str.startswith("```"):
-                            # Simple markdown block extraction
-                            lines = data_str.split("\n")
-                            if lines[0].startswith("```json"):
-                                data_str = "\n".join(lines[1:-1])
-                            elif lines[0].startswith("```"):
-                                data_str = "\n".join(lines[1:-1])
-
-                        data = json.loads(data_str)
-                        if isinstance(data, dict) and "answer" in data:
-                            final_text = data["answer"]
-                            if data.get("attributions"):
-                                final_text += "\n\n*Sources:*\n"
-                                for attr in data["attributions"]:
-                                    title = attr.get("title", "Link")
-                                    uri = attr.get("uri", "#")
-                                    final_text += f"• <{uri}|{title}>\n"
-                            final_response = final_text
-                    except Exception:
-                        logger.debug("Response was not valid JSON, using raw text")
-
                     if not final_response:
                         final_response = "I couldn't generate a response."
                     
@@ -556,6 +593,14 @@ elif service_role == "aibot-logic":
                     logger.exception("Error in processing bot logic")
                     await post_message(channel_id, f"Sorry, I encountered an error: {str(e)}", thread_ts=thread_ts)
                 finally:
+                    # Cancel keep-alive task
+                    if keep_alive_task:
+                        keep_alive_task.cancel()
+                        try:
+                            await keep_alive_task
+                        except asyncio.CancelledError:
+                            pass
+                    
                     # 3. Cleanup thinking face
                     try:
                         await remove_reaction(channel_id, message_ts, "thinking_face")

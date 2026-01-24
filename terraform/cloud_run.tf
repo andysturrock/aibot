@@ -76,6 +76,8 @@ resource "google_pubsub_subscription" "logic_worker" {
   name  = "logic-worker-sub"
   topic = google_pubsub_topic.slack_events.name
 
+  ack_deadline_seconds = 300
+
   push_config {
     push_endpoint = "${google_cloud_run_v2_service.aibot_logic.uri}/pubsub/worker"
     oidc_token {

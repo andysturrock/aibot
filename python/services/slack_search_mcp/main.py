@@ -9,12 +9,12 @@ from typing import List, Dict, Any, Optional
 
 from mcp.server.fastmcp import FastMCP
 from google.cloud import bigquery
-from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.requests import Request
-import vertexai
 
 # Import from shared library submodules
 from shared.logging import setup_logging
@@ -23,6 +23,7 @@ from shared.slack_api import create_client_for_token
 from shared.security import is_team_authorized
 from shared.google_auth import verify_iap_jwt
 from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
 
 load_dotenv()
 setup_logging()
@@ -33,7 +34,8 @@ GCP_LOCATION = os.environ.get("GCP_LOCATION")
 if not GCP_LOCATION:
     raise EnvironmentError("GCP_LOCATION environment variable is required and must be set explicitly.")
 
-vertexai.init(project=GOOGLE_CLOUD_PROJECT, location=GCP_LOCATION)
+# Initialize Google Gen AI Client
+genai_client = genai.Client(vertexai=True, project=GOOGLE_CLOUD_PROJECT, location=GCP_LOCATION)
 
 # --- Middleware: Security Verification ---
 
@@ -139,9 +141,18 @@ async def search_slack_messages(query: str) -> str:
         # 2. Perform Vector Search in BigQuery
         results = await perform_vector_search(embeddings)
         
-        # 3. Fetch Threads from Slack
-        messages = []
-        for row in results:
+        # 3. Fetch Workspace Info for Deep Links
+        team_resp = await slack_client.team_info()
+        if not team_resp.get("ok"):
+            raise Exception(f"Failed to fetch Slack team info: {team_resp.get('error')}. Ensure 'team:read' User scope is granted.")
+        
+        team_domain = team_resp.get("team", {}).get("domain")
+        team_id = team_resp.get("team", {}).get("id")
+        if not team_domain:
+            raise Exception("Slack team info returned successfully but 'domain' is missing.")
+
+        # 4. Fetch Threads from Slack in Parallel
+        async def fetch_thread(row):
             try:
                 resp = await slack_client.conversations_replies(
                     channel=row['channel'],
@@ -149,16 +160,32 @@ async def search_slack_messages(query: str) -> str:
                     inclusive=True
                 )
                 if resp.get("ok"):
+                    thread_messages = []
                     for msg in resp.get("messages", []):
-                        messages.append({
-                            "channel": row['channel'],
-                            "user": msg.get("user"),
+                        ts_str = msg.get("ts", "")
+                        ts_digits = ts_str.replace(".", "")
+                        url = f"https://{team_domain}.slack.com/archives/{row['channel']}/p{ts_digits}"
+                        if msg.get("thread_ts") and msg.get("thread_ts") != ts_str:
+                            url += f"?thread_ts={msg.get('thread_ts')}&cid={row['channel']}"
+
+                        thread_messages.append({
                             "text": msg.get("text"),
-                            "ts": msg.get("ts"),
+                            "team_id": team_id,
+                            "channel_id": row['channel'],
+                            "ts": ts_str,
+                            "user_id": msg.get("user"),
+                            "url": url,
                             "thread_ts": msg.get("thread_ts")
                         })
+                    return thread_messages
+            except SlackApiError as e:
+                logger.warning(f"Slack API warning fetching thread {row['ts']} in {row['channel']}: {e.response['error']}")
             except Exception as e:
-                logger.error(f"Error fetching thread {row['ts']} in {row['channel']}: {e}")
+                logger.warning(f"Unexpected error fetching thread {row['ts']} in {row['channel']}: {e}")
+            return []
+
+        thread_results = await asyncio.gather(*[fetch_thread(row) for row in results])
+        messages = [msg for thread in thread_results for msg in thread]
 
         return json.dumps(messages, indent=2)
 
@@ -167,10 +194,13 @@ async def search_slack_messages(query: str) -> str:
         return f"Error during search: {str(e)}"
 
 async def generate_embeddings(text: str) -> List[float]:
-    model = TextEmbeddingModel.from_pretrained("text-embedding-004")
-    inputs = [TextEmbeddingInput(text, "RETRIEVAL_QUERY")]
-    embeddings = await model.get_embeddings_async(inputs)
-    return embeddings[0].values
+    """Generate text embeddings using the new google-genai SDK."""
+    response = await genai_client.aio.models.embed_content(
+        model="text-embedding-004",
+        contents=text,
+        config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY")
+    )
+    return response.embeddings[0].values
 
 async def perform_vector_search(embeddings: List[float]):
     client = bigquery.Client(project=GOOGLE_CLOUD_PROJECT)
