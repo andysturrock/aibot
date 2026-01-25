@@ -37,11 +37,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest
-          # Install service dependencies if needed, or mock them
-          # For now, we'll just run pytest
+          pip install pytest pytest-asyncio httpx google-cloud-firestore google-cloud-bigquery slack-sdk google-cloud-aiplatform vertexai mcp pydantic python-dotenv
+          # Install shared library in editable mode
+          pip install -e ./python/libs/shared
       - name: Run tests
-        run: pytest
+        run: |
+          # Add libs/shared to PYTHONPATH if not using -e
+          export PYTHONPATH=$PYTHONPATH:$(pwd)/python/libs/shared
+          pytest
 
   deploy:
     needs: [lint, test]
