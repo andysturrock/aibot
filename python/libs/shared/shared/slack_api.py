@@ -1,10 +1,11 @@
-from typing import List, Optional, Dict, Any
-from datetime import datetime
 from dataclasses import dataclass
-from .gcp_api import get_secret_value
+from datetime import datetime
+from typing import Any
 
-from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.http_retry.builtin_handlers import RateLimitErrorRetryHandler
+from slack_sdk.web.async_client import AsyncWebClient
+
+from .gcp_api import get_secret_value
 
 rate_limit_handler = RateLimitErrorRetryHandler(max_retry_count=5)
 
@@ -29,7 +30,7 @@ class Message:
     date: datetime
     ts: str
 
-def ts_to_date(ts: str) -> Optional[datetime]:
+def ts_to_date(ts: str) -> datetime | None:
     """Convert Slack timestamp to datetime object"""
     if ts:
         try:
@@ -42,8 +43,8 @@ def ts_to_date(ts: str) -> Optional[datetime]:
 async def _get_thread_messages(client: AsyncWebClient,
                                channel_id: str,
                                thread_ts: str,
-                               oldest: Optional[str] = None,
-                               latest: Optional[str] = None) -> List[Message]:
+                               oldest: str | None = None,
+                               latest: str | None = None) -> list[Message]:
     """Get messages from a thread given a client (Async)"""
     replies = await client.conversations_replies(
         channel=channel_id,
@@ -57,7 +58,7 @@ async def _get_thread_messages(client: AsyncWebClient,
         message for message in replies.data.get("messages", [])
         if message.get("type") == "message" and message.get("text", "").strip()
     ]
-    messages: List[Message] = [
+    messages: list[Message] = [
         Message(
             user=message.get("user", ""),
             text=message.get("text", ""),
@@ -70,18 +71,18 @@ async def _get_thread_messages(client: AsyncWebClient,
 
 async def get_channel_messages_using_token(token: str,
                                            channel_id: str,
-                                           oldest: Optional[str] = None,
-                                           latest: Optional[str] = None,
-                                           include_threads: bool = True) -> List[Message]:
+                                           oldest: str | None = None,
+                                           latest: str | None = None,
+                                           include_threads: bool = True) -> list[Message]:
     """Get messages from a channel using the given token (Async)."""
     client = await create_client_for_token(token)
     return await _get_channel_messages(client, channel_id, oldest, latest, include_threads)
 
 async def _get_channel_messages(client: AsyncWebClient,
                                 channel_id: str,
-                                oldest: Optional[str] = None,
-                                latest: Optional[str] = None,
-                                include_threads: bool = True) -> List[Message]:
+                                oldest: str | None = None,
+                                latest: str | None = None,
+                                include_threads: bool = True) -> list[Message]:
     """Get messages from a channel (Async)."""
     history = await client.conversations_history(
         channel=channel_id,
@@ -91,7 +92,7 @@ async def _get_channel_messages(client: AsyncWebClient,
     )
 
     if include_threads:
-        messages: List[Message] = []
+        messages: list[Message] = []
         for message in history.data.get("messages", []):
             if message.get("reply_count", 0) > 0 and message.get("ts"):
                 thread_messages = await _get_thread_messages(
@@ -112,7 +113,7 @@ async def _get_channel_messages(client: AsyncWebClient,
         message for message in history.data.get("messages", [])
         if message.get("type") == "message"
     ]
-    messages: List[Message] = [
+    messages: list[Message] = [
         Message(
             user=message.get("user", ""),
             text=message.get("text", ""),
@@ -123,18 +124,18 @@ async def _get_channel_messages(client: AsyncWebClient,
     ]
     return messages
 
-async def get_public_channels(team_id: str) -> List[Dict[str, Any]]:
+async def get_public_channels(team_id: str) -> list[dict[str, Any]]:
     """Get the public channels in the given team (Async)."""
     client = await create_bot_client()
     conversations_list = await client.conversations_list(
         team_id=team_id, types=["public_channel"])
     return conversations_list["channels"]
 
-async def exchange_oauth_code(code: str) -> Dict[str, Any]:
+async def exchange_oauth_code(code: str) -> dict[str, Any]:
     """Exchanges a temporary OAuth code for an access token."""
     client_id = await get_secret_value('slackClientId')
     client_secret = await get_secret_value('slackClientSecret')
-    
+
     # We use a temporary client without a token for the exchange
     client = AsyncWebClient()
     response = await client.oauth_v2_access(
@@ -142,8 +143,8 @@ async def exchange_oauth_code(code: str) -> Dict[str, Any]:
         client_secret=client_secret,
         code=code
     )
-    
+
     if not response["ok"]:
         raise Exception(f"Slack OAuth exchange failed: {response['error']}")
-        
+
     return response.data

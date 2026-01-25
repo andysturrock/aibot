@@ -79,5 +79,35 @@ Once infrastructure and secrets are ready, deploy the services:
 ./scripts/deploy.sh --service all
 ```
 
-> [!TIP]
 > Use the `--service [name]` flag to update individual components (e.g., `aibot-logic`, `slack-search-mcp`) without a full redeploy.
+
+---
+
+## 6. GitHub CI/CD Pipeline Setup
+
+AIBot uses GitHub Actions for automated linting, testing, and deployment.
+
+### 1. Provision WIF Resources
+Workload Identity Federation (WIF) allows GitHub Actions to authenticate to GCP without long-lived keys.
+The required resources are managed in `terraform/github_actions.tf`.
+
+Run the bootstrap deployment locally to create the WIF Pool and Provider:
+```bash
+./scripts/deploy.sh
+```
+
+### 2. Configure GitHub Environments
+1. In your GitHub repository, go to **Settings > Environments**.
+2. Create two environments: `beta` and `prod`.
+
+### 3. Add Secrets
+For each environment (`beta` and `prod`), add the following **Environment Secrets**:
+
+- `GCP_SA_EMAIL`: The email of the `github-actions` service account (get from Terraform output).
+- `GCP_WIF_PROVIDER`: The full path to the WIF Provider (get from Terraform output).
+- `GCP_PROJECT_ID`: Your GCP Project ID for that environment.
+- `GCP_REGION`: The GCP region (e.g., `europe-west2`).
+
+### 4. Triggering Deployments
+- **Beta**: Pushes to the `beta` branch will deploy to the project configured in the `beta` environment.
+- **Production**: Pushes or merges to the `main` branch will deploy to the project configured in the `prod` environment.
