@@ -1,0 +1,118 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - beta
+  pull_request:
+    branches:
+      - main
+      - beta
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+      - name: Lint with ruff
+        run: ruff check .
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          # Install service dependencies if needed, or mock them
+          # For now, we'll just run pytest
+      - name: Run tests
+        run: pytest
+
+  deploy:
+    needs: [lint, test]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'beta' }}
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GCP
+        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and Push Images
+        run: |
+          SERVICES=("aibot-logic" "slack-collector" "slack-search-mcp")
+          FOR_DIRS=("aibot_logic" "slack_collector" "slack_search_mcp")
+          
+          for i in "${!SERVICES[@]}"; do
+            SERVICE=${SERVICES[$i]}
+            DIR=${FOR_DIRS[$i]}
+            IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/aibot-images/$SERVICE:${{ github.sha }}"
+            LATEST_IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/aibot-images/$SERVICE:latest"
+            
+            echo "Building $SERVICE from python/services/$DIR..."
+            docker build -t $IMAGE ./python/services/$DIR
+            docker tag $IMAGE $LATEST_IMAGE
+            
+            echo "Pushing $SERVICE..."
+            docker push $IMAGE
+            docker push $LATEST_IMAGE
+          done
+
+      - name: Deploy to Cloud Run
+        run: |
+          # Deploy services
+          # aibot-webhook and aibot-logic both use the aibot-logic image
+          LOGIC_IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/aibot-images/aibot-logic:${{ github.sha }}"
+          
+          gcloud run deploy aibot-webhook \
+            --image $LOGIC_IMAGE \
+            --region ${{ vars.GCP_REGION }} \
+            --project ${{ vars.GCP_PROJECT_ID }} \
+            --quiet
+
+          gcloud run deploy aibot-logic \
+            --image $LOGIC_IMAGE \
+            --region ${{ vars.GCP_REGION }} \
+            --project ${{ vars.GCP_PROJECT_ID }} \
+            --quiet
+
+          gcloud run deploy slack-search-mcp \
+            --image ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/aibot-images/slack-search-mcp:${{ github.sha }} \
+            --region ${{ vars.GCP_REGION }} \
+            --project ${{ vars.GCP_PROJECT_ID }} \
+            --quiet
+
+          gcloud run deploy slack-collector \
+            --image ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/aibot-images/slack-collector:${{ github.sha }} \
+            --region ${{ vars.GCP_REGION }} \
+            --project ${{ vars.GCP_PROJECT_ID }} \
+            --quiet
