@@ -19,7 +19,7 @@ data "google_iam_policy" "collect_slack_messages_run_invoker" {
 
 # Give the service account permission to get the AIBot secret
 resource "google_secret_manager_secret_iam_member" "collect_slack_messages_secrets" {
-  secret_id = "AIBot"
+  secret_id = google_secret_manager_secret.shared_config.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.collect_slack_messages.email}"
 }
@@ -54,21 +54,21 @@ resource "google_bigquery_dataset_iam_member" "mcp_bq_viewer" {
 
 # 3. Access Secrets (allowed team IDs, signing secret etc)
 resource "google_secret_manager_secret_iam_member" "mcp_secrets" {
-  secret_id = "AIBot"
+  secret_id = google_secret_manager_secret.shared_config.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.slack_search_mcp.email}"
 }
 
 # 2. Access Secrets (user tokens)
 resource "google_secret_manager_secret_iam_member" "logic_secrets" {
-  secret_id = "AIBot"
+  secret_id = google_secret_manager_secret.shared_config.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.aibot_logic.email}"
 }
 
 # Webhook Access to Secrets
 resource "google_secret_manager_secret_iam_member" "webhook_secrets" {
-  secret_id = "AIBot"
+  secret_id = google_secret_manager_secret.shared_config.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.aibot_webhook.email}"
 }
@@ -155,6 +155,8 @@ resource "google_bigquery_table" "slack_content" {
   dataset_id = google_bigquery_dataset.aibot_slack_messages.dataset_id
   table_id   = "slack_content"
 
+  deletion_protection = true
+
   schema = <<EOF
 [
   {
@@ -182,6 +184,8 @@ EOF
 resource "google_bigquery_table" "slack_content_metadata" {
   dataset_id = google_bigquery_dataset.aibot_slack_messages.dataset_id
   table_id   = "slack_content_metadata"
+
+  deletion_protection = true
 
   schema = <<EOF
 [
@@ -221,11 +225,11 @@ resource "random_id" "job_name_suffix" {
 }
 
 # Uncomment this when there are over 5000 rows in the table.  BQ won't let you create indexes on empty tables.
-# resource "google_bigquery_job" "vector_index" {
-#   job_id = "create_vector_index_${random_id.job_name_suffix.hex}"
-#   query {
-#     query          = "CREATE VECTOR INDEX embeddings ON ${google_bigquery_dataset.aibot_slack_messages.dataset_id}.${google_bigquery_table.slack_content.id}(embeddings) OPTIONS(index_type = 'IVF')"
-#     use_legacy_sql = false
-#   }
-#   location = var.gcp_bq_location
-# }
+resource "google_bigquery_job" "vector_index" {
+  job_id = "create_vector_index_${random_id.job_name_suffix.hex}"
+  query {
+    query          = "CREATE VECTOR INDEX embeddings ON ${google_bigquery_dataset.aibot_slack_messages.dataset_id}.${google_bigquery_table.slack_content.id}(embeddings) OPTIONS(index_type = 'IVF')"
+    use_legacy_sql = false
+  }
+  location = var.gcp_bq_location
+}
