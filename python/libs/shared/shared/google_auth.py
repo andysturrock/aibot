@@ -1,23 +1,24 @@
-import time
-import httpx
 import logging
-from typing import Dict, Any, Optional
-from google.oauth2 import id_token
+from typing import Any
+
+import httpx
 from google.auth.transport import requests
+from google.oauth2 import id_token
+
 from shared.gcp_api import get_secret_value
 
 logger = logging.getLogger("google-auth")
 
 IAP_CERTS_URL = "https://www.gstatic.com/iap/verify/public_key"
 
-async def verify_iap_jwt(jwt_assertion: str, expected_audience: str) -> Optional[Dict[str, Any]]:
+async def verify_iap_jwt(jwt_assertion: str, expected_audience: str) -> dict[str, Any] | None:
     """
     Verifies the JWT assertion from IAP using IAP's public keys.
     See: https://cloud.google.com/iap/docs/signed-headers-howto#verifying_the_jwt_payload
     """
     try:
         request = requests.Request()
-        
+
         # We use verify_token with the IAP certificates URL.
         # This MUST validate the 'aud' claim to ensure the token was intended for this service.
         payload = id_token.verify_token(
@@ -33,14 +34,14 @@ async def verify_iap_jwt(jwt_assertion: str, expected_audience: str) -> Optional
         if "audience" in str(e).lower():
             logger.warning(f"Audience mismatch. Expected: {expected_audience}")
         elif "email" in str(e).lower():
-            logger.warning(f"Email claim issue. Token might be missing email claim. Check if --include-email or format=full was used.")
+            logger.warning("Email claim issue. Token might be missing email claim. Check if --include-email or format=full was used.")
         return None
 
-async def exchange_google_code(code: str, redirect_uri: str) -> Dict[str, Any]:
+async def exchange_google_code(code: str, redirect_uri: str) -> dict[str, Any]:
     """Exchanges an authorization code for Google tokens."""
     client_id = await get_secret_value("iapClientId")
     client_secret = await get_secret_value("iapClientSecret")
-    
+
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -57,11 +58,11 @@ async def exchange_google_code(code: str, redirect_uri: str) -> Dict[str, Any]:
             resp.raise_for_status()
         return resp.json()
 
-async def refresh_google_id_token(refresh_token: str) -> Optional[str]:
+async def refresh_google_id_token(refresh_token: str) -> str | None:
     """Uses a refresh token to get a new Google ID Token."""
     client_id = await get_secret_value("iapClientId")
     client_secret = await get_secret_value("iapClientSecret")
-    
+
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -75,7 +76,7 @@ async def refresh_google_id_token(refresh_token: str) -> Optional[str]:
         if resp.status_code != 200:
             logger.error(f"Failed to refresh Google token: {resp.text}")
             return None
-        
+
         data = resp.json()
         return data.get("id_token")
 

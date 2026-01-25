@@ -1,20 +1,23 @@
-import os
-import json
 import logging
-import asyncio
-from typing import List, Dict, Any, Optional
+import os
+import time
+from functools import cached_property
 
-from google.adk import Agent, Runner
-from google.adk.tools.google_search_tool import google_search
-from google.adk.tools import AgentTool
-from google.genai import types
 import vertexai
+from google.adk import Agent
+from google.adk.models.google_llm import Gemini
+from google.adk.tools import AgentTool
+from google.adk.tools.google_search_tool import google_search
+from google.genai import Client, types
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
+from shared.firestore_api import get_google_token, put_google_token
+from shared.gcp_api import get_secret_value
+from shared.google_auth import refresh_google_id_token
 
 gcp_location = os.environ.get("GCP_LOCATION")
 if not gcp_location:
-    raise EnvironmentError("GCP_LOCATION environment variable is required and must be set explicitly.")
+    raise OSError("GCP_LOCATION environment variable is required and must be set explicitly.")
 
 # Initialize Vertex AI
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
@@ -23,21 +26,13 @@ vertexai.init(
     location=gcp_location
 )
 
-# Import from shared library
-from shared.gcp_api import get_secret_value
-from shared.firestore_api import get_history, put_history, get_google_token, put_google_token
-from shared.google_auth import refresh_google_id_token
-import time
-
 logger = logging.getLogger(__name__)
 
-from google.adk.models.google_llm import Gemini
-from google.genai import Client
-from functools import cached_property
+
 
 class VertexGemini(Gemini):
     """Subclass of Gemini that forces Vertex AI backend and configures project/location."""
-    
+
     @cached_property
     def api_client(self) -> Client:
         from google.genai import Client
@@ -65,7 +60,7 @@ async def get_gemini_model(model_name: str) -> Gemini:
         )
     )
 
-async def get_valid_google_id_token(slack_user_id: str) -> tuple[Optional[str], Optional[str]]:
+async def get_valid_google_id_token(slack_user_id: str) -> tuple[str | None, str | None]:
     """
     Retrieves a valid Google ID token for the given Slack user.
     Refreshes the token if it's expired.
@@ -94,7 +89,7 @@ async def get_valid_google_id_token(slack_user_id: str) -> tuple[Optional[str], 
                 return None, "Your Google session has expired and I couldn't refresh it. Please sign in again on my Home tab."
         else:
             return None, "Your Google session has expired. Please sign in again on my Home tab."
-            
+
     return id_token, None
 
 async def search_slack(query: str, slack_user_id: str) -> str:
@@ -122,10 +117,10 @@ async def search_slack(query: str, slack_user_id: str) -> str:
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 result = await session.call_tool("search_slack_messages", arguments={"query": query})
-                
+
                 if not result.content or result.content[0].type != "text":
                     return "No results found in Slack."
-                
+
                 return result.content[0].text
     except Exception as e:
         logger.exception("Error in search_slack tool")
@@ -157,22 +152,22 @@ def create_slack_search_agent(model: Gemini, slack_user_id: str):
 async def create_supervisor_agent(slack_user_id: str):
     bot_name = await get_secret_value('botName')
     model_name = await get_secret_value('supervisorModel')
-    
+
     # Create models for all agents (can share or have individual configs)
     supervisor_model = await get_gemini_model(model_name)
     google_search_model = await get_gemini_model(model_name)
     slack_search_model = await get_gemini_model(model_name)
-    
+
     return Agent(
         name="SupervisorAgent",
         description="Orchestrates specialized agents to answer user queries.",
         instruction=f"""
             Your name is {bot_name}.
             You are a supervisor that helps users by orchestrating specialized agents.
-            
+
             When you need to search for current public information, use the GoogleSearchAgent.
             When you need to find internal conversations or messages from Slack, use the SlackSearchAgent.
-            
+
             **Response Guidelines**:
             1. **Summarize**: Combine findings from agents into a concise, non-repetitive narrative.
             2. **Deduplicate**: If the same information appears multiple times, only include it once.
