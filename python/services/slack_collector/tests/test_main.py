@@ -48,8 +48,9 @@ async def test_collect_slack_messages_unauthorized_skip():
         mock_secrets.return_value = "T_BAD"
 
         with patch("services.slack_collector.main.is_team_authorized", return_value=False):
-             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-                response = await ac.post("/")
-             # It should finish successfully (OK) but skip processing the unauthorized team
-             assert response.status_code == 200
-             assert response.text == "OK"
+            with patch("services.slack_collector.main.bigquery.Client"):
+                async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                    response = await ac.post("/")
+                # It should finish successfully (OK) but skip processing the unauthorized team
+                assert response.status_code == 200
+                assert response.text == "OK"
