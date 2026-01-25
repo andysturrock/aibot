@@ -1,11 +1,11 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from httpx import AsyncClient, ASGITransport
-from unittest.mock import AsyncMock, patch, MagicMock
-from datetime import datetime, timezone, timedelta
+from httpx import ASGITransport, AsyncClient
 
 with patch("shared.get_secret_value", new_callable=AsyncMock) as mock_sec:
     mock_sec.return_value = "dummy"
-    from services.slack_collector.main import app, ChannelMetadata
+    from services.slack_collector.main import app
 
 @pytest.mark.asyncio
 async def test_collector_health():
@@ -19,11 +19,11 @@ async def test_collect_slack_messages_success():
     # Mock Secrets
     with patch("services.slack_collector.main.get_secret_value", new_callable=AsyncMock) as mock_secrets:
         mock_secrets.side_effect = lambda s, k: "T123" if k == "teamIdsForSearch" else "token_abc"
-        
+
         # Mock Authorized check
         with patch("services.slack_collector.main.is_team_authorized", return_value=True):
             # Mock BQ client
-            with patch("services.slack_collector.main.bigquery.Client") as MockBQ:
+            with patch("services.slack_collector.main.bigquery.Client"):
                 # Mock Public channels
                 with patch("services.slack_collector.main.get_public_channels", return_value=[{"id": "C1", "name": "general", "created": 1700000000}]):
                     # Mock Existing Metadata
@@ -35,10 +35,10 @@ async def test_collect_slack_messages_success():
                                 # Mock BQ Put
                                 with patch("services.slack_collector.main.put_channel_messages", new_callable=AsyncMock):
                                     with patch("services.slack_collector.main.put_channel_metadata", new_callable=AsyncMock):
-                                        
+
                                         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                                             response = await ac.post("/")
-                                        
+
                                         assert response.status_code == 200
                                         assert response.text == "OK"
 
@@ -46,7 +46,7 @@ async def test_collect_slack_messages_success():
 async def test_collect_slack_messages_unauthorized_skip():
     with patch("services.slack_collector.main.get_secret_value", new_callable=AsyncMock) as mock_secrets:
         mock_secrets.return_value = "T_BAD"
-        
+
         with patch("services.slack_collector.main.is_team_authorized", return_value=False):
              async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 response = await ac.post("/")
