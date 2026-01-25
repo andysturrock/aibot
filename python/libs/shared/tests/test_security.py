@@ -22,12 +22,21 @@ async def test_is_team_authorized_success(mock_get_secret_value):
 
 @pytest.mark.asyncio
 async def test_is_enterprise_authorized_success(mock_get_secret_value):
-    mock_get_secret_value.return_value = "T123"
+    # Map secrets to their expected values
+    secrets_map = {
+        "teamIdsForSearch": "T123",
+        "enterpriseIdsForSearch": "E123"
+    }
+    mock_get_secret_value.side_effect = lambda k: secrets_map.get(k, "")
 
     with patch("os.environ.get", return_value="E123"):
-        with patch("shared.security._allowed_team_ids", None):
-            assert await is_team_authorized("T999", "E123") is True
-            assert await is_team_authorized("T999", "E456") is False
+        # Reset cache to force fresh load from mock
+        from shared import security
+        security._allowed_team_ids = None
+        security._allowed_enterprise_ids = None
+
+        assert await is_team_authorized("T999", "E123") is True
+        assert await is_team_authorized("T999", "E456") is False
 
 @pytest.mark.asyncio
 async def test_is_team_authorized_empty_whitelist(mock_get_secret_value):

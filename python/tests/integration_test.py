@@ -6,6 +6,7 @@ import os
 import time
 
 import httpx
+import pytest
 from dotenv import load_dotenv
 
 # Setup logging
@@ -34,6 +35,7 @@ def generate_slack_headers(body: str, timestamp: str = None):
         "Content-Type": "application/json"
     }
 
+@pytest.mark.asyncio
 async def test_url_verification():
     logger.info("Testing /slack/events (url_verification)...")
     url = f"{BASE_URL}/slack/events"
@@ -62,6 +64,7 @@ async def test_url_verification():
         except Exception as e:
             logger.error(f"Error during test: {e}")
 
+@pytest.mark.asyncio
 async def test_invalid_signature():
     logger.info("Testing /slack/events (invalid signature)...")
     url = f"{BASE_URL}/slack/events"
@@ -81,6 +84,7 @@ async def test_invalid_signature():
         else:
             logger.error(f"FAILURE: Expected 401 but got {response.status_code}")
 
+@pytest.mark.asyncio
 async def test_health_check():
     logger.info("Testing /health...")
     url = f"{BASE_URL}/health"

@@ -8,7 +8,7 @@ from shared.gcp_api import get_secret_value, publish_to_topic
 @pytest.mark.asyncio
 async def test_get_secret_value_from_env():
     with patch("os.environ.get", return_value="env_val"):
-        val = await get_secret_value("Secret", "Key")
+        val = await get_secret_value("Secret")
         assert val == "env_val"
 
 @pytest.mark.asyncio
@@ -18,10 +18,10 @@ async def test_get_secret_value_from_manager():
         with patch("shared.gcp_api.secretmanager_v1.SecretManagerServiceAsyncClient") as MockClient:
             mock_client = MockClient.return_value
             mock_response = MagicMock()
-            mock_response.payload.data.decode.return_value = json.dumps({"Key": "secret_val"})
+            mock_response.payload.data.decode.return_value = json.dumps({"Secret": "secret_val"})
             mock_client.access_secret_version = AsyncMock(return_value=mock_response)
 
-            val = await get_secret_value("Secret", "Key")
+            val = await get_secret_value("Secret")
             assert val == "secret_val"
 
 @pytest.mark.asyncio

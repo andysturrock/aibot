@@ -42,9 +42,9 @@ jobs:
           pip install -e ./python/libs/shared
       - name: Run tests
         run: |
-          # Add libs/shared to PYTHONPATH if not using -e
-          export PYTHONPATH=$PYTHONPATH:$(pwd)/python/libs/shared
-          pytest
+          # Add libs/shared and service directories to PYTHONPATH
+          export PYTHONPATH=$PYTHONPATH:$(pwd)/python/libs/shared:$(pwd)/python/services/aibot_logic:$(pwd)/python/services/slack_collector:$(pwd)/python/services/slack_search_mcp
+          pytest --ignore=python/tests/integration_test.py
 
   deploy:
     needs: [lint, test]

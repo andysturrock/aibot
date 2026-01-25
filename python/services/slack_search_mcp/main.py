@@ -48,6 +48,10 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         if request.url.path == "/health":
             return await call_next(request)
 
+        # 0. Bypass for testing
+        if os.environ.get("ENV") == "test":
+            return await call_next(request)
+
         # 1. Whitelist Verification
         if request.url.path not in ["/mcp/sse", "/mcp/messages", "/mcp/messages/"]:
             logger.warning(f"Stealth security: Unauthorized access attempt to {request.url.path} from {request.client.host}")

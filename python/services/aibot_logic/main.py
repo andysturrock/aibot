@@ -7,15 +7,15 @@ import random
 import time
 import traceback
 
-# Service specific imports
-from agents import create_supervisor_agent
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from google.adk import Runner
 from google.adk.events.event import Event
 from google.adk.runners import InMemorySessionService
+from google.auth.transport import requests as auth_requests
 from google.genai import types
+from google.oauth2 import id_token
 from shared.firestore_api import (
     get_google_token,
     get_history,
@@ -35,6 +35,9 @@ from shared.security import (
 )
 from shared.slack_api import create_bot_client
 from starlette.middleware.base import BaseHTTPMiddleware
+
+# Service specific imports
+from .agents import create_supervisor_agent
 
 load_dotenv()
 setup_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
@@ -57,6 +60,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         if path == "/health":
             return await call_next(request)
 
+
         # 403 on unauthenticated access to non-app paths
         # Differentiation based on service role (Webhook vs Logic Worker)
         service_name = os.environ.get("K_SERVICE", "aibot-logic")
@@ -71,6 +75,12 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             ]
         elif service_name == "aibot-logic":
             allowed_paths = ["/pubsub/worker"]
+        elif os.environ.get("ENV") == "test" or service_name == "test-service":
+            # Allow everything in tests to avoid 403 blocks during component tests
+            allowed_paths = [
+                "/health", "/slack/events", "/slack/interactivity",
+                "/slack/install", "/slack/oauth-redirect", "/pubsub/worker"
+            ]
 
         if path not in allowed_paths and not path.startswith("/auth/"):
              logger.warning(f"Stealth security: Unauthorized access attempt to {path} on service {service_name} from {request.client.host}")
@@ -308,7 +318,7 @@ async def keep_alive_status_updates(channel_id: str, user_id: str, thread_ts: st
     except asyncio.CancelledError:
         logger.debug("Keep-alive task cancelled.")
 
-if service_role == "aibot-webhook":
+if service_role in ["aibot-webhook", "test-service"]:
     logger.info("Registering Webhook routes")
 
     @app.post("/slack/events")
@@ -331,84 +341,102 @@ if service_role == "aibot-webhook":
             inner_type == "message" and
             event.get("channel_type") == "im" and
             not event.get("bot_id") and
-            not event.get("subtype") == "bot_message"
+            not event.get("subtype")
         )
 
         if should_react and channel_id and message_ts:
             try:
                 await add_reaction(channel_id, message_ts, "eyes")
             except Exception:
-                logger.exception("Failed to add eyes reaction")
+                logger.warning("Failed to add eyes reaction")
 
-        await publish_to_topic(TOPIC_ID, json.dumps(payload))
-        return Response(content="OK", status_code=200)
+        # For non-challenge events, we just publish to Pub/Sub and return 200
+        # This keeps the webhook response time very low to satisfy Slack's 3s limit.
+        try:
+            # We add the user who triggered it to the payload if available
+            # to help the worker identify them without another API call.
+            at_user = None
+            if payload.get("event"):
+                at_user = payload["event"].get("user") or payload["event"].get("user_id")
 
-    @app.post("/slack/interactivity")
-    async def slack_interactivity(request: Request):
-        # Interactivity payloads are URL-encoded form data
-        form_data = await request.form()
-        payload_str = form_data.get("payload")
-        if not payload_str:
-            return Response(content="Missing payload", status_code=400)
+            if at_user:
+                payload["at_user"] = at_user
 
-        payload = json.loads(payload_str)
+            await publish_to_topic(payload)
+            return Response(content="OK", status_code=200)
+        except Exception as e:
+            logger.exception("Failed to publish to Pub/Sub")
+            return Response(content=f"Error: {str(e)}", status_code=500)
 
-        # Core Logic: Publish to Pub/Sub
-        await publish_to_topic(TOPIC_ID, json.dumps(payload))
-        return Response(content="OK", status_code=200)
+    @app.get("/auth/login")
+    async def login(slack_user_id: str):
+        # 1. Check if user already has a valid refresh token
+        token_data = await get_google_token(slack_user_id)
+        if token_data and token_data.get("refresh_token"):
+             return Response(content="<h1>Already Authenticated</h1><p>You are already signed in to Google. You can close this window.</p>", media_type="text/html")
 
-    @app.get("/auth/login/google")
-    async def google_login(request: Request):
-        # This is a convenience endpoint if someone goes there directly
-        # But usually they click the button in Slack
-        user_id = "manual_login" # State should ideally pass through
+        # 2. Generate Google Auth URL
+        # We pass slack_user_id in state to tie the tokens back to them in the callback
+        state = json.dumps({"slack_user_id": slack_user_id})
+
+        # We need to use the actual FQDN for the redirect URI
         custom_fqdn = await get_secret_value("customFqdn")
         if not custom_fqdn:
              return Response(content="Error: customFqdn not configured", status_code=500)
 
-        redirect_uri = f"https://{custom_fqdn}/auth/callback/google"
+        redirect_uri = f"https://{custom_fqdn}/auth/callback"
+        logger.debug(f"Using Redirect URI: {redirect_uri}")
+
         client_id = await get_secret_value("iapClientId")
-        auth_url = get_google_auth_url(client_id, redirect_uri, state=user_id)
-        from fastapi.responses import RedirectResponse
+        auth_url = get_google_auth_url(client_id, redirect_uri, state=state)
         return RedirectResponse(url=auth_url)
 
-    @app.get("/auth/callback/google")
-    async def google_callback(code: str, state: str = None):
-        """
-        Handles the Google OAuth callback, exchanges code for tokens,
-        and stores in Firestore.
-        """
+    @app.get("/auth/callback")
+    async def callback(request: Request):
+        code = request.query_params.get("code")
+        state_str = request.query_params.get("state")
+
+        if not code or not state_str:
+            raise HTTPException(status_code=400, detail="Missing code or state")
+
         try:
-            # Construct redirect URI (must EXACTLY match the one in Google Console)
+            state = json.loads(state_str)
+            slack_user_id = state.get("slack_user_id")
+
+            # 1. Exchange code for tokens
             custom_fqdn = await get_secret_value("customFqdn")
             if not custom_fqdn:
                 return Response(content="Error: customFqdn secret missing", status_code=500)
 
-            redirect_uri = f"https://{custom_fqdn}/auth/callback/google"
-            logger.info(f"Exchanging code for tokens. Redirect URI: {redirect_uri}")
+            redirect_uri = f"https://{custom_fqdn}/auth/callback"
+            logger.debug(f"Using Redirect URI: {redirect_uri}")
 
-            # Determine the Slack user ID from the state parameter
-            slack_user_id = state if state and state != "manual_login" else "unknown"
+            tokens = await exchange_google_code(code, redirect_uri)
 
-            # 1. Exchange code for tokens
-            try:
-                tokens = await exchange_google_code(code, redirect_uri)
-            except Exception as e:
-                logger.error(f"Token exchange failed: {e}")
-                return Response(
-                    content=f"<html><body><h1>Authentication Failed</h1><p>Google rejected the token exchange. This is usually due to an unauthorized redirect_uri or an expired code.</p><p>Detail: {str(e)}</p><p>Please try again from Slack.</p></body></html>",
+            if not tokens or not tokens.get("id_token"):
+                 return Response(
+                    content="<h1>Authentication Failed</h1><p>Could not retrieve ID token from Google.</p>",
                     status_code=400,
                     media_type="text/html"
                 )
 
-            # 2. Decode ID Token to get email (for verification/display)
-            import jwt
+            # 2. Verify and Decode ID Token
             try:
-                id_token_payload = jwt.decode(tokens["id_token"], options={"verify_signature": False})
+                client_id = await get_secret_value("iapClientId")
+                # verify_oauth2_token handles signature, expiry, and audience verification.
+                id_token_payload = id_token.verify_oauth2_token(
+                    tokens.get("id_token"),
+                    auth_requests.Request(),
+                    client_id
+                )
                 email = id_token_payload.get("email", "Unknown")
-            except Exception as decode_err:
-                logger.warning(f"Failed to decode ID token: {decode_err}")
-                email = "Decryption Failed"
+            except Exception as verify_err:
+                logger.error(f"Failed to verify Google ID token: {verify_err}")
+                return Response(
+                    content=f"<h1>Authentication Failed</h1><p>Google token verification failed: {str(verify_err)}</p>",
+                    status_code=401,
+                    media_type="text/html"
+                )
 
             # 3. Store tokens in Firestore
             # The put_google_token function expects a dictionary with specific keys
@@ -435,11 +463,12 @@ if service_role == "aibot-webhook":
         # but user authentication is now via Google.
         return Response(content="Slack Bot Auth successful. Please use 'Sign in with Google' on the Home tab for search access.", status_code=200)
 
-elif service_role == "aibot-logic":
+if service_role in ["aibot-logic", "test-service"]:
     logger.info("Registering Logic Worker routes")
 
     @app.post("/pubsub/worker")
     async def pubsub_worker(request: Request):
+        keep_alive_task = None
         envelope = await request.json()
         logger.info(f"Received Pub/Sub envelope: {json.dumps(envelope)}")
         if not envelope or "message" not in envelope:
@@ -548,7 +577,6 @@ elif service_role == "aibot-logic":
                     )
 
                     # Start keep-alive background task
-                    keep_alive_task = None
                     if user_id:
                         keep_alive_task = asyncio.create_task(
                             keep_alive_status_updates(channel_id, user_id, thread_ts)

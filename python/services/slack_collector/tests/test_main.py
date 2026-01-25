@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-with patch("shared.get_secret_value", new_callable=AsyncMock) as mock_sec:
+with patch("shared.gcp_api.get_secret_value", new_callable=AsyncMock) as mock_sec:
     mock_sec.return_value = "dummy"
     from services.slack_collector.main import app
 
@@ -18,7 +18,7 @@ async def test_collector_health():
 async def test_collect_slack_messages_success():
     # Mock Secrets
     with patch("services.slack_collector.main.get_secret_value", new_callable=AsyncMock) as mock_secrets:
-        mock_secrets.side_effect = lambda s, k: "T123" if k == "teamIdsForSearch" else "token_abc"
+        mock_secrets.side_effect = lambda k: "T123" if k == "teamIdsForSearch" else "token_abc"
 
         # Mock Authorized check
         with patch("services.slack_collector.main.is_team_authorized", return_value=True):
