@@ -1,6 +1,7 @@
-import pytest
-import asyncio
 from unittest.mock import AsyncMock, patch
+
+import pytest
+
 
 @pytest.fixture
 def mock_get_secret_value():

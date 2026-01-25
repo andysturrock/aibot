@@ -1,8 +1,9 @@
-import pytest
-from httpx import AsyncClient, ASGITransport
-from unittest.mock import AsyncMock, patch
-import json
 import base64
+import json
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from httpx import ASGITransport, AsyncClient
 
 # Import app but mock out the shared library calls within main.py
 with patch("shared.get_secret_value", new_callable=AsyncMock) as mock_sec:
@@ -28,7 +29,7 @@ async def test_slack_events_challenge():
 @pytest.mark.asyncio
 async def test_slack_events_authorized_success():
     payload = {"type": "event_callback", "team_id": "T123", "event": {"type": "app_mention"}}
-    
+
     # Mock Security checks
     with patch("services.aibot_logic.main.verify_slack_request", return_value=True):
         with patch("services.aibot_logic.main.is_team_authorized", return_value=True):
@@ -42,7 +43,7 @@ async def test_slack_events_authorized_success():
 @pytest.mark.asyncio
 async def test_slack_events_unauthorized_team():
     payload = {"type": "event_callback", "team_id": "T_BAD", "event": {"type": "app_mention"}}
-    
+
     with patch("services.aibot_logic.main.verify_slack_request", return_value=True):
         with patch("services.aibot_logic.main.is_team_authorized", return_value=False):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -54,7 +55,7 @@ async def test_slack_events_unauthorized_team():
 @pytest.mark.asyncio
 async def test_slack_events_invalid_signature():
     payload = {"type": "event_callback"}
-    
+
     with patch("services.aibot_logic.main.verify_slack_request", return_value=False):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.post("/slack/events", json=payload)
@@ -65,7 +66,7 @@ async def test_pubsub_worker_success():
     data = json.dumps({"type": "event_callback", "event": {"type": "app_mention", "channel": "C1", "ts": "1.1", "text": "hi"}})
     encoded_data = base64.b64encode(data.encode()).decode()
     envelope = {"message": {"data": encoded_data}}
-    
+
     with patch("services.aibot_logic.main.add_reaction", new_callable=AsyncMock):
         with patch("services.aibot_logic.main.remove_reaction", new_callable=AsyncMock):
             with patch("services.aibot_logic.main.get_history", return_value=[]):
@@ -73,14 +74,14 @@ async def test_pubsub_worker_success():
                     with patch("services.aibot_logic.main.Runner") as MockRunner:
                         mock_runner = MockRunner.return_value
                         mock_runner.run = AsyncMock(return_value={"answer": "hello"})
-                        
+
                         with patch("services.aibot_logic.main.post_message", new_callable=AsyncMock) as mock_post:
                             with patch("services.aibot_logic.main.put_history", new_callable=AsyncMock):
                                 with patch("services.aibot_logic.main.create_bot_client", new_callable=AsyncMock) as mock_bot:
                                     mock_bot.return_value.auth_test = AsyncMock(return_value={"user_id": "B1"})
-                                    
+
                                     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                                         response = await ac.post("/pubsub/worker", json=envelope)
-                                    
+
                                     assert response.status_code == 200
                                     mock_post.assert_called_with("C1", "hello", thread_ts="1.1")

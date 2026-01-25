@@ -1,19 +1,19 @@
+from unittest.mock import patch
+
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, patch
 from shared.security import (
-    is_team_authorized, 
-    verify_slack_request, 
-    get_team_id_from_payload,
     get_enterprise_id_from_payload,
-    _get_whitelists
+    get_team_id_from_payload,
+    is_team_authorized,
+    verify_slack_request,
 )
+
 
 @pytest.mark.asyncio
 async def test_is_team_authorized_success(mock_get_secret_value):
     # Mock whitelist from Secret Manager
     mock_get_secret_value.return_value = "T123,T456"
-    
+
     # Force reset of cache for test
     with patch("shared.security._allowed_team_ids", None):
         assert await is_team_authorized("T123") is True
@@ -23,7 +23,7 @@ async def test_is_team_authorized_success(mock_get_secret_value):
 @pytest.mark.asyncio
 async def test_is_enterprise_authorized_success(mock_get_secret_value):
     mock_get_secret_value.return_value = "T123"
-    
+
     with patch("os.environ.get", return_value="E123"):
         with patch("shared.security._allowed_team_ids", None):
             assert await is_team_authorized("T999", "E123") is True
@@ -50,11 +50,11 @@ def test_get_enterprise_id_from_payload():
 @pytest.mark.asyncio
 async def test_verify_slack_request_valid(mock_get_secret_value):
     mock_get_secret_value.return_value = "secret"
-    
+
     with patch("shared.security.SignatureVerifier") as MockVerifier:
         mock_verifier = MockVerifier.return_value
         mock_verifier.is_valid_request.return_value = True
-        
+
         headers = {"X-Slack-Signature": "sig", "X-Slack-Request-Timestamp": "ts"}
         assert await verify_slack_request(b"data", headers) is True
         MockVerifier.assert_called_with("secret")
@@ -62,9 +62,9 @@ async def test_verify_slack_request_valid(mock_get_secret_value):
 @pytest.mark.asyncio
 async def test_verify_slack_request_invalid(mock_get_secret_value):
     mock_get_secret_value.return_value = "secret"
-    
+
     with patch("shared.security.SignatureVerifier") as MockVerifier:
         mock_verifier = MockVerifier.return_value
         mock_verifier.is_valid_request.return_value = False
-        
+
         assert await verify_slack_request(b"data", {}) is False
