@@ -17,17 +17,15 @@ from shared.google_auth import refresh_google_id_token
 
 gcp_location = os.environ.get("GCP_LOCATION")
 if not gcp_location:
-    raise OSError("GCP_LOCATION environment variable is required and must be set explicitly.")
+    raise OSError(
+        "GCP_LOCATION environment variable is required and must be set explicitly."
+    )
 
 # Initialize Vertex AI
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
-vertexai.init(
-    project=PROJECT_ID,
-    location=gcp_location
-)
+vertexai.init(project=PROJECT_ID, location=gcp_location)
 
 logger = logging.getLogger(__name__)
-
 
 
 class VertexGemini(Gemini):
@@ -36,6 +34,7 @@ class VertexGemini(Gemini):
     @cached_property
     def api_client(self) -> Client:
         from google.genai import Client
+
         return Client(
             vertexai=True,
             project=PROJECT_ID,
@@ -43,8 +42,9 @@ class VertexGemini(Gemini):
             http_options=types.HttpOptions(
                 headers=self._tracking_headers(),
                 retry_options=self.retry_options,
-            )
+            ),
         )
+
 
 async def get_gemini_model(model_name: str) -> Gemini:
     """Factory to create a model with enterprise security settings."""
@@ -52,15 +52,30 @@ async def get_gemini_model(model_name: str) -> Gemini:
         model=model_name,
         generate_content_config=types.GenerateContentConfig(
             safety_settings=[
-                types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
-                types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
-                types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_MEDIUM_AND_ABOVE"),
-                types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_MEDIUM_AND_ABOVE"),
+                types.SafetySetting(
+                    category="HARM_CATEGORY_DANGEROUS_CONTENT",
+                    threshold="BLOCK_MEDIUM_AND_ABOVE",
+                ),
+                types.SafetySetting(
+                    category="HARM_CATEGORY_HARASSMENT",
+                    threshold="BLOCK_MEDIUM_AND_ABOVE",
+                ),
+                types.SafetySetting(
+                    category="HARM_CATEGORY_HATE_SPEECH",
+                    threshold="BLOCK_MEDIUM_AND_ABOVE",
+                ),
+                types.SafetySetting(
+                    category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    threshold="BLOCK_MEDIUM_AND_ABOVE",
+                ),
             ]
-        )
+        ),
     )
 
-async def get_valid_google_id_token(slack_user_id: str) -> tuple[str | None, str | None]:
+
+async def get_valid_google_id_token(
+    slack_user_id: str
+) -> tuple[str | None, str | None]:
     """
     Retrieves a valid Google ID token for the given Slack user.
     Refreshes the token if it's expired.
@@ -68,14 +83,17 @@ async def get_valid_google_id_token(slack_user_id: str) -> tuple[str | None, str
     """
     token_data = await get_google_token(slack_user_id)
     if not token_data:
-        return None, "I cannot search Slack because you are not signed in with Google. Please go to my Home tab and click 'Sign in with Google'."
+        return (
+            None,
+            "I cannot search Slack because you are not signed in with Google. Please go to my Home tab and click 'Sign in with Google'.",
+        )
 
     id_token = token_data.get("id_token")
     refresh_token = token_data.get("refresh_token")
     expires_at = token_data.get("expires_at", 0)
 
     # Refresh if expired (or close to it)
-    if time.time() > expires_at - 300: # 5 minute buffer
+    if time.time() > expires_at - 300:  # 5 minute buffer
         if refresh_token:
             logger.info(f"Refreshing Google ID token for user {slack_user_id}")
             new_id_token = await refresh_google_id_token(refresh_token)
@@ -86,11 +104,18 @@ async def get_valid_google_id_token(slack_user_id: str) -> tuple[str | None, str
                 token_data["expires_at"] = time.time() + 3600
                 await put_google_token(slack_user_id, token_data)
             else:
-                return None, "Your Google session has expired and I couldn't refresh it. Please sign in again on my Home tab."
+                return (
+                    None,
+                    "Your Google session has expired and I couldn't refresh it. Please sign in again on my Home tab.",
+                )
         else:
-            return None, "Your Google session has expired. Please sign in again on my Home tab."
+            return (
+                None,
+                "Your Google session has expired. Please sign in again on my Home tab.",
+            )
 
     return id_token, None
+
 
 async def search_slack(query: str, slack_user_id: str) -> str:
     """
@@ -98,7 +123,7 @@ async def search_slack(query: str, slack_user_id: str) -> str:
     """
     try:
         if not slack_user_id or slack_user_id == "unknown":
-             return "I cannot search Slack because I don't know who you are. Please interact with me from a Slack workspace."
+            return "I cannot search Slack because I don't know who you are. Please interact with me from a Slack workspace."
 
         # 1. Get a valid Google ID Token
         id_token, error_msg = await get_valid_google_id_token(slack_user_id)
@@ -106,17 +131,22 @@ async def search_slack(query: str, slack_user_id: str) -> str:
             return error_msg
 
         # 3. Connect to MCP
-        mcp_server_url = await get_secret_value('mcpSlackSearchUrl')
-        headers = {
-            'Authorization': f'Bearer {id_token}'
-        }
+        mcp_server_url = await get_secret_value("mcpSlackSearchUrl")
+        headers = {"Authorization": f"Bearer {id_token}"}
 
-        logger.info(f"Connecting to MCP URL: {mcp_server_url}/sse for user {slack_user_id}")
+        logger.info(
+            f"Connecting to MCP URL: {mcp_server_url}/sse for user {slack_user_id}"
+        )
 
-        async with sse_client(f"{mcp_server_url}/sse", headers=headers) as (read_stream, write_stream):
+        async with sse_client(f"{mcp_server_url}/sse", headers=headers) as (
+            read_stream,
+            write_stream,
+        ):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
-                result = await session.call_tool("search_slack_messages", arguments={"query": query})
+                result = await session.call_tool(
+                    "search_slack_messages", arguments={"query": query}
+                )
 
                 if not result.content or result.content[0].type != "text":
                     return "No results found in Slack."
@@ -126,14 +156,16 @@ async def search_slack(query: str, slack_user_id: str) -> str:
         logger.exception("Error in search_slack tool")
         return f"Error searching Slack: {str(e)}"
 
+
 def create_google_search_agent(model: Gemini):
     return Agent(
         name="GoogleSearchAgent",
         description="An agent that can search Google for current public information.",
         instruction="You are a research expert. Use Google Search to find current facts. Always cite your sources with URLs.",
         tools=[google_search],
-        model=model
+        model=model,
     )
+
 
 def create_slack_search_agent(model: Gemini, slack_user_id: str):
     # Capture slack_user_id in a closure
@@ -146,12 +178,13 @@ def create_slack_search_agent(model: Gemini, slack_user_id: str):
         description="An agent that can search internal Slack messages.",
         instruction="You are an internal researcher. Use the Slack Search tool to find relevant conversations. IMPORTANT: Return the raw result data exactly as received from the tool. Do NOT summarize the messages yourself; the Supervisor will handle the summarization and formatting.",
         tools=[search_slack_tool],
-        model=model
+        model=model,
     )
 
+
 async def create_supervisor_agent(slack_user_id: str):
-    bot_name = await get_secret_value('botName')
-    model_name = await get_secret_value('supervisorModel')
+    bot_name = await get_secret_value("botName")
+    model_name = await get_secret_value("supervisorModel")
 
     # Create models for all agents (can share or have individual configs)
     supervisor_model = await get_gemini_model(model_name)
@@ -180,6 +213,10 @@ async def create_supervisor_agent(slack_user_id: str):
         model=supervisor_model,
         tools=[
             AgentTool(agent=create_google_search_agent(model=google_search_model)),
-            AgentTool(agent=create_slack_search_agent(model=slack_search_model, slack_user_id=slack_user_id))
-        ]
+            AgentTool(
+                agent=create_slack_search_agent(
+                    model=slack_search_model, slack_user_id=slack_user_id
+                )
+            ),
+        ],
     )

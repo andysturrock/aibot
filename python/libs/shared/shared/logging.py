@@ -9,12 +9,31 @@ class GCPJSONFormatter(logging.Formatter):
     Formatter that outputs JSON in a format that GCP Cloud Logging can parse.
     Specifically handles multi-line tracebacks and 'extra' fields.
     """
+
     # Standard LogRecord attributes to exclude from extra
     RESERVED_ATTRS = {
-        'args', 'asctime', 'created', 'exc_info', 'exc_text', 'filename',
-        'funcName', 'levelname', 'levelno', 'lineno', 'module',
-        'msecs', 'message', 'msg', 'name', 'pathname', 'process',
-        'processName', 'relativeCreated', 'stack_info', 'thread', 'threadName'
+        "args",
+        "asctime",
+        "created",
+        "exc_info",
+        "exc_text",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "module",
+        "msecs",
+        "message",
+        "msg",
+        "name",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "stack_info",
+        "thread",
+        "threadName",
     }
 
     def format(self, record):
@@ -48,13 +67,15 @@ class GCPJSONFormatter(logging.Formatter):
 
         # Handle 'extra' fields by including everything not in RESERVED_ATTRS
         extra = {
-            k: v for k, v in record.__dict__.items()
-            if k not in self.RESERVED_ATTRS and not k.startswith('_')
+            k: v
+            for k, v in record.__dict__.items()
+            if k not in self.RESERVED_ATTRS and not k.startswith("_")
         }
         if extra:
             log_record.update(extra)
 
         return json.dumps(log_record)
+
 
 def setup_logging(level=logging.INFO):
     """
