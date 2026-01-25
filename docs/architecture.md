@@ -9,18 +9,18 @@ graph TD
     Slack[Slack API] -->|Events| Webhook[Webhook Ingress / Cloud Run]
     Webhook -->|Publish| PubSub[Google Pub/Sub]
     PubSub -->|Push| Logic[Logic Worker / Cloud Run]
-    
+
     subgraph "Logic & Intelligence"
         Logic -->|Search| MCP[Slack Search MCP / Cloud Run]
         Logic -->|History| Firestore[Cloud Firestore]
         Logic -->|LLM| VertexAI[Vertex AI / Gemini]
     end
-    
+
     subgraph "Knowledge Base"
         MCP -->|Fetch| BigQuery[BigQuery / Vector Search]
         MCP -->|Deep Links| SlackAPI[Slack API]
     end
-    
+
     Logic -->|Response| Slack
 ```
 

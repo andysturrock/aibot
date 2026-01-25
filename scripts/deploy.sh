@@ -7,13 +7,36 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
 # 1. Environment Loading
-if [ -f .env ]; then
-  echo "--- Loading .env file ---"
-  source .env
+ENV=""
+while [[ "$#" -gt 0 ]]; do
+  case $1 in
+    --env=*) ENV="${1#*=}" ;;
+    --env) ENV="$2"; shift ;;
+    --fast) FAST_MODE=true ;;
+    --no-tf) NO_TF=true ;;
+    --no-secrets) NO_SECRETS=true ;;
+    --secrets-only) SECRETS_ONLY=true ;;
+    --service) TARGET_SERVICE="$2"; shift ;;
+  esac
+  shift
+done
+
+if [[ "$ENV" != "prod" && "$ENV" != "beta" ]]; then
+  echo "Error: You must specify --env=prod or --env=beta"
+  exit 1
 fi
 
+ENV_FILE=".env.$ENV"
+if [ ! -f "$ENV_FILE" ]; then
+  echo "Error: $ENV_FILE not found."
+  exit 1
+fi
+
+echo "--- Loading $ENV_FILE file ---"
+source "$ENV_FILE"
+
 # Fallback Configuration
-echo "Using Project ID: $PROJECT_ID"
+echo "Using Project ID: $PROJECT_ID ($ENV)"
 gcloud config set project "$PROJECT_ID" --quiet
 
 REGION=${REGION:-"europe-west2"}
@@ -69,17 +92,7 @@ NO_SECRETS=false
 SECRETS_ONLY=false
 TARGET_SERVICE=""
 
-while [[ "$#" -gt 0 ]]; do
-  case $1 in
-    --fast) FAST_MODE=true ;;
-    --no-tf) NO_TF=true ;;
-    --no-secrets) NO_SECRETS=true ;;
-    --secrets-only) SECRETS_ONLY=true ;;
-    --service) TARGET_SERVICE="$2"; shift ;;
-    *) echo "Unknown parameter passed: $1"; exit 1 ;;
-  esac
-  shift
-done
+# Arguments already parsed above for environment loading
 
 if [ "$FAST_MODE" = true ]; then
   echo "--- FAST MODE: Skipping Infrastructure Bootstrap ---"
@@ -104,7 +117,7 @@ fi
 
 # 2. Foundation Bootstrap
 if [ "$NO_TF" = false ]; then
-  ( cd terraform && ./init.sh )
+  ( cd terraform && ./init.sh --env="$ENV" )
 fi
 
 # 2. Infrastructure Provisioning
@@ -130,7 +143,7 @@ fi
 SERVICES=("slack_collector" "slack_search_mcp" "aibot_logic")
 for SVC in "${SERVICES[@]}"; do
   IMG_NAME=$(echo "$SVC" | tr '_' '-')
-  
+
   # If TARGET_SERVICE is set, only build if it matches (mapping logic-side)
   if [[ -n "$TARGET_SERVICE" ]]; then
     MAPPED_TARGET=$(echo "$TARGET_SERVICE" | tr '-' '_')
@@ -165,7 +178,7 @@ for SVC in "aibot-webhook" "aibot-logic" "slack-collector" "slack-search-mcp"; d
 
   # Default: Image name matches Service name
   IMG="$SVC"
-  
+
   # Exception: aibot-webhook uses aibot-logic image
   if [ "$SVC" == "aibot-webhook" ]; then
     IMG="aibot-logic"
@@ -226,7 +239,7 @@ if [ "$NO_SECRETS" = false ]; then
     # Retrieve Backend Service ID for IAP Audience
     BACKEND_SERVICE_ID=$(gcloud compute backend-services describe slack-search-mcp-backend --global --format='value(id)' 2>/dev/null || echo "PENDING")
     IAP_AUDIENCE="/projects/${PROJECT_NUMBER}/global/backendServices/${BACKEND_SERVICE_ID}"
-    
+
     JSON_MCP=$(printf '{"iapClientId":"%s","iapClientSecret":"%s","iapAudience":"%s"}' "$IAP_CLIENT_ID" "$IAP_CLIENT_SECRET" "$IAP_AUDIENCE")
     echo "$JSON_MCP" | gcloud secrets versions add slack-search-mcp-config --data-file=-
     disable_old_versions "slack-search-mcp-config"
@@ -252,7 +265,7 @@ fi
 if [[ "$IAP_CLIENT_ID" == "PLACEHOLDER" || "$IAP_CLIENT_ID" == "REPLACE_ME" || -z "$IAP_CLIENT_ID" ]]; then
   IAP_STATUS="⚠️  ACTION REQUIRED: IAP Not Configured"
   IAP_INSTRUCTION="Google has deprecated programmatic OAuth Client creation for IAP. You must set this up manually:
-  
+
   1. Open the Google Cloud Console: https://console.cloud.google.com/apis/credentials
   2. Click '+ CREATE CREDENTIALS' -> 'OAuth client ID'
   3. Select Application type: 'Web application'

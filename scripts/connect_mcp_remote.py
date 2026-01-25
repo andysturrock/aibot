@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import os
@@ -11,12 +10,15 @@ from mcp.client.sse import sse_client
 
 try:
     from google_auth_oauthlib.flow import InstalledAppFlow
+
     HAS_OAUTHLIB = True
 except ImportError:
     HAS_OAUTHLIB = False
 
 # Add shared library to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../python/libs/shared")))
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../python/libs/shared"))
+)
 
 
 # Configure logging
@@ -26,13 +28,14 @@ logger = logging.getLogger("remote_debug")
 # Load .env file
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
     logger.info("Loaded .env file")
 except ImportError:
     logger.warning("python-dotenv not installed, skipping .env load")
 
 # Configuration
-os.environ["K_SERVICE"] = "slack-search-mcp" # Fixes shared lib warning/fallback
+os.environ["K_SERVICE"] = "slack-search-mcp"  # Fixes shared lib warning/fallback
 
 CUSTOM_FQDN = os.environ.get("CUSTOM_FQDN")
 if not CUSTOM_FQDN:
@@ -42,11 +45,12 @@ if not CUSTOM_FQDN:
 MCP_URL = f"https://{CUSTOM_FQDN}/mcp/sse"
 
 
-
 async def get_id_token_via_local_flow(client_id, client_secret):
     """Perform a local OAuth flow to get an ID token."""
     if not HAS_OAUTHLIB:
-        logger.error("google-auth-oauthlib is not installed. Please run: pip install google-auth-oauthlib")
+        logger.error(
+            "google-auth-oauthlib is not installed. Please run: pip install google-auth-oauthlib"
+        )
         return None
 
     client_config = {
@@ -68,7 +72,7 @@ async def get_id_token_via_local_flow(client_id, client_secret):
         # IMPORTANT: Add http://localhost:8080/ to your OAuth Client Redirect URIs
         creds = flow.run_local_server(port=8080)
 
-        if hasattr(creds, 'id_token'):
+        if hasattr(creds, "id_token"):
             return creds.id_token
         else:
             logger.error("No ID token found in retrieved credentials.")
@@ -76,6 +80,7 @@ async def get_id_token_via_local_flow(client_id, client_secret):
     except Exception as e:
         logger.error(f"Error during local OAuth flow: {e}")
         return None
+
 
 async def run_test():
     # Ensure PROJECT_ID is set
@@ -86,18 +91,23 @@ async def run_test():
     else:
         # Try to get from gcloud config
         try:
-             proj = subprocess.check_output(["gcloud", "config", "get-value", "project"], text=True).strip()
-             os.environ["GOOGLE_CLOUD_PROJECT"] = proj
-             logger.info(f"Set GOOGLE_CLOUD_PROJECT to {proj}")
+            proj = subprocess.check_output(
+                ["gcloud", "config", "get-value", "project"], text=True
+            ).strip()
+            os.environ["GOOGLE_CLOUD_PROJECT"] = proj
+            logger.info(f"Set GOOGLE_CLOUD_PROJECT to {proj}")
         except Exception:
-             logger.warning("Could not set GOOGLE_CLOUD_PROJECT from env or gcloud.")
+            logger.warning("Could not set GOOGLE_CLOUD_PROJECT from env or gcloud.")
 
     # 1. Fetch Secrets
     try:
         logger.info("Fetching secrets...")
         # iapClientId is in slack-search-mcp-config
         from shared.gcp_api import _access_secret
-        mcp_secrets = await _access_secret(os.environ["GOOGLE_CLOUD_PROJECT"], "slack-search-mcp-config")
+
+        mcp_secrets = await _access_secret(
+            os.environ["GOOGLE_CLOUD_PROJECT"], "slack-search-mcp-config"
+        )
         if not mcp_secrets:
             logger.error("❌ Could not fetch 'slack-search-mcp-config' secret.")
             return
@@ -124,14 +134,25 @@ async def run_test():
         logger.info(f"Fetching token for {user_email} from Firestore...")
         try:
             from google.cloud import firestore
-            db = firestore.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT", "PROJECT_ID_PLACEHOLDER"))
-            docs = db.collection("AIBot_Google_Tokens").where("email", "==", user_email).stream()
+
+            db = firestore.Client(
+                project=os.environ.get("GOOGLE_CLOUD_PROJECT", "PROJECT_ID_PLACEHOLDER")
+            )
+            docs = (
+                db.collection("AIBot_Google_Tokens")
+                .where("email", "==", user_email)
+                .stream()
+            )
             token_doc = next(docs, None)
             if token_doc:
                 id_token_val = token_doc.to_dict().get("id_token")
-                logger.info(f"Successfully retrieved token for {user_email} from Firestore.")
+                logger.info(
+                    f"Successfully retrieved token for {user_email} from Firestore."
+                )
             else:
-                logger.error(f"❌ No token found in Firestore for {user_email}. Have you signed in at https://aibot.slackapps.atombank.co.uk/auth/login?")
+                logger.error(
+                    f"❌ No token found in Firestore for {user_email}. Have you signed in at https://aibot.slackapps.atombank.co.uk/auth/login?"
+                )
                 return
         except Exception as e:
             logger.error(f"❌ Error fetching token from Firestore: {e}")
@@ -139,8 +160,12 @@ async def run_test():
     else:
         # Try local flow if secrets are available
         if iap_client_id and iap_client_secret:
-            logger.info("No token provided. Attempting local 'Log in with Google' flow...")
-            id_token_val = await get_id_token_via_local_flow(iap_client_id, iap_client_secret)
+            logger.info(
+                "No token provided. Attempting local 'Log in with Google' flow..."
+            )
+            id_token_val = await get_id_token_via_local_flow(
+                iap_client_id, iap_client_secret
+            )
 
         if not id_token_val:
             # Fallback to gcloud check (for information only)
@@ -149,28 +174,38 @@ async def run_test():
                 # Note: gcloud auth print-identity-token for USER accounts does NOT support --audiences.
                 # It only works for Service Accounts.
                 cmd = [
-                    "gcloud", "auth", "print-identity-token",
-                    f"--audiences={iap_client_id}"
+                    "gcloud",
+                    "auth",
+                    "print-identity-token",
+                    f"--audiences={iap_client_id}",
                 ]
-                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, check=False
+                )
                 if result.returncode == 0:
                     id_token_val = result.stdout.strip()
                     logger.info("Generated ID Token via gcloud.")
                 else:
-                    logger.warning("gcloud failed to generate token with audience (this is expected for personal accounts).")
+                    logger.warning(
+                        "gcloud failed to generate token with audience (this is expected for personal accounts)."
+                    )
                     print("\n💡 TIP: For a real test as a user:")
-                    print("   1. Sign in at https://aibot.slackapps.atombank.co.uk/auth/login")
-                    print("   2. Run: export IAP_USER_EMAIL=$(gcloud config get-value account) && python scripts/connect_mcp_remote.py\n")
-                    print("   Alternatively, the local flow above should have triggered if you have google-auth-oauthlib installed.")
+                    print(
+                        "   1. Sign in at https://aibot.slackapps.atombank.co.uk/auth/login"
+                    )
+                    print(
+                        "   2. Run: export IAP_USER_EMAIL=$(gcloud config get-value account) && python scripts/connect_mcp_remote.py\n"
+                    )
+                    print(
+                        "   Alternatively, the local flow above should have triggered if you have google-auth-oauthlib installed."
+                    )
                     return
 
             except Exception as e:
                 logger.error(f"❌ Failed all token generation methods: {e}")
                 return
 
-    headers = {
-        "Authorization": f"Bearer {id_token_val}"
-    }
+    headers = {"Authorization": f"Bearer {id_token_val}"}
 
     # Print Curl command for debugging
     logger.info("--- Curl Command for Debugging ---")
@@ -205,7 +240,9 @@ async def run_test():
                 logger.info(f"Tools found: {[t.name for t in tools.tools]}")
 
                 logger.info("Calling search_slack_messages...")
-                result = await session.call_tool("search_slack_messages", arguments={"query": "hello"})
+                result = await session.call_tool(
+                    "search_slack_messages", arguments={"query": "hello"}
+                )
                 logger.info(f"Result: {result.content[0].text[:100]}...")
 
     except httpx.HTTPStatusError as e:
@@ -218,15 +255,20 @@ async def run_test():
     except Exception as e:
         logger.error(f"❌ Error: {e}")
         # Try to print more info if it's an exception group wrapping httpx error
-        if hasattr(e, 'exceptions'):
+        if hasattr(e, "exceptions"):
             for ex in e.exceptions:
                 if isinstance(ex, httpx.HTTPStatusError):
-                     try:
-                         # Attempt to read content if possible, mainly for logging
-                         await ex.response.aread()
-                         logger.error(f"Sub-error HTTP: {ex.response.status_code} - {ex.response.text}")
-                     except Exception as read_err:
-                         logger.error(f"Sub-error HTTP: {ex.response.status_code} (Could not read body: {read_err})")
+                    try:
+                        # Attempt to read content if possible, mainly for logging
+                        await ex.response.aread()
+                        logger.error(
+                            f"Sub-error HTTP: {ex.response.status_code} - {ex.response.text}"
+                        )
+                    except Exception as read_err:
+                        logger.error(
+                            f"Sub-error HTTP: {ex.response.status_code} (Could not read body: {read_err})"
+                        )
+
 
 if __name__ == "__main__":
     asyncio.run(run_test())
