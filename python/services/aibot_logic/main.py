@@ -6,6 +6,7 @@ import os
 import random
 import time
 import traceback
+from contextlib import asynccontextmanager
 
 # Service specific imports
 from agents import create_supervisor_agent
@@ -150,9 +151,22 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             raise
 
 
+# --- Lifespan Handler ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Log all registered routes for debugging 404s
+    for route in app.routes:
+        logger.info(f"Registered route: {route.path} [{','.join(route.methods)}]")
+    yield
+
+
 # --- FastAPI App ---
 app = FastAPI(
-    title="AIBot Logic (FastAPI)", docs_url=None, redoc_url=None, openapi_url=None
+    title="AIBot Logic (FastAPI)",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    lifespan=lifespan,
 )
 app.add_middleware(SecurityMiddleware)
 
@@ -171,13 +185,6 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500, content={"message": f"Internal Server Error: {str(exc)}"}
     )
-
-
-@app.on_event("startup")
-async def startup_event():
-    # Log all registered routes for debugging 404s
-    for route in app.routes:
-        logger.info(f"Registered route: {route.path} [{','.join(route.methods)}]")
 
 
 # --- Slack Helpers ---
