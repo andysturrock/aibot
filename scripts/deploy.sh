@@ -20,6 +20,7 @@ REGION=${REGION:-"europe-west2"}
 BQ_LOCATION=${MULTI_REGION:-"EU"}
 PROJECT_NUMBER=${PROJECT_NUMBER:-$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')}
 CUSTOM_FQDN=${CUSTOM_FQDN:-"aibot.example.com"}
+GITHUB_REPO=${GITHUB_REPO:-"andysturrock/aibot"}
 
 echo "Using Project Number: $PROJECT_NUMBER"
 echo "Region: $REGION"
@@ -40,6 +41,7 @@ gcloud services enable \
   compute.googleapis.com \
   iap.googleapis.com \
   serviceusage.googleapis.com \
+  sts.googleapis.com \
   --project="$PROJECT_ID" --quiet
 
 # Foundation: Ensure IAP Service Identity is provisioned (required for Cloud Run IAP)
@@ -58,7 +60,8 @@ TF_VARS="-var=gcp_gemini_project_id=$PROJECT_ID \
          -var=gcp_bq_location=$BQ_LOCATION \
          -var=custom_fqdn=$CUSTOM_FQDN \
          -var=iap_client_id=$IAP_CLIENT_ID \
-         -var=iap_client_secret=$IAP_CLIENT_SECRET"
+         -var=iap_client_secret=$IAP_CLIENT_SECRET \
+         -var=github_repo=$GITHUB_REPO"
 
 FAST_MODE=false
 NO_TF=false

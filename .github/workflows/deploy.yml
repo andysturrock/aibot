@@ -65,7 +65,7 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Configure Docker for GCP
-        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
 
       - name: Build and Push Images
         run: |
@@ -75,8 +75,8 @@ jobs:
           for i in "${!SERVICES[@]}"; do
             SERVICE=${SERVICES[$i]}
             DIR=${FOR_DIRS[$i]}
-            IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/aibot-images/$SERVICE:${{ github.sha }}"
-            LATEST_IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/aibot-images/$SERVICE:latest"
+            IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/$SERVICE:${{ github.sha }}"
+            LATEST_IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/$SERVICE:latest"
             
             echo "Building $SERVICE from python/services/$DIR..."
             docker build -t $IMAGE ./python/services/$DIR
@@ -91,28 +91,28 @@ jobs:
         run: |
           # Deploy services
           # aibot-webhook and aibot-logic both use the aibot-logic image
-          LOGIC_IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/aibot-images/aibot-logic:${{ github.sha }}"
+          LOGIC_IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/aibot-logic:${{ github.sha }}"
           
           gcloud run deploy aibot-webhook \
             --image $LOGIC_IMAGE \
-            --region ${{ vars.GCP_REGION }} \
-            --project ${{ vars.GCP_PROJECT_ID }} \
+            --region ${{ secrets.GCP_REGION }} \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
             --quiet
 
           gcloud run deploy aibot-logic \
             --image $LOGIC_IMAGE \
-            --region ${{ vars.GCP_REGION }} \
-            --project ${{ vars.GCP_PROJECT_ID }} \
+            --region ${{ secrets.GCP_REGION }} \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
             --quiet
 
           gcloud run deploy slack-search-mcp \
-            --image ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/aibot-images/slack-search-mcp:${{ github.sha }} \
-            --region ${{ vars.GCP_REGION }} \
-            --project ${{ vars.GCP_PROJECT_ID }} \
+            --image ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/slack-search-mcp:${{ github.sha }} \
+            --region ${{ secrets.GCP_REGION }} \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
             --quiet
 
           gcloud run deploy slack-collector \
-            --image ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/aibot-images/slack-collector:${{ github.sha }} \
-            --region ${{ vars.GCP_REGION }} \
-            --project ${{ vars.GCP_PROJECT_ID }} \
+            --image ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/slack-collector:${{ github.sha }} \
+            --region ${{ secrets.GCP_REGION }} \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
             --quiet
