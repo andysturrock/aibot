@@ -1,5 +1,6 @@
 # Inherit from our optimized base image (pre-warmed with OS deps and venv)
-FROM aibot-base:latest
+ARG BASE_IMAGE=aibot-base:latest
+FROM ${BASE_IMAGE}
 
 # Define the service to build
 ARG SERVICE_NAME

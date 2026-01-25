@@ -1,12 +1,12 @@
-import os
+import asyncio
 import json
 import logging
-import asyncio
-from typing import Optional
-from google.cloud import secretmanager_v1, pubsub_v1
+import os
+
 import google.auth
-from google.auth.transport.requests import Request
 import google.oauth2.id_token
+from google.auth.transport.requests import Request
+from google.cloud import pubsub_v1, secretmanager_v1
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ async def _access_secret(project_id, secret_name):
         return None
 
 async def get_secret_value(secret_key: str) -> str:
-    """Retrieves a secret from GCP Secret Manager (Async). 
+    """Retrieves a secret from GCP Secret Manager (Async).
     Checks AIBot-shared-config first, then falls back to [service]-config.
     """
     # 1. Check local environment variables first
@@ -56,15 +56,15 @@ async def publish_to_topic(topic_name: str, payload: str):
     """Publishes a message to a Pub/Sub topic (Async)."""
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
     if not project_id:
-        raise EnvironmentError("GOOGLE_CLOUD_PROJECT environment variable is required and must be set explicitly.")
+        raise OSError("GOOGLE_CLOUD_PROJECT environment variable is required and must be set explicitly.")
 
     # publisher_v1.PublisherClient's publish method is already non-blocking (returns a future),
     # but we can wrap it to be more idiomatic async.
     publisher = pubsub_v1.PublisherClient()
     topic_path = publisher.topic_path(project_id, topic_name)
-    
+
     data = payload.encode("utf-8")
-    
+
     try:
         # publish is thread-safe and non-blocking
         future = publisher.publish(topic_path, data)
@@ -81,7 +81,7 @@ async def get_id_token(audience: str) -> str:
     """Fetches a Google OIDC ID token for the given audience (Async)."""
     # Requesting an ID token from the metadata server
     auth_request = Request()
-    
+
     # metadata server is very fast, run in executor to keep loop free
     loop = asyncio.get_event_loop()
     try:

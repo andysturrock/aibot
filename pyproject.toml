@@ -1,0 +1,24 @@
+[tool.ruff]
+# Target version for Python
+target-version = "py311"
+
+# Enable all default rules plus a few extras
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "W",    # pycodestyle warnings
+]
+ignore = [
+    "E501", # line-length (often better managed manually)
+]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.format]
+# Keep it simple
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
