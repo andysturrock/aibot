@@ -100,20 +100,20 @@ else
     # SSE streams are infinite, so curl will hang. We use --max-time 3 to stop it.
     # We capture stdout to see if we get success output (not exit code).
     # Correct way: use -w to print code, but since it times out (exit 28), we need to be careful.
-    
+
     # Run curl, capture output AND exit code logic
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 -H "X-Slack-Token: $SLACK_TOKEN" "http://127.0.0.1:$PORT/mcp/sse" || true)
-    
-    # If curl times out (normal for SSE), it might still print the http_code if strictly ordered. 
-    # But usually it prints http_code at END. 
+
+    # If curl times out (normal for SSE), it might still print the http_code if strictly ordered.
+    # But usually it prints http_code at END.
     # Option B: Use -I (HEAD) failed.
     # Option C: Use --head AND -X GET? No.
     # We will trust the previous manual verification that 'curl -v' worked.
     # Let's try running curl in background and killing it? Too complex.
-    
+
     # Let's inspect the headers instead with -D
     curl -s --max-time 3 -D /tmp/headers.txt -o /dev/null -H "X-Slack-Token: $SLACK_TOKEN" "http://127.0.0.1:$PORT/mcp/sse" || true
-    
+
     if grep -q "200 OK" /tmp/headers.txt; then
         echo "✅ Connection Successful! (Header 200 OK received)"
         rm /tmp/headers.txt
