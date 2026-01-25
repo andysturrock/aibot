@@ -7,13 +7,36 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
 # 1. Environment Loading
-if [ -f .env ]; then
-  echo "--- Loading .env file ---"
-  source .env
+ENV=""
+while [[ "$#" -gt 0 ]]; do
+  case $1 in
+    --env=*) ENV="${1#*=}" ;;
+    --env) ENV="$2"; shift ;;
+    --fast) FAST_MODE=true ;;
+    --no-tf) NO_TF=true ;;
+    --no-secrets) NO_SECRETS=true ;;
+    --secrets-only) SECRETS_ONLY=true ;;
+    --service) TARGET_SERVICE="$2"; shift ;;
+  esac
+  shift
+done
+
+if [[ "$ENV" != "prod" && "$ENV" != "beta" ]]; then
+  echo "Error: You must specify --env=prod or --env=beta"
+  exit 1
 fi
 
+ENV_FILE=".env.$ENV"
+if [ ! -f "$ENV_FILE" ]; then
+  echo "Error: $ENV_FILE not found."
+  exit 1
+fi
+
+echo "--- Loading $ENV_FILE file ---"
+source "$ENV_FILE"
+
 # Fallback Configuration
-echo "Using Project ID: $PROJECT_ID"
+echo "Using Project ID: $PROJECT_ID ($ENV)"
 gcloud config set project "$PROJECT_ID" --quiet
 
 REGION=${REGION:-"europe-west2"}
@@ -69,17 +92,7 @@ NO_SECRETS=false
 SECRETS_ONLY=false
 TARGET_SERVICE=""
 
-while [[ "$#" -gt 0 ]]; do
-  case $1 in
-    --fast) FAST_MODE=true ;;
-    --no-tf) NO_TF=true ;;
-    --no-secrets) NO_SECRETS=true ;;
-    --secrets-only) SECRETS_ONLY=true ;;
-    --service) TARGET_SERVICE="$2"; shift ;;
-    *) echo "Unknown parameter passed: $1"; exit 1 ;;
-  esac
-  shift
-done
+# Arguments already parsed above for environment loading
 
 if [ "$FAST_MODE" = true ]; then
   echo "--- FAST MODE: Skipping Infrastructure Bootstrap ---"
@@ -104,7 +117,7 @@ fi
 
 # 2. Foundation Bootstrap
 if [ "$NO_TF" = false ]; then
-  ( cd terraform && ./init.sh )
+  ( cd terraform && ./init.sh --env="$ENV" )
 fi
 
 # 2. Infrastructure Provisioning
