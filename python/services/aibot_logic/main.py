@@ -7,6 +7,8 @@ import random
 import time
 import traceback
 
+# Service specific imports
+from agents import create_supervisor_agent
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -35,9 +37,6 @@ from shared.security import (
 )
 from shared.slack_api import create_bot_client
 from starlette.middleware.base import BaseHTTPMiddleware
-
-# Service specific imports
-from agents import create_supervisor_agent
 
 load_dotenv()
 setup_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
