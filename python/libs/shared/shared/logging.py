@@ -1,7 +1,8 @@
-import logging
 import json
+import logging
 import sys
 from datetime import datetime
+
 
 class GCPJSONFormatter(logging.Formatter):
     """
@@ -63,17 +64,17 @@ def setup_logging(level=logging.INFO):
     # Use stdout for all logs to ensure Cloud Run captures them
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(GCPJSONFormatter())
-    
+
     root_logger = logging.getLogger()
     # Remove existing handlers to avoid duplicate logs (especially from FastAPI/Uvicorn)
     for h in root_logger.handlers[:]:
         root_logger.removeHandler(h)
-    
+
     root_logger.addHandler(handler)
     root_logger.setLevel(level)
 
     # Specific tweaks for Uvicorn/FastAPI to ensure they use our formatter
     for logger_name in ["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"]:
-        l = logging.getLogger(logger_name)
-        l.handlers = [handler]
-        l.propagate = False
+        lgr = logging.getLogger(logger_name)
+        lgr.handlers = [handler]
+        lgr.propagate = False

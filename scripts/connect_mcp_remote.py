@@ -1,15 +1,13 @@
 
 import asyncio
-import os
-import sys
 import logging
-import json
+import os
 import subprocess
+import sys
+
+import httpx
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
-from google.auth.transport.requests import Request
-import google.oauth2.id_token
-import httpx
 
 try:
     from google_auth_oauthlib.flow import InstalledAppFlow
@@ -20,7 +18,6 @@ except ImportError:
 # Add shared library to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../python/libs/shared")))
 
-from shared.gcp_api import get_secret_value, get_id_token
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -60,17 +57,17 @@ async def get_id_token_via_local_flow(client_id, client_secret):
             "token_uri": "https://oauth2.googleapis.com/token",
         }
     }
-    
+
     # We need the 'openid' and 'email' scopes to get an ID token
     scopes = ["openid", "https://www.googleapis.com/auth/userinfo.email"]
-    
+
     try:
         logger.info("Starting local OAuth flow... A browser window should open.")
         flow = InstalledAppFlow.from_client_config(client_config, scopes=scopes)
         # Use a fixed port to make whitelisting in GCP Console easier
         # IMPORTANT: Add http://localhost:8080/ to your OAuth Client Redirect URIs
         creds = flow.run_local_server(port=8080)
-        
+
         if hasattr(creds, 'id_token'):
             return creds.id_token
         else:
@@ -83,7 +80,7 @@ async def get_id_token_via_local_flow(client_id, client_secret):
 async def run_test():
     # Ensure PROJECT_ID is set
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("PROJECT_ID")
-    
+
     if project_id:
         os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
     else:
@@ -92,7 +89,7 @@ async def run_test():
              proj = subprocess.check_output(["gcloud", "config", "get-value", "project"], text=True).strip()
              os.environ["GOOGLE_CLOUD_PROJECT"] = proj
              logger.info(f"Set GOOGLE_CLOUD_PROJECT to {proj}")
-        except:
+        except Exception:
              logger.warning("Could not set GOOGLE_CLOUD_PROJECT from env or gcloud.")
 
     # 1. Fetch Secrets
@@ -110,7 +107,7 @@ async def run_test():
         if not iap_client_id:
             logger.error("❌ 'iapClientId' not found in mcp-config.")
             return
-        
+
         logger.info(f"Using IAP Client ID: {iap_client_id}")
 
     except Exception as e:
@@ -120,7 +117,7 @@ async def run_test():
     # 2. Generate ID Token
     id_token_val = os.environ.get("IAP_TOKEN")
     user_email = os.environ.get("IAP_USER_EMAIL")
-    
+
     if id_token_val:
         logger.info("Using IAP_TOKEN from environment.")
     elif user_email:
@@ -144,7 +141,7 @@ async def run_test():
         if iap_client_id and iap_client_secret:
             logger.info("No token provided. Attempting local 'Log in with Google' flow...")
             id_token_val = await get_id_token_via_local_flow(iap_client_id, iap_client_secret)
-            
+
         if not id_token_val:
             # Fallback to gcloud check (for information only)
             logger.info("Attempting to generate ID Token via gcloud...")
@@ -152,7 +149,7 @@ async def run_test():
                 # Note: gcloud auth print-identity-token for USER accounts does NOT support --audiences.
                 # It only works for Service Accounts.
                 cmd = [
-                    "gcloud", "auth", "print-identity-token", 
+                    "gcloud", "auth", "print-identity-token",
                     f"--audiences={iap_client_id}"
                 ]
                 result = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -162,8 +159,8 @@ async def run_test():
                 else:
                     logger.warning("gcloud failed to generate token with audience (this is expected for personal accounts).")
                     print("\n💡 TIP: For a real test as a user:")
-                    print(f"   1. Sign in at https://aibot.slackapps.atombank.co.uk/auth/login")
-                    print(f"   2. Run: export IAP_USER_EMAIL=$(gcloud config get-value account) && python scripts/connect_mcp_remote.py\n")
+                    print("   1. Sign in at https://aibot.slackapps.atombank.co.uk/auth/login")
+                    print("   2. Run: export IAP_USER_EMAIL=$(gcloud config get-value account) && python scripts/connect_mcp_remote.py\n")
                     print("   Alternatively, the local flow above should have triggered if you have google-auth-oauthlib installed.")
                     return
 
@@ -202,11 +199,11 @@ async def run_test():
             async with ClientSession(read_stream, write_stream) as session:
                 logger.info("Initializing session...")
                 await session.initialize()
-                
+
                 logger.info("Listing tools...")
                 tools = await session.list_tools()
                 logger.info(f"Tools found: {[t.name for t in tools.tools]}")
-                
+
                 logger.info("Calling search_slack_messages...")
                 result = await session.call_tool("search_slack_messages", arguments={"query": "hello"})
                 logger.info(f"Result: {result.content[0].text[:100]}...")

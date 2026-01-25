@@ -1,28 +1,26 @@
-import os
-import logging
-from typing import List, Dict, Any
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import asyncio
+import logging
+import os
 import traceback
-import json
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from fastapi import FastAPI, Response, Request
-from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
-from google.cloud import bigquery
 from dotenv import load_dotenv
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
+from google.cloud import bigquery
+from shared.gcp_api import get_secret_value
 
 # Import from shared library submodules
 from shared.logging import setup_logging
-from shared.gcp_api import get_secret_value
-from shared.slack_api import (
-    Message, 
-    get_public_channels, 
-    get_channel_messages_using_token
-)
 from shared.security import is_team_authorized
+from shared.slack_api import (
+    Message,
+    get_channel_messages_using_token,
+    get_public_channels,
+)
+from starlette.middleware.base import BaseHTTPMiddleware
+from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
 
 load_dotenv()
 setup_logging()
@@ -38,7 +36,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
         method = request.method
-        
+
         if path == "/health":
             return await call_next(request)
 
@@ -83,7 +81,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # --- Service Logic ---
 
 class MessageWithEmbeddings(Message):
-    embeddings: List[float]
+    embeddings: list[float]
 
     def __init__(self, message: Message):
         super().__init__(message.user, message.text, message.date, message.ts)
@@ -107,7 +105,7 @@ class ChannelMetadata:
 async def collect_slack_messages():
     team_ids_from_secret = await get_secret_value('teamIdsForSearch')
     team_ids_for_search = [id.strip() for id in team_ids_from_secret.split(',') if id.strip()]
-    
+
     if not team_ids_for_search:
         logger.error("Security risk: No whitelisted teams configured for collection. Denying all processing.")
         return "Access Denied: No whitelisted teams"
@@ -115,7 +113,7 @@ async def collect_slack_messages():
     slack_user_token = await get_secret_value('slackUserToken')
     bigquery_client = bigquery.Client()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     for team_id in team_ids_for_search:
         if not await is_team_authorized(team_id):
@@ -125,19 +123,19 @@ async def collect_slack_messages():
         logger.info(f"Processing teamId <{team_id}>")
         public_channels = await get_public_channels(team_id) or []
         channels_metadata = await get_channels_metadata(bigquery_client, public_channels)
-        
+
         for public_channel in public_channels:
             logger.info(f"Checking {public_channel['name']} ({public_channel['id']})...")
             channel_metadata = channels_metadata.get(public_channel['id'])
             if not channel_metadata:
-                created_datetime = datetime.fromtimestamp(public_channel['created'], tz=timezone.utc)
+                created_datetime = datetime.fromtimestamp(public_channel['created'], tz=UTC)
                 channel_metadata = ChannelMetadata(
                     public_channel['id'], public_channel['name'], created_datetime, created_datetime
                 )
-                
+
             last_download_datetime = channel_metadata.last_download_datetime
             time_diff = now - last_download_datetime
-            
+
             if time_diff.total_seconds() < 600:
                 logger.info(f"Last downloaded at {last_download_datetime} so skipping...")
                 continue
@@ -163,12 +161,12 @@ async def collect_slack_messages():
             logger.info("Saving metadata...")
             channel_metadata.last_download_datetime = now
             await put_channel_metadata(bigquery_client, channel_metadata)
-    
+
     return "OK"
 
-async def create_message_embeddings(messages: List[Message]) -> List[MessageWithEmbeddings]:
+async def create_message_embeddings(messages: list[Message]) -> list[MessageWithEmbeddings]:
     model = TextEmbeddingModel.from_pretrained("text-embedding-004")
-    messages_with_embeddings: List[MessageWithEmbeddings] = list()
+    messages_with_embeddings: list[MessageWithEmbeddings] = list()
     for message in messages:
         message_with_embeddings = MessageWithEmbeddings(message)
         inputs = [TextEmbeddingInput(message_with_embeddings.text, "RETRIEVAL_DOCUMENT")]
@@ -177,8 +175,9 @@ async def create_message_embeddings(messages: List[Message]) -> List[MessageWith
         messages_with_embeddings.append(message_with_embeddings)
     return messages_with_embeddings
 
-async def put_channel_messages(bigquery_client: bigquery.Client, channel_id: str, messages: List[MessageWithEmbeddings]):
-    if not messages: return
+async def put_channel_messages(bigquery_client: bigquery.Client, channel_id: str, messages: list[MessageWithEmbeddings]):
+    if not messages:
+        return
     table = bigquery_client.get_table(f"{DATASET_NAME}.{CONTENT_TABLE_NAME}")
     bq_rows = [{"channel": channel_id, "ts": float(m.ts), "embeddings": m.embeddings} for m in messages]
     loop = asyncio.get_event_loop()
@@ -190,14 +189,15 @@ async def put_channel_metadata(bigquery_client: bigquery.Client, channel_metadat
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, lambda: bigquery_client.insert_rows(table=table, rows=bq_rows))
 
-async def get_channels_metadata(bigquery_client: bigquery.Client, channels: list[Dict]) -> dict[str, ChannelMetadata]:
-    if not channels: return {}
+async def get_channels_metadata(bigquery_client: bigquery.Client, channels: list[dict]) -> dict[str, ChannelMetadata]:
+    if not channels:
+        return {}
     sql_channel_ids = ', '.join([f"\"{c['id']}\"" for c in channels])
     query = f"SELECT channel_id, channel_name, created_datetime, MAX(last_download_datetime) as last_download_datetime FROM {DATASET_NAME}.{METADATA_TABLE_NAME} WHERE channel_id in ({sql_channel_ids}) GROUP BY channel_id, channel_name, created_datetime"
     loop = asyncio.get_event_loop()
     query_job = await loop.run_in_executor(None, bigquery_client.query, query)
     rows = await loop.run_in_executor(None, query_job.result)
-    return {r['channel_id']: ChannelMetadata(r['channel_id'], r['channel_name'], r['created_datetime'].replace(tzinfo=timezone.utc), r['last_download_datetime'].replace(tzinfo=timezone.utc)) for r in rows}
+    return {r['channel_id']: ChannelMetadata(r['channel_id'], r['channel_name'], r['created_datetime'].replace(tzinfo=UTC), r['last_download_datetime'].replace(tzinfo=UTC)) for r in rows}
 
 # --- Routes ---
 
