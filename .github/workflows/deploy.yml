@@ -107,22 +107,26 @@ jobs:
             --image $LOGIC_IMAGE \
             --region ${{ secrets.GCP_REGION }} \
             --project ${{ secrets.GCP_PROJECT_ID }} \
+            --allow-unauthenticated \
             --quiet
 
           gcloud run deploy aibot-logic \
             --image $LOGIC_IMAGE \
             --region ${{ secrets.GCP_REGION }} \
             --project ${{ secrets.GCP_PROJECT_ID }} \
+            --no-allow-unauthenticated \
             --quiet
 
           gcloud run deploy slack-search-mcp \
             --image ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/slack-search-mcp:${{ github.sha }} \
             --region ${{ secrets.GCP_REGION }} \
             --project ${{ secrets.GCP_PROJECT_ID }} \
+            --no-allow-unauthenticated \
             --quiet
 
           gcloud run deploy slack-collector \
             --image ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/slack-collector:${{ github.sha }} \
             --region ${{ secrets.GCP_REGION }} \
             --project ${{ secrets.GCP_PROJECT_ID }} \
+            --no-allow-unauthenticated \
             --quiet
