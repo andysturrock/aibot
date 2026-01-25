@@ -1,10 +1,12 @@
+import hashlib
+import hmac
+import json
+import logging
 import os
 import time
-import hmac
-import hashlib
-import json
+
 import httpx
-import logging
+import pytest
 from dotenv import load_dotenv
 
 # Setup logging
@@ -19,20 +21,21 @@ SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 def generate_slack_headers(body: str, timestamp: str = None):
     if timestamp is None:
         timestamp = str(int(time.time()))
-    
+
     sig_basestring = f"v0:{timestamp}:{body}"
     signature = "v0=" + hmac.new(
         SLACK_SIGNING_SECRET.encode(),
         sig_basestring.encode(),
         hashlib.sha256
     ).hexdigest()
-    
+
     return {
         "X-Slack-Request-Timestamp": timestamp,
         "X-Slack-Signature": signature,
         "Content-Type": "application/json"
     }
 
+@pytest.mark.asyncio
 async def test_url_verification():
     logger.info("Testing /slack/events (url_verification)...")
     url = f"{BASE_URL}/slack/events"
@@ -43,13 +46,13 @@ async def test_url_verification():
     }
     body = json.dumps(payload)
     headers = generate_slack_headers(body)
-    
+
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(url, content=body, headers=headers, timeout=10.0)
             logger.info(f"Status: {response.status_code}")
             logger.info(f"Response: {response.text}")
-            
+
             if response.status_code == 200:
                 data = response.json()
                 if data.get("challenge") == "challenge_accepted_123":
@@ -61,6 +64,7 @@ async def test_url_verification():
         except Exception as e:
             logger.error(f"Error during test: {e}")
 
+@pytest.mark.asyncio
 async def test_invalid_signature():
     logger.info("Testing /slack/events (invalid signature)...")
     url = f"{BASE_URL}/slack/events"
@@ -71,7 +75,7 @@ async def test_invalid_signature():
         "X-Slack-Signature": "v0=invalid_signature",
         "Content-Type": "application/json"
     }
-    
+
     async with httpx.AsyncClient() as client:
         response = await client.post(url, content=body, headers=headers)
         logger.info(f"Status: {response.status_code} (Expected: 401)")
@@ -80,6 +84,7 @@ async def test_invalid_signature():
         else:
             logger.error(f"FAILURE: Expected 401 but got {response.status_code}")
 
+@pytest.mark.asyncio
 async def test_health_check():
     logger.info("Testing /health...")
     url = f"{BASE_URL}/health"
@@ -96,7 +101,7 @@ if __name__ == "__main__":
     if not SLACK_SIGNING_SECRET:
         print("Error: SLACK_SIGNING_SECRET not found in .env")
         exit(1)
-        
+
     asyncio.run(test_health_check())
     asyncio.run(test_url_verification())
     asyncio.run(test_invalid_signature())

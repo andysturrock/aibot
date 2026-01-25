@@ -47,3 +47,9 @@ variable "iap_client_secret" {
   description = "OAuth 2.0 Client Secret for IAP"
   default     = "PLACEHOLDER"
 }
+
+variable "github_repo" {
+  type        = string
+  description = "GitHub repository in 'owner/repo' format (e.g. andysturrock/aibot)"
+  default     = "andysturrock/aibot"
+}
