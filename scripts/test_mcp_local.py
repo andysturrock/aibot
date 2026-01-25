@@ -8,10 +8,19 @@ from mcp.client.sse import sse_client
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("test_mcp_local")
 
+
 async def get_slack_token():
     try:
         # Fetch the full JSON secret
-        cmd = ["gcloud", "secrets", "versions", "access", "latest", "--secret=AIBot-shared-config", "--format=value(payload.data)"]
+        cmd = [
+            "gcloud",
+            "secrets",
+            "versions",
+            "access",
+            "latest",
+            "--secret=AIBot-shared-config",
+            "--format=value(payload.data)",
+        ]
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
@@ -22,11 +31,13 @@ async def get_slack_token():
             return None
 
         import json
+
         secret_data = json.loads(stdout.decode().strip())
         return secret_data.get("slackUserToken")
     except Exception as e:
         logger.error(f"Error fetching token: {e}")
         return None
+
 
 async def run_test():
     token = await get_slack_token()
@@ -53,20 +64,27 @@ async def run_test():
                 logger.info("Calling search_slack_messages...")
                 # Note: This might timeout if GCP auth inside container is slow or blocked,
                 # but valid connection confirms the setup.
-                result = await session.call_tool("search_slack_messages", arguments={"query": "hello"})
+                result = await session.call_tool(
+                    "search_slack_messages", arguments={"query": "hello"}
+                )
 
                 logger.info(f"Result: {result.content[0].text}")
 
     except Exception as e:
         # Check for ExceptionGroup (common in anyio/asyncio)
-        if hasattr(e, 'exceptions'):
-             for ex in e.exceptions:
-                 logger.error(f"Connection error details: {ex}")
+        if hasattr(e, "exceptions"):
+            for ex in e.exceptions:
+                logger.error(f"Connection error details: {ex}")
         else:
-             logger.error(f"Connection failed: {e}")
+            logger.error(f"Connection failed: {e}")
 
-        print("\n\n⚠️  NOTE: If you see 'RemoteProtocolError: Server disconnected', it means the connection reached the server but was closed.")
-        print("This confirms the network path is open. The disconnect might be due to client library header sizing or timeout.")
+        print(
+            "\n\n⚠️  NOTE: If you see 'RemoteProtocolError: Server disconnected', it means the connection reached the server but was closed."
+        )
+        print(
+            "This confirms the network path is open. The disconnect might be due to client library header sizing or timeout."
+        )
+
 
 if __name__ == "__main__":
     asyncio.run(run_test())

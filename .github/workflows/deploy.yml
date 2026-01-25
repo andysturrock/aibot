@@ -81,17 +81,17 @@ jobs:
           SERVICES=("aibot-logic" "slack-collector" "slack-search-mcp")
           FOR_DIRS=("aibot_logic" "slack_collector" "slack_search_mcp")
           BASE_IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/aibot-base:latest"
-          
+
           for i in "${!SERVICES[@]}"; do
             SERVICE=${SERVICES[$i]}
             DIR=${FOR_DIRS[$i]}
             IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/$SERVICE:${{ github.sha }}"
             LATEST_IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/$SERVICE:latest"
-            
+
             echo "Building $SERVICE from python/services/$DIR..."
             docker build --build-arg SERVICE_NAME=$DIR --build-arg BASE_IMAGE=$BASE_IMAGE -t $IMAGE -f python/Dockerfile .
             docker tag $IMAGE $LATEST_IMAGE
-            
+
             echo "Pushing $SERVICE..."
             docker push $IMAGE
             docker push $LATEST_IMAGE
@@ -102,7 +102,7 @@ jobs:
           # Deploy services
           # aibot-webhook and aibot-logic both use the aibot-logic image
           LOGIC_IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/aibot-logic:${{ github.sha }}"
-          
+
           gcloud run deploy aibot-webhook \
             --image $LOGIC_IMAGE \
             --region ${{ secrets.GCP_REGION }} \
