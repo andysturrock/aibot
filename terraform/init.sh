@@ -47,6 +47,8 @@ if ! gsutil ls -b "gs://$TF_STATE_BUCKET" >/dev/null 2>&1; then
 else
   echo "Bucket gs://$TF_STATE_BUCKET already exists."
 fi
+gsutil versioning set on "gs://$TF_STATE_BUCKET"
+gsutil lifecycle set gcs-lifecycle.json "gs://$TF_STATE_BUCKET"
 
 echo "Initializing Terraform with GCS backend..."
 terraform init -upgrade \
