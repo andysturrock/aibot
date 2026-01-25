@@ -228,7 +228,7 @@ resource "random_id" "job_name_suffix" {
 resource "google_bigquery_job" "vector_index" {
   job_id = "create_vector_index_${random_id.job_name_suffix.hex}"
   query {
-    query          = "CREATE VECTOR INDEX embeddings ON ${google_bigquery_dataset.aibot_slack_messages.dataset_id}.${google_bigquery_table.slack_content.id}(embeddings) OPTIONS(index_type = 'IVF')"
+    query          = "CREATE VECTOR INDEX embeddings ON ${google_bigquery_dataset.aibot_slack_messages.dataset_id}.${google_bigquery_table.slack_content.table_id}(embeddings) OPTIONS(index_type = 'IVF')"
     use_legacy_sql = false
   }
   location = var.gcp_bq_location
