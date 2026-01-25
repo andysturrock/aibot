@@ -18,22 +18,25 @@ load_dotenv()
 BASE_URL = f"https://{os.environ.get('CUSTOM_FQDN')}"
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 
+
 def generate_slack_headers(body: str, timestamp: str = None):
     if timestamp is None:
         timestamp = str(int(time.time()))
 
     sig_basestring = f"v0:{timestamp}:{body}"
-    signature = "v0=" + hmac.new(
-        SLACK_SIGNING_SECRET.encode(),
-        sig_basestring.encode(),
-        hashlib.sha256
-    ).hexdigest()
+    signature = (
+        "v0="
+        + hmac.new(
+            SLACK_SIGNING_SECRET.encode(), sig_basestring.encode(), hashlib.sha256
+        ).hexdigest()
+    )
 
     return {
         "X-Slack-Request-Timestamp": timestamp,
         "X-Slack-Signature": signature,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
+
 
 @pytest.mark.asyncio
 async def test_url_verification():
@@ -42,14 +45,16 @@ async def test_url_verification():
     payload = {
         "type": "url_verification",
         "token": "test_token",
-        "challenge": "challenge_accepted_123"
+        "challenge": "challenge_accepted_123",
     }
     body = json.dumps(payload)
     headers = generate_slack_headers(body)
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.post(url, content=body, headers=headers, timeout=10.0)
+            response = await client.post(
+                url, content=body, headers=headers, timeout=10.0
+            )
             logger.info(f"Status: {response.status_code}")
             logger.info(f"Response: {response.text}")
 
@@ -64,6 +69,7 @@ async def test_url_verification():
         except Exception as e:
             logger.error(f"Error during test: {e}")
 
+
 @pytest.mark.asyncio
 async def test_invalid_signature():
     logger.info("Testing /slack/events (invalid signature)...")
@@ -73,7 +79,7 @@ async def test_invalid_signature():
     headers = {
         "X-Slack-Request-Timestamp": str(int(time.time())),
         "X-Slack-Signature": "v0=invalid_signature",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
 
     async with httpx.AsyncClient() as client:
@@ -83,6 +89,7 @@ async def test_invalid_signature():
             logger.info("SUCCESS: Invalid signature correctly rejected!")
         else:
             logger.error(f"FAILURE: Expected 401 but got {response.status_code}")
+
 
 @pytest.mark.asyncio
 async def test_health_check():
@@ -96,8 +103,10 @@ async def test_health_check():
         else:
             logger.error(f"FAILURE: Status {response.status_code}")
 
+
 if __name__ == "__main__":
     import asyncio
+
     if not SLACK_SIGNING_SECRET:
         print("Error: SLACK_SIGNING_SECRET not found in .env")
         exit(1)

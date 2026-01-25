@@ -10,6 +10,7 @@ from google.cloud import pubsub_v1, secretmanager_v1
 
 logger = logging.getLogger(__name__)
 
+
 async def _access_secret(project_id, secret_name):
     """Internal helper to fetch and parse JSON secret."""
     client = secretmanager_v1.SecretManagerServiceAsyncClient()
@@ -21,6 +22,7 @@ async def _access_secret(project_id, secret_name):
     except Exception as e:
         logger.error(f"Failed to access secret {secret_name}: {e}", exc_info=True)
         return None
+
 
 async def get_secret_value(secret_key: str) -> str:
     """Retrieves a secret from GCP Secret Manager (Async).
@@ -34,6 +36,7 @@ async def get_secret_value(secret_key: str) -> str:
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
     if not project_id:
         import google.auth
+
         _, project_id = google.auth.default()
 
     # 2. Check AIBot-shared-config
@@ -52,11 +55,14 @@ async def get_secret_value(secret_key: str) -> str:
     logger.warning(f"Secret key '{secret_key}' not found in any known secret store.")
     return None
 
+
 async def publish_to_topic(topic_name: str, payload: str):
     """Publishes a message to a Pub/Sub topic (Async)."""
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
     if not project_id:
-        raise OSError("GOOGLE_CLOUD_PROJECT environment variable is required and must be set explicitly.")
+        raise OSError(
+            "GOOGLE_CLOUD_PROJECT environment variable is required and must be set explicitly."
+        )
 
     # publisher_v1.PublisherClient's publish method is already non-blocking (returns a future),
     # but we can wrap it to be more idiomatic async.
@@ -77,6 +83,7 @@ async def publish_to_topic(topic_name: str, payload: str):
         logger.error(f"Error publishing to {topic_name}: {e}")
         raise
 
+
 async def get_id_token(audience: str) -> str:
     """Fetches a Google OIDC ID token for the given audience (Async)."""
     # Requesting an ID token from the metadata server
@@ -85,7 +92,9 @@ async def get_id_token(audience: str) -> str:
     # metadata server is very fast, run in executor to keep loop free
     loop = asyncio.get_event_loop()
     try:
-        token = await loop.run_in_executor(None, lambda: google.oauth2.id_token.fetch_id_token(auth_request, audience))
+        token = await loop.run_in_executor(
+            None, lambda: google.oauth2.id_token.fetch_id_token(auth_request, audience)
+        )
         return token
     except Exception as e:
         logger.error(f"Failed to fetch ID token for audience {audience}: {e}")

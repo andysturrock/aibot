@@ -13,13 +13,14 @@ async def test_get_history_found():
         mock_doc.get = AsyncMock()
         mock_doc.set = AsyncMock()
 
-        mock_snapshot = MagicMock() # Snapshot doesn't need to be async
+        mock_snapshot = MagicMock()  # Snapshot doesn't need to be async
         mock_snapshot.exists = True
         mock_snapshot.to_dict.return_value = {"history": json.dumps([{"text": "hi"}])}
         mock_doc.get.return_value = mock_snapshot
 
         history = await get_history("C1", "T1", "agent")
         assert history == [{"text": "hi"}]
+
 
 @pytest.mark.asyncio
 async def test_get_history_not_found():
@@ -29,12 +30,13 @@ async def test_get_history_not_found():
         mock_doc.get = AsyncMock()
         mock_doc.set = AsyncMock()
 
-        mock_snapshot = MagicMock() # Snapshot doesn't need to be async
+        mock_snapshot = MagicMock()  # Snapshot doesn't need to be async
         mock_snapshot.exists = False
         mock_doc.get.return_value = mock_snapshot
 
         history = await get_history("C1", "T1", "agent")
         assert history is None
+
 
 @pytest.mark.asyncio
 async def test_put_history_success():
@@ -46,6 +48,7 @@ async def test_put_history_success():
         await put_history("C1", "T1", [{"text": "hi"}], "agent")
         mock_doc.set.assert_called()
 
+
 @pytest.mark.asyncio
 async def test_get_google_token():
     with patch("shared.firestore_api.firestore.AsyncClient") as MockClient:
@@ -54,7 +57,7 @@ async def test_get_google_token():
         mock_doc.get = AsyncMock()
         mock_doc.set = AsyncMock()
 
-        mock_snapshot = MagicMock() # Snapshot doesn't need to be async
+        mock_snapshot = MagicMock()  # Snapshot doesn't need to be async
         mock_snapshot.exists = True
         mock_snapshot.to_dict.return_value = {"access_token": "token123"}
         mock_doc.get.return_value = mock_snapshot
