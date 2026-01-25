@@ -11,7 +11,10 @@ logger = logging.getLogger("google-auth")
 
 IAP_CERTS_URL = "https://www.gstatic.com/iap/verify/public_key"
 
-async def verify_iap_jwt(jwt_assertion: str, expected_audience: str) -> dict[str, Any] | None:
+
+async def verify_iap_jwt(
+    jwt_assertion: str, expected_audience: str
+) -> dict[str, Any] | None:
     """
     Verifies the JWT assertion from IAP using IAP's public keys.
     See: https://cloud.google.com/iap/docs/signed-headers-howto#verifying_the_jwt_payload
@@ -22,10 +25,7 @@ async def verify_iap_jwt(jwt_assertion: str, expected_audience: str) -> dict[str
         # We use verify_token with the IAP certificates URL.
         # This MUST validate the 'aud' claim to ensure the token was intended for this service.
         payload = id_token.verify_token(
-            jwt_assertion,
-            request,
-            audience=expected_audience,
-            certs_url=IAP_CERTS_URL
+            jwt_assertion, request, audience=expected_audience, certs_url=IAP_CERTS_URL
         )
         return payload
     except Exception as e:
@@ -34,8 +34,11 @@ async def verify_iap_jwt(jwt_assertion: str, expected_audience: str) -> dict[str
         if "audience" in str(e).lower():
             logger.warning(f"Audience mismatch. Expected: {expected_audience}")
         elif "email" in str(e).lower():
-            logger.warning("Email claim issue. Token might be missing email claim. Check if --include-email or format=full was used.")
+            logger.warning(
+                "Email claim issue. Token might be missing email claim. Check if --include-email or format=full was used."
+            )
         return None
+
 
 async def exchange_google_code(code: str, redirect_uri: str) -> dict[str, Any]:
     """Exchanges an authorization code for Google tokens."""
@@ -50,13 +53,16 @@ async def exchange_google_code(code: str, redirect_uri: str) -> dict[str, Any]:
                 "client_id": client_id,
                 "client_secret": client_secret,
                 "redirect_uri": redirect_uri,
-                "grant_type": "authorization_code"
-            }
+                "grant_type": "authorization_code",
+            },
         )
         if resp.status_code != 200:
-            logger.error(f"Google token exchange failed: {resp.status_code} - {resp.text}")
+            logger.error(
+                f"Google token exchange failed: {resp.status_code} - {resp.text}"
+            )
             resp.raise_for_status()
         return resp.json()
+
 
 async def refresh_google_id_token(refresh_token: str) -> str | None:
     """Uses a refresh token to get a new Google ID Token."""
@@ -70,8 +76,8 @@ async def refresh_google_id_token(refresh_token: str) -> str | None:
                 "refresh_token": refresh_token,
                 "client_id": client_id,
                 "client_secret": client_secret,
-                "grant_type": "refresh_token"
-            }
+                "grant_type": "refresh_token",
+            },
         )
         if resp.status_code != 200:
             logger.error(f"Failed to refresh Google token: {resp.text}")
@@ -80,9 +86,11 @@ async def refresh_google_id_token(refresh_token: str) -> str | None:
         data = resp.json()
         return data.get("id_token")
 
+
 def get_google_auth_url(client_id: str, redirect_uri: str, state: str) -> str:
     """Generates the Google OAuth 2.0 authorization URL."""
     from urllib.parse import urlencode
+
     base_url = "https://accounts.google.com/o/oauth2/v2/auth"
     params = {
         "client_id": client_id,
@@ -90,7 +98,7 @@ def get_google_auth_url(client_id: str, redirect_uri: str, state: str) -> str:
         "response_type": "code",
         "scope": "openid email profile",
         "access_type": "offline",
-        "prompt": "consent", # Ensure we get a refresh token
-        "state": state
+        "prompt": "consent",  # Ensure we get a refresh token
+        "state": state,
     }
     return f"{base_url}?{urlencode(params)}"

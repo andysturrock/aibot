@@ -6,18 +6,34 @@
 
 set -eo pipefail
 
-# Look for .env in current or parent directory
-if [ -f .env ]; then
-  ENV_FILE=".env"
-elif [ -f "../.env" ]; then
-  ENV_FILE="../.env"
-else
-  echo ".env file not found in terraform or parent directory."
+# 1. Environment Loading
+ENV=""
+while [[ "$#" -gt 0 ]]; do
+  case $1 in
+    --env=*) ENV="${1#*=}" ;;
+    --env) ENV="$2"; shift ;;
+  esac
+  shift
+done
+
+if [[ "$ENV" != "prod" && "$ENV" != "beta" ]]; then
+  echo "Error: You must specify --env=prod or --env=beta"
   exit 1
 fi
 
-echo "Loading env vars from $ENV_FILE"
-source "$ENV_FILE"
+ENV_FILE=".env.$ENV"
+# Check if symlink/file exists in current or parent
+if [ -f "$ENV_FILE" ]; then
+  FULL_ENV_PATH="$ENV_FILE"
+elif [ -f "../$ENV_FILE" ]; then
+  FULL_ENV_PATH="../$ENV_FILE"
+else
+  echo "Error: $ENV_FILE not found."
+  exit 1
+fi
+
+echo "Loading env vars from $FULL_ENV_PATH"
+source "$FULL_ENV_PATH"
 
 # Provide fallbacks/defaults
 PROJECT_ID=${PROJECT_ID:-$(gcloud config get-value project)}

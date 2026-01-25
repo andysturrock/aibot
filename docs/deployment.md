@@ -47,7 +47,7 @@ Use the provided manifest template to configure your Slack App.
 
 ## 3. Secret Synchronization
 
-The deployment relies on a `.env` file for sensitive tokens. 
+The deployment relies on a `.env` file for sensitive tokens.
 
 1. Create a `.env` file based on `env.template`.
 2. Populate the following critical values:
