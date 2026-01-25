@@ -398,7 +398,7 @@ if service_role in ["aibot-webhook", "test-service"]:
             if at_user:
                 payload["at_user"] = at_user
 
-            await publish_to_topic(payload)
+            await publish_to_topic(TOPIC_ID, json.dumps(payload))
             return Response(content="OK", status_code=200)
         except Exception as e:
             logger.exception("Failed to publish to Pub/Sub")

@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -7,20 +8,16 @@ from google.adk.events.event import Event
 from google.genai import types
 from httpx import ASGITransport, AsyncClient
 
+os.environ["ENV"] = "test"
+os.environ["K_SERVICE"] = "test-service"
+os.environ["GOOGLE_CLOUD_PROJECT"] = "test-project"
+os.environ["GCP_LOCATION"] = "europe-west2"
+
 # Import app but mock out the shared library calls within main.py
-with patch.dict(
-    "os.environ",
-    {
-        "GCP_LOCATION": "us-central1",
-        "GOOGLE_CLOUD_PROJECT": "test-project",
-        "K_SERVICE": "test-service",
-        "ENV": "test",
-    },
-):
-    with patch("shared.gcp_api.get_secret_value", new_callable=AsyncMock) as mock_sec:
-        # Set defaults for imports during initialization
-        mock_sec.return_value = "dummy"
-        from services.aibot_logic.main import app
+with patch("shared.gcp_api.get_secret_value", new_callable=AsyncMock) as mock_sec:
+    # Set defaults for imports during initialization
+    mock_sec.return_value = "dummy"
+    from services.aibot_logic.main import app
 
 
 @pytest.mark.asyncio
@@ -65,7 +62,7 @@ async def test_slack_events_authorized_success():
                     response = await ac.post("/slack/events", json=payload)
                 assert response.status_code == 200
                 assert response.text == "OK"
-                mock_pub.assert_called()
+                mock_pub.assert_called_once_with("slack-events", json.dumps(payload))
 
 
 @pytest.mark.asyncio
