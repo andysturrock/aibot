@@ -25,7 +25,7 @@ resource "google_discovery_engine_data_store" "aibot_search" {
 
 # This is only really needed to turn on the enterprise features for the data store.
 resource "google_discovery_engine_search_engine" "aibot" {
-  engine_id      = "aibot"
+  engine_id      = "aibot-${random_id.name_suffix.hex}"
   collection_id  = "default_collection"
   location       = google_discovery_engine_data_store.aibot_search.location
   display_name   = "AIBot"
