@@ -70,10 +70,17 @@ jobs:
       - name: Configure Docker for GCP
         run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
 
-      - name: Build and Push Images
+      - name: Build and Push Base Image
+        run: |
+          BASE_IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/aibot-base:latest"
+          docker build -t $BASE_IMAGE -f python/base.Dockerfile .
+          docker push $BASE_IMAGE
+
+      - name: Build and Push Service Images
         run: |
           SERVICES=("aibot-logic" "slack-collector" "slack-search-mcp")
           FOR_DIRS=("aibot_logic" "slack_collector" "slack_search_mcp")
+          BASE_IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/aibot-base:latest"
           
           for i in "${!SERVICES[@]}"; do
             SERVICE=${SERVICES[$i]}
@@ -82,7 +89,7 @@ jobs:
             LATEST_IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/$SERVICE:latest"
             
             echo "Building $SERVICE from python/services/$DIR..."
-            docker build -t $IMAGE ./python/services/$DIR
+            docker build --build-arg SERVICE_NAME=$DIR --build-arg BASE_IMAGE=$BASE_IMAGE -t $IMAGE -f python/Dockerfile .
             docker tag $IMAGE $LATEST_IMAGE
             
             echo "Pushing $SERVICE..."
