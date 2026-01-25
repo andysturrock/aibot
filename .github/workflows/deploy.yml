@@ -37,7 +37,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-asyncio httpx google-cloud-firestore google-cloud-bigquery slack-sdk google-cloud-aiplatform vertexai mcp pydantic python-dotenv fastapi starlette google-genai google-cloud-pubsub
+          pip install pytest pytest-asyncio httpx google-cloud-firestore google-cloud-bigquery slack-sdk google-cloud-aiplatform vertexai "mcp[fastapi]" pydantic python-dotenv fastapi starlette google-genai google-cloud-pubsub google-adk pytz pyjwt
           # Install shared library in editable mode
           pip install -e ./python/libs/shared
       - name: Run tests
