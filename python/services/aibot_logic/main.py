@@ -37,7 +37,7 @@ from shared.slack_api import create_bot_client
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Service specific imports
-from .agents import create_supervisor_agent
+from agents import create_supervisor_agent
 
 load_dotenv()
 setup_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
