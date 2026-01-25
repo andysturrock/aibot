@@ -13,15 +13,34 @@ if [ -f .env ]; then
 fi
 
 # Fallback Configuration
-PROJECT_ID=${PROJECT_ID:-$(gcloud config get-value project)}
+echo "Using Project ID: $PROJECT_ID"
+gcloud config set project "$PROJECT_ID" --quiet
+
 REGION=${REGION:-"europe-west2"}
 BQ_LOCATION=${MULTI_REGION:-"EU"}
-PROJECT_NUMBER=${PROJECT_NUMBER:-$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')}
+PROJECT_NUMBER=${PROJECT_NUMBER:-$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')}
 CUSTOM_FQDN=${CUSTOM_FQDN:-"aibot.example.com"}
 
-echo "Using Project: $PROJECT_ID ($PROJECT_NUMBER)"
+echo "Using Project Number: $PROJECT_NUMBER"
 echo "Region: $REGION"
 echo "FQDN: $CUSTOM_FQDN"
+
+echo "Ensuring required APIs are enabled..."
+gcloud services enable \
+  cloudresourcemanager.googleapis.com \
+  iam.googleapis.com \
+  run.googleapis.com \
+  artifactregistry.googleapis.com \
+  secretmanager.googleapis.com \
+  bigquery.googleapis.com \
+  discoveryengine.googleapis.com \
+  aiplatform.googleapis.com \
+  logging.googleapis.com \
+  monitoring.googleapis.com \
+  compute.googleapis.com \
+  iap.googleapis.com \
+  serviceusage.googleapis.com \
+  --project="$PROJECT_ID" --quiet
 
 # Foundation: Ensure IAP Service Identity is provisioned (required for Cloud Run IAP)
 echo "Ensuring IAP Service Identity is provisioned..."
