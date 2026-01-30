@@ -74,7 +74,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     priority = "499"
     match {
       expr {
-        expression = "request.method == 'POST' && request.path.matches('/slack/(events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618) && has(request.headers['user-agent']) && request.headers['user-agent'].contains('Slackbot') && evaluatePreconfiguredWaf('sqli-v33-stable')"
+        expression = "request.method == 'POST' && request.path.matches('/slack/(?:events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618) && has(request.headers['user-agent']) && request.headers['user-agent'].contains('Slackbot') && evaluatePreconfiguredWaf('sqli-v33-stable')"
       }
     }
     description = "WAF: Surgical SQLi protection for Slack traffic (Excl. 942200)"
@@ -94,7 +94,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     priority = "500"
     match {
       expr {
-        expression = "!(request.method == 'POST' && request.path.matches('/slack/(events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618) && has(request.headers['user-agent']) && request.headers['user-agent'].contains('Slackbot')) && evaluatePreconfiguredWaf('sqli-v33-stable')"
+        expression = "!(request.method == 'POST' && request.path.matches('/slack/(?:events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618) && has(request.headers['user-agent']) && request.headers['user-agent'].contains('Slackbot')) && evaluatePreconfiguredWaf('sqli-v33-stable')"
       }
     }
     description = "WAF: Full SQLi protection (Global, non-Slack)"
@@ -110,7 +110,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     priority = "1000"
     match {
       expr {
-        expression = "request.method == 'POST' && request.path.matches('/slack/(events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618) && has(request.headers['user-agent']) && request.headers['user-agent'].contains('Slackbot')"
+        expression = "request.method == 'POST' && request.path.matches('/slack/(?:events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618) && has(request.headers['user-agent']) && request.headers['user-agent'].contains('Slackbot')"
       }
     }
     description = "Strict Allow: POST verified Slack events/interactivity only"
@@ -123,7 +123,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     priority = "1001"
     match {
       expr {
-        expression = "(request.method == 'GET' && request.path.matches('/slack/(install|oauth-redirect)')) || (request.method == 'GET' && request.path.matches('/auth/(login|callback)')) || (request.method == 'GET' && request.path == '/mcp/sse') || (request.method == 'POST' && request.path.matches('/mcp/messages/?')) || (request.method == 'GET' && (request.path == '/health' || request.path.matches('/_gcp_iap/.*')))"
+        expression = "(request.method == 'GET' && request.path.matches('/slack/(?:install|oauth-redirect)')) || (request.method == 'GET' && request.path.matches('/auth/(?:login|callback)')) || (request.method == 'GET' && request.path == '/mcp/sse') || (request.method == 'POST' && request.path.matches('/mcp/messages/?')) || (request.method == 'GET' && (request.path == '/health' || request.path.matches('/_gcp_iap/(?:authenticate|clear_login_cookie|sessioninfo)')))"
       }
     }
     description = "Hardened Allow: Explicit paths & methods (No wildcards)"
