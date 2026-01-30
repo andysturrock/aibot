@@ -74,7 +74,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     priority = "499"
     match {
       expr {
-        expression = "request.method == 'POST' && request.path.matches('/slack/(?:events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618) && has(request.headers['user-agent']) && request.headers['user-agent'].contains('Slackbot') && evaluatePreconfiguredWaf('sqli-v33-stable')"
+        expression = "request.path.matches('/slack/(?:events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618) && evaluatePreconfiguredWaf('sqli-v33-stable')"
       }
     }
     description = "WAF: Surgical SQLi protection for Slack traffic (Excl. 942200)"
