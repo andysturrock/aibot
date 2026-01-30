@@ -103,8 +103,7 @@ resource "google_compute_security_policy" "aibot_policy" {
   # Rule 2: Path-based Allow Rules - Priority 1000+
   # These now only trigger IF the request passed the WAF checks above.
 
-  # Strict Allow for Slack Identity
-  # Enforce POST method for events and interactivity.
+  # 2.1 Strict Allow for Slack Identity (Authenticated POSTs)
   rule {
     action   = "allow"
     priority = "1000"
@@ -113,20 +112,55 @@ resource "google_compute_security_policy" "aibot_policy" {
         expression = "request.method == 'POST' && request.path.matches('/slack/(?:events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618) && has(request.headers['user-agent']) && request.headers['user-agent'].contains('Slackbot')"
       }
     }
-    description = "Strict Allow: POST verified Slack events/interactivity only"
+    description = "Slack Identity: Verified Slack POST events only"
   }
 
-  # Specific Allow for Application Paths (Enforcing Methods)
-  # We audit the exact verbs required: POST for messages, GET for auth and health.
+  # 2.2 Slack Installation Flow (Browser GETs)
   rule {
     action   = "allow"
     priority = "1001"
     match {
       expr {
-        expression = "(request.method == 'GET' && request.path.matches('/slack/(?:install|oauth-redirect)')) || (request.method == 'GET' && request.path.matches('/auth/(?:login|callback)')) || (request.method == 'GET' && request.path == '/mcp/sse') || (request.method == 'POST' && request.path.matches('/mcp/messages/?')) || (request.method == 'GET' && (request.path == '/health' || request.path.matches('/_gcp_iap/(?:authenticate|clear_login_cookie|sessioninfo)')))"
+        expression = "request.method == 'GET' && request.path.matches('/slack/(?:install|oauth-redirect)')"
       }
     }
-    description = "Hardened Allow: Explicit paths & methods (No wildcards)"
+    description = "Slack Flow: Installation and OAuth-redirect (Browser)"
+  }
+
+  # 2.3 User Authentication (Browser GETs)
+  rule {
+    action   = "allow"
+    priority = "1002"
+    match {
+      expr {
+        expression = "request.method == 'GET' && request.path.matches('/auth/(?:login|callback)')"
+      }
+    }
+    description = "Auth Flow: login and callback"
+  }
+
+  # 2.4 MCP Search (GET for SSE, POST for Messages)
+  rule {
+    action   = "allow"
+    priority = "1003"
+    match {
+      expr {
+        expression = "(request.method == 'GET' && request.path == '/mcp/sse') || (request.method == 'POST' && request.path.matches('/mcp/messages/?'))"
+      }
+    }
+    description = "MCP Search: SSE and JSON-RPC messages"
+  }
+
+  # 2.5 Utilities & IAP Maintenance
+  rule {
+    action   = "allow"
+    priority = "1004"
+    match {
+      expr {
+        expression = "request.method == 'GET' && (request.path == '/health' || request.path.matches('/_gcp_iap/(?:authenticate|clear_login_cookie|sessioninfo)'))"
+      }
+    }
+    description = "Utilities: Health checks and IAP management"
   }
 
   # Default rule: Deny all (Principle of Deny by Default)
