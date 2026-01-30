@@ -42,7 +42,8 @@ if [ -f "$ENC_FILE" ]; then
   TEMP_ENV=$(mktemp)
   chmod 600 "$TEMP_ENV"
   trap 'rm -f "$TEMP_ENV"' EXIT
-  sops -d --output-type dotenv "$ENC_FILE" > "$TEMP_ENV"
+  # Note: Encrypted .env files are typically stored in a JSON structure under a "data" key.
+  sops -d --extract '["data"]' "$ENC_FILE" > "$TEMP_ENV"
   source "$TEMP_ENV"
   rm "$TEMP_ENV"
   trap - EXIT # Clear the trap after successful removal

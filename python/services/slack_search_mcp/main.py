@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import traceback
+import uuid
 from contextvars import ContextVar
 
 from dotenv import load_dotenv
@@ -341,16 +342,21 @@ app = mcp.sse_app()
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    request_id = str(uuid.uuid4())
     logger.error(
-        "Unhandled exception in slack-search-mcp",
+        f"Unhandled exception in slack-search-mcp [Request ID: {request_id}]",
         extra={
+            "request_id": request_id,
             "path": request.url.path,
             "method": request.method,
             "exception": str(exc),
             "traceback": traceback.format_exc(),
         },
     )
-    return JSONResponse(status_code=500, content={"message": "Internal Server Error"})
+    return JSONResponse(
+        status_code=500,
+        content={"message": "Internal Server Error", "request_id": request_id},
+    )
 
 
 # Add the security middleware (last added = first executed)

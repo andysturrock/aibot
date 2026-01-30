@@ -4,55 +4,129 @@ data "google_project" "project" {
 
 
 resource "google_compute_security_policy" "aibot_policy" {
+  provider    = google-beta
   name        = "aibot-security-policy"
   description = "Security policy for AIBot public endpoints"
 
-  # Rule 1: WAF Rules (SQLi, XSS, etc.) - Priority 500-599
-  # Evaluate these FIRST to prevent bypasses.
+  # --- SEC-004: Surgical WAF Exclusions (No Broad Allows) ---
+
+  # 1. Global Protections (Applies to EVERYONE, including Slack)
+  rule {
+    action   = "deny(403)"
+    priority = "100"
+    match {
+      expr {
+        expression = "evaluatePreconfiguredWaf('xss-v33-stable')"
+      }
+    }
+    description = "WAF: Full XSS protection (Global)"
+  }
+
+  rule {
+    action   = "deny(403)"
+    priority = "101"
+    match {
+      expr {
+        expression = "evaluatePreconfiguredWaf('lfi-v33-stable')"
+      }
+    }
+    description = "WAF: Full LFI protection (Global)"
+  }
+
+  rule {
+    action   = "deny(403)"
+    priority = "102"
+    match {
+      expr {
+        expression = "evaluatePreconfiguredWaf('rce-v33-stable')"
+      }
+    }
+    description = "WAF: Full RCE protection (Global)"
+  }
+
+  rule {
+    action   = "deny(403)"
+    priority = "103"
+    match {
+      expr {
+        expression = "evaluatePreconfiguredWaf('scannerdetection-v33-stable')"
+      }
+    }
+    description = "WAF: Block security scanners (Global)"
+  }
+
+  rule {
+    action   = "deny(403)"
+    priority = "104"
+    match {
+      expr {
+        expression = "evaluatePreconfiguredWaf('protocolattack-v33-stable')"
+      }
+    }
+    description = "WAF: Block malformed protocol attacks (Global)"
+  }
+
+  # 2. Slack-Specific SQLi Protection (With Surgical Exclusion)
+  # This rule ensures Slack traffic is protected by SQLi rules, but permits the 942200 false positive.
+  # We restrict this rule to specific Slack POST endpoints to minimize the exception surface.
+  rule {
+    action   = "deny(403)"
+    priority = "499"
+    match {
+      expr {
+        expression = "request.method == 'POST' && request.path.matches('/slack/(events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618) && has(request.headers['user-agent']) && request.headers['user-agent'].contains('Slackbot') && evaluatePreconfiguredWaf('sqli-v33-stable')"
+      }
+    }
+    description = "WAF: Surgical SQLi protection for Slack traffic (Excl. 942200)"
+
+    preconfigured_waf_config {
+      exclusion {
+        target_rule_set = "sqli-v33-stable"
+        target_rule_ids = ["owasp-crs-v030301-id942200-sqli"]
+      }
+    }
+  }
+
+  # 3. Global SQLi Protection (Excludes Slack traffic checked above)
+  # All other traffic (including Slack installation flows) gets full SQLi protection.
   rule {
     action   = "deny(403)"
     priority = "500"
     match {
       expr {
-        expression = "evaluatePreconfiguredExpr('sqli-v33-stable')"
+        expression = "!(request.method == 'POST' && request.path.matches('/slack/(events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618) && has(request.headers['user-agent']) && request.headers['user-agent'].contains('Slackbot')) && evaluatePreconfiguredWaf('sqli-v33-stable')"
       }
     }
-    description = "WAF: SQL injection protection"
-  }
-
-  rule {
-    action   = "deny(403)"
-    priority = "501"
-    match {
-      expr {
-        expression = "evaluatePreconfiguredExpr('xss-v33-stable')"
-      }
-    }
-    description = "WAF: XSS protection"
+    description = "WAF: Full SQLi protection (Global, non-Slack)"
   }
 
   # Rule 2: Path-based Allow Rules - Priority 1000+
   # These now only trigger IF the request passed the WAF checks above.
+
+  # Strict Allow for Slack Identity
+  # Enforce POST method for events and interactivity.
   rule {
     action   = "allow"
     priority = "1000"
     match {
       expr {
-        expression = "request.path.startsWith('/slack/')"
+        expression = "request.method == 'POST' && request.path.matches('/slack/(events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618) && has(request.headers['user-agent']) && request.headers['user-agent'].contains('Slackbot')"
       }
     }
-    description = "Allow Slack events and interactivity"
+    description = "Strict Allow: POST verified Slack events/interactivity only"
   }
 
+  # Specific Allow for Application Paths (Enforcing Methods)
+  # We audit the exact verbs required: POST for messages, GET for auth and health.
   rule {
     action   = "allow"
     priority = "1001"
     match {
       expr {
-        expression = "request.path.matches('/auth/.*') || request.path.matches('/mcp/.*') || request.path.matches('/health') || request.path.matches('/_gcp_iap/.*')"
+        expression = "(request.method == 'GET' && request.path.matches('/slack/(install|oauth-redirect)')) || (request.method == 'GET' && request.path.matches('/auth/(login|callback)')) || (request.method == 'GET' && request.path == '/mcp/sse') || (request.method == 'POST' && request.path.matches('/mcp/messages/?')) || (request.method == 'GET' && (request.path == '/health' || request.path.matches('/_gcp_iap/.*')))"
       }
     }
-    description = "Allow critical application paths"
+    description = "Hardened Allow: Explicit paths & methods (No wildcards)"
   }
 
   # Default rule: Deny all (Principle of Deny by Default)

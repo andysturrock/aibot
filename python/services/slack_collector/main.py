@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import traceback
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -69,16 +70,21 @@ app.add_middleware(SecurityMiddleware)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    request_id = str(uuid.uuid4())
     logger.error(
-        "Unhandled exception in Slack Collector",
+        f"Unhandled exception in Slack Collector [Request ID: {request_id}]",
         extra={
+            "request_id": request_id,
             "path": request.url.path,
             "method": request.method,
             "exception": str(exc),
             "traceback": traceback.format_exc(),
         },
     )
-    return JSONResponse(status_code=500, content={"message": "Internal Server Error"})
+    return JSONResponse(
+        status_code=500,
+        content={"message": "Internal Server Error", "request_id": request_id},
+    )
 
 
 # --- Service Logic ---
