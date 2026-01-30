@@ -239,10 +239,22 @@ async def get_channels_metadata(
 ) -> dict[str, ChannelMetadata]:
     if not channels:
         return {}
-    sql_channel_ids = ", ".join([f"\"{c['id']}\"" for c in channels])
-    query = f"SELECT channel_id, channel_name, created_datetime, MAX(last_download_datetime) as last_download_datetime FROM {DATASET_NAME}.{METADATA_TABLE_NAME} WHERE channel_id in ({sql_channel_ids}) GROUP BY channel_id, channel_name, created_datetime"
+    query = f"""
+        SELECT channel_id, channel_name, created_datetime, MAX(last_download_datetime) as last_download_datetime
+        FROM {DATASET_NAME}.{METADATA_TABLE_NAME}
+        WHERE channel_id in UNNEST(@channel_ids)
+        GROUP BY channel_id, channel_name, created_datetime
+    """
+    channel_id_list = [c["id"] for c in channels]
+    job_config = bigquery.QueryJobConfiguration(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("channel_ids", "STRING", channel_id_list),
+        ]
+    )
     loop = asyncio.get_event_loop()
-    query_job = await loop.run_in_executor(None, bigquery_client.query, query)
+    query_job = await loop.run_in_executor(
+        None, lambda: bigquery_client.query(query, job_config=job_config)
+    )
     rows = await loop.run_in_executor(None, query_job.result)
     return {
         r["channel_id"]: ChannelMetadata(

@@ -246,19 +246,26 @@ async def generate_embeddings(text: str) -> list[float]:
 
 async def perform_vector_search(embeddings: list[float]):
     client = bigquery.Client(project=GOOGLE_CLOUD_PROJECT)
-    query = f"""
+    query = """
         SELECT distinct base.channel, base.ts, distance
         FROM VECTOR_SEARCH(
             TABLE aibot_slack_messages.slack_content,
             'embeddings',
-            (SELECT {embeddings} as search_embeddings),
+            (SELECT @query_embeddings as search_embeddings),
             query_column_to_search => 'search_embeddings',
             top_k => 15
         )
         ORDER BY distance
     """
+    job_config = bigquery.QueryJobConfiguration(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("query_embeddings", "FLOAT64", embeddings),
+        ]
+    )
     loop = asyncio.get_event_loop()
-    query_job = await loop.run_in_executor(None, client.query, query)
+    query_job = await loop.run_in_executor(
+        None, lambda: client.query(query, job_config=job_config)
+    )
     rows = await loop.run_in_executor(None, query_job.result)
     return [dict(row) for row in rows]
 
