@@ -7,24 +7,11 @@ resource "google_compute_security_policy" "aibot_policy" {
   name        = "aibot-security-policy"
   description = "Security policy for AIBot public endpoints"
 
-  # Rule 0: Allow Slack event endpoints (Bypass WAF)
-  # Slack payloads are JSON and often contain characters that trigger SQLi/XSS false positives.
-  # We verify signatures in the application, so bypassing WAF for these specific paths is safe.
-  rule {
-    action   = "allow"
-    priority = "500"
-    match {
-      expr {
-        expression = "request.path.startsWith('/slack/')"
-      }
-    }
-    description = "Allow Slack events and interactivity (Bypass WAF)"
-  }
-
-  # Rule 2: WAF Rules (SQLi, XSS, etc.)
+  # Rule 1: WAF Rules (SQLi, XSS, etc.) - Priority 500-599
+  # Evaluate these FIRST to prevent bypasses.
   rule {
     action   = "deny(403)"
-    priority = "1000"
+    priority = "500"
     match {
       expr {
         expression = "evaluatePreconfiguredExpr('sqli-v33-stable')"
@@ -35,7 +22,7 @@ resource "google_compute_security_policy" "aibot_policy" {
 
   rule {
     action   = "deny(403)"
-    priority = "1001"
+    priority = "501"
     match {
       expr {
         expression = "evaluatePreconfiguredExpr('xss-v33-stable')"
@@ -44,17 +31,28 @@ resource "google_compute_security_policy" "aibot_policy" {
     description = "WAF: XSS protection"
   }
 
-  # Rule 3: Allow remaining expected paths and health checks (High Priority to bypass WAF)
-  # Paths like /auth/ often contain parameters that trigger WAF false positives.
+  # Rule 2: Path-based Allow Rules - Priority 1000+
+  # These now only trigger IF the request passed the WAF checks above.
   rule {
     action   = "allow"
-    priority = "600"
+    priority = "1000"
+    match {
+      expr {
+        expression = "request.path.startsWith('/slack/')"
+      }
+    }
+    description = "Allow Slack events and interactivity"
+  }
+
+  rule {
+    action   = "allow"
+    priority = "1001"
     match {
       expr {
         expression = "request.path.matches('/auth/.*') || request.path.matches('/mcp/.*') || request.path.matches('/health') || request.path.matches('/_gcp_iap/.*')"
       }
     }
-    description = "Allow critical application paths (Bypass WAF)"
+    description = "Allow critical application paths"
   }
 
   # Default rule: Deny all (Principle of Deny by Default)
