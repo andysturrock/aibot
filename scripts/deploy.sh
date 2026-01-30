@@ -34,13 +34,25 @@ if [[ "$ENV" != "prod" && "$ENV" != "beta" ]]; then
 fi
 
 ENV_FILE=".env.$ENV"
-if [ ! -f "$ENV_FILE" ]; then
-  echo "Error: $ENV_FILE not found."
+ENC_FILE=".env.$ENV.enc"
+
+if [ -f "$ENC_FILE" ]; then
+  echo "--- Decrypting $ENC_FILE with SOPS ---"
+  # Use a temporary file with restrictive permissions and a trap for cleanup
+  TEMP_ENV=$(mktemp)
+  chmod 600 "$TEMP_ENV"
+  trap 'rm -f "$TEMP_ENV"' EXIT
+  sops -d --output-type dotenv "$ENC_FILE" > "$TEMP_ENV"
+  source "$TEMP_ENV"
+  rm "$TEMP_ENV"
+  trap - EXIT # Clear the trap after successful removal
+elif [ -f "$ENV_FILE" ]; then
+  echo "--- Loading plaintext $ENV_FILE file ---"
+  source "$ENV_FILE"
+else
+  echo "Error: Neither $ENV_FILE nor $ENC_FILE found."
   exit 1
 fi
-
-echo "--- Loading $ENV_FILE file ---"
-source "$ENV_FILE"
 
 # Fallback Configuration
 echo "Using Project ID: $PROJECT_ID ($ENV)"
