@@ -78,9 +78,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             "traceback": traceback.format_exc(),
         },
     )
-    return JSONResponse(
-        status_code=500, content={"message": f"Internal Server Error: {str(exc)}"}
-    )
+    return JSONResponse(status_code=500, content={"message": "Internal Server Error"})
 
 
 # --- Service Logic ---
