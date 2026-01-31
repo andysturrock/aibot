@@ -99,6 +99,7 @@ jobs:
     needs: [lint, test]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
     runs-on: ubuntu-latest
+    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'beta' }}
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -120,6 +121,7 @@ jobs:
   build-services:
     needs: build-base
     runs-on: ubuntu-latest
+    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'beta' }}
     strategy:
       matrix:
         service: [aibot-logic, slack-collector, slack-search-mcp]
