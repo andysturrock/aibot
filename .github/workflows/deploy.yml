@@ -118,8 +118,8 @@ jobs:
           docker build -t $BASE_IMAGE -f python/base.Dockerfile .
           docker push $BASE_IMAGE
 
-  build-services:
-    needs: build-base
+  build-and-deploy-services:
+    needs: [build-base, terraform]
     runs-on: ubuntu-latest
     environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'beta' }}
     strategy:
@@ -148,38 +148,24 @@ jobs:
           docker tag $IMAGE $LATEST_IMAGE
           docker push $IMAGE
           docker push $LATEST_IMAGE
-
-  deploy-services:
-    needs: [build-services, terraform]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
-    runs-on: ubuntu-latest
-    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'beta' }}
-    strategy:
-      matrix:
-        run_service: [aibot-webhook, aibot-logic, slack-search-mcp, slack-collector]
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-    steps:
-      - uses: actions/checkout@v6
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
-          service_account: ${{ secrets.GCP_SA_EMAIL }}
-      - name: Deploy to Cloud Run
+      - name: Deploy Service(s) to Cloud Run
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
         run: |
-          # Map run_service to the correct docker image name
-          if [[ "${{ matrix.run_service }}" == "aibot-webhook" ]]; then
-            IMAGE_NAME="aibot-logic"
-          else
-            IMAGE_NAME="${{ matrix.run_service }}"
-          fi
+          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/${{ matrix.service }}:${{ github.sha }}"
 
-          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/$IMAGE_NAME:${{ github.sha }}"
-
-          gcloud run deploy ${{ matrix.run_service }} \
+          # Deploy the primary service assigned to this build
+          gcloud run deploy ${{ matrix.service }} \
             --image $IMAGE \
             --region ${{ secrets.GCP_REGION }} \
             --project ${{ secrets.GCP_PROJECT_ID }} \
             --quiet
+
+          # Special case: aibot-logic also powers aibot-webhook
+          if [[ "${{ matrix.service }}" == "aibot-logic" ]]; then
+            echo "Deploying shard: aibot-webhook using aibot-logic image..."
+            gcloud run deploy aibot-webhook \
+              --image $IMAGE \
+              --region ${{ secrets.GCP_REGION }} \
+              --project ${{ secrets.GCP_PROJECT_ID }} \
+              --quiet
+          fi
