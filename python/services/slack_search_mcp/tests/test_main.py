@@ -2,13 +2,13 @@ import json
 import os
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
-from services.slack_search_mcp.main import user_id_ctx
-
-# Ensure environment variables are set before importing app
+# Ensure environment variables are set BEFORE any imports from services
 os.environ["GCP_LOCATION"] = "europe-west2"
 os.environ["GOOGLE_CLOUD_PROJECT"] = "test-project"
+
+import pytest  # noqa: E402
+
+from services.slack_search_mcp.main import user_id_ctx  # noqa: E402
 
 # Setup app mock to handle initialization imports
 with patch("shared.gcp_api.get_secret_value", new_callable=AsyncMock) as mock_sec:
