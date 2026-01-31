@@ -671,14 +671,11 @@ async def pubsub_worker(request: Request):
                                 p_dict = (
                                     part.to_dict() if hasattr(part, "to_dict") else {}
                                 )
-                                if p_dict.get("text"):
-                                    responses.append(p_dict["text"])
-                                elif not p_dict and getattr(part, "text", None):
-                                    responses.append(part.text)
-                            except Exception:
-                                pass
-                            except Exception:
-                                pass
+                                text = p_dict.get("text")
+                                if text:
+                                    responses.append(text)
+                            except Exception as e:
+                                logger.debug(f"Skipping non-text part or error: {e}")
 
                 final_response = "".join(responses).strip()
 

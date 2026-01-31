@@ -136,10 +136,19 @@ class SecurityMiddleware:
             team_id = user_info.get("team_id")
             enterprise_id = user_info.get("enterprise_id")
 
+            # Fallback for Enterprise Grid where team_id might be inside enterprise_user
+            if not team_id and "enterprise_user" in user_info:
+                ent_user = user_info["enterprise_user"]
+                teams = ent_user.get("teams", [])
+                if teams:
+                    team_id = teams[0]
+                    logger.info(
+                        f"Extracted team_id from enterprise_user.teams: {team_id}"
+                    )
+
             logger.info(
-                f"Checking authorization for user {email}: team={team_id}, enterprise={enterprise_id}"
+                f"Authorizing user {email}: slack_id={slack_user_id}, team={team_id}, enterprise={enterprise_id}"
             )
-            logger.debug(f"Full Slack user info: {json.dumps(user_info)}")
 
             if not await is_team_authorized(team_id, enterprise_id=enterprise_id):
                 logger.warning(
@@ -206,6 +215,9 @@ async def search_slack_messages(query: str) -> str:
         # if a channel was public but is now private (and the user is not a member),
         # or if a user was removed from a group, they will not see results from that channel.
         user_id = user_id_ctx.get()
+        team_id = team_id_ctx.get()
+        logger.info(f"Using context: user_id={user_id}, team_id={team_id}")
+
         if not user_id:
             logger.error("No user_id found in contextvars for search request")
             return "Unauthorized lookup"
@@ -221,7 +233,7 @@ async def search_slack_messages(query: str) -> str:
                     types="public_channel,private_channel",
                     cursor=cursor,
                     limit=1000,
-                    team_id=team_id_ctx.get(),
+                    team_id=team_id,
                 )
                 if not user_convs.get("ok"):
                     logger.error(
