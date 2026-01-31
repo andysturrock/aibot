@@ -21,7 +21,8 @@ from shared.security import is_team_authorized
 from shared.slack_api import create_client_for_token
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-from starlette.middleware.base import BaseHTTPMiddleware
+
+# from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -49,55 +50,76 @@ team_id_ctx: ContextVar[str] = ContextVar("team_id", default=None)
 # --- Middleware: Security Verification ---
 
 
-class SecurityMiddleware(BaseHTTPMiddleware):
+class SecurityMiddleware:
     """
-    Starlette middleware for MCP SSE backend to verify access.
-    Supports both:
-    1. Bearer Token (Directly provided Slack token)
-    2. IAP (Google Identity mapping to Slack ID/Token)
+    ASGI middleware for MCP SSE backend to verify access.
+    Avoids BaseHTTPMiddleware to prevent issues with streaming responses (SSE).
     """
 
-    async def dispatch(self, request, call_next):
-        logger.info(f"SecurityMiddleware START: {request.method} {request.url.path}")
-        if request.url.path == "/health":
-            return await call_next(request)
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
+        path = request.url.path
+
+        if path == "/health":
+            await self.app(scope, receive, send)
+            return
 
         # 0. Bypass for testing
         if os.environ.get("ENV") == "test":
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        # 1. Whitelist Verification
-        if request.url.path not in ["/mcp/sse", "/mcp/messages", "/mcp/messages/"]:
-            logger.warning(
-                f"Stealth security: Unauthorized access attempt to {request.url.path} from {request.client.host}"
-            )
-            return JSONResponse({"error": "Forbidden"}, status_code=403)
-
-        # 2. Extract and Verify IAP JWT Assertion
-        iap_jwt = request.headers.get("X-Goog-IAP-JWT-Assertion")
-        if not iap_jwt:
-            logger.warning("Missing X-Goog-IAP-JWT-Assertion header")
-            return JSONResponse(
-                {"error": "Authentication required (IAP)"}, status_code=401
-            )
-
-        iap_audience = await get_secret_value("iapAudience")
-        payload = await verify_iap_jwt(iap_jwt, expected_audience=iap_audience)
-        if not payload:
-            logger.error(f"IAP JWT Verification failed for audience: {iap_audience}")
-            return JSONResponse({"error": "Invalid IAP Assertion"}, status_code=403)
-
-        email = payload.get("email")
-        if not email:
-            logger.error(
-                f"IAP JWT payload missing 'email' claim. Payload keys: {list(payload.keys())}"
-            )
-            return JSONResponse(
-                {"error": "Email missing from identity"}, status_code=403
-            )
-
-        # 3. Verify Slack Membership using Bot Token
         try:
+            # 1. Whitelist Verification
+            if path not in ["/mcp/sse", "/mcp/messages", "/mcp/messages/"]:
+                logger.warning(
+                    f"Stealth security: Unauthorized access attempt to {path} from {request.client.host}"
+                )
+                response = JSONResponse({"error": "Forbidden"}, status_code=403)
+                await response(scope, receive, send)
+                return
+
+            # 2. Extract and Verify IAP JWT Assertion
+            iap_jwt = request.headers.get("X-Goog-IAP-JWT-Assertion")
+            if not iap_jwt:
+                logger.warning("Missing X-Goog-IAP-JWT-Assertion header")
+                response = JSONResponse(
+                    {"error": "Authentication required (IAP)"}, status_code=401
+                )
+                await response(scope, receive, send)
+                return
+
+            iap_audience = await get_secret_value("iapAudience")
+            payload = await verify_iap_jwt(iap_jwt, expected_audience=iap_audience)
+            if not payload:
+                logger.error(
+                    f"IAP JWT Verification failed for audience: {iap_audience}"
+                )
+                response = JSONResponse(
+                    {"error": "Invalid IAP Assertion"}, status_code=403
+                )
+                await response(scope, receive, send)
+                return
+
+            email = payload.get("email")
+            if not email:
+                logger.error(
+                    f"IAP JWT payload missing 'email' claim. Payload keys: {list(payload.keys())}"
+                )
+                response = JSONResponse(
+                    {"error": "Email missing from identity"}, status_code=403
+                )
+                await response(scope, receive, send)
+                return
+
+            # 3. Verify Slack Membership using Bot Token
             bot_token = await get_secret_value("slackBotToken")
             slack_client = WebClient(token=bot_token)
 
@@ -110,9 +132,11 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 logger.warning(
                     f"User {email} not found in Slack: {slack_user_resp.get('error')}"
                 )
-                return JSONResponse(
+                response = JSONResponse(
                     {"error": "User not recognized in Slack workspace"}, status_code=403
                 )
+                await response(scope, receive, send)
+                return
 
             # 4. Check team ID matches whitelist
             user_info = slack_user_resp.get("user", {})
@@ -129,29 +153,30 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 logger.warning(
                     f"User {email} belongs to unauthorized team {team_id} or enterprise {enterprise_id}"
                 )
-                return JSONResponse(
+                response = JSONResponse(
                     {"error": "Workspace not authorized"}, status_code=403
                 )
+                await response(scope, receive, send)
+                return
+
+            # 5. Success - Set user ID in context and proceed
+            token = user_id_ctx.set(slack_user_id)
+            team_token = team_id_ctx.set(team_id)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                user_id_ctx.reset(token)
+                team_id_ctx.reset(team_token)
+
+            logger.debug(f"SecurityMiddleware FINISHED for {email}")
 
         except Exception:
-            logger.exception(f"Internal security validation error for {email}")
-            return JSONResponse(
+            logger.exception("Internal security validation error during auth check")
+            response = JSONResponse(
                 {"error": "Security validation failed"}, status_code=500
             )
-
-        # 5. Success - Set user ID in context and proceed
-        token = user_id_ctx.set(slack_user_id)
-        team_token = team_id_ctx.set(team_id)
-        try:
-            response = await call_next(request)
-        finally:
-            user_id_ctx.reset(token)
-            team_id_ctx.reset(team_token)
-
-        logger.debug(
-            f"SecurityMiddleware FINISHED for {email} with status {response.status_code}"
-        )
-        return response
+            await response(scope, receive, send)
+            return
 
 
 # --- Service Logic ---
@@ -345,7 +370,6 @@ async def perform_vector_search(embeddings: list[float]):
 app = mcp.sse_app()
 
 
-@app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     request_id = str(uuid.uuid4())
     logger.error(
@@ -363,6 +387,15 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"message": "Internal Server Error", "request_id": request_id},
     )
 
+
+async def health(request: Request):
+    return JSONResponse({"status": "ok"})
+
+
+app.add_route("/health", health)
+
+# Add exception handler explicitly to avoid deprecation warnings
+app.add_exception_handler(Exception, global_exception_handler)
 
 # Add the security middleware (last added = first executed)
 app.add_middleware(SecurityMiddleware)

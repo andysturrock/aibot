@@ -21,7 +21,8 @@ from shared.slack_api import (
     get_channel_messages_using_token,
     get_public_channels,
 )
-from starlette.middleware.base import BaseHTTPMiddleware
+
+# from starlette.middleware.base import BaseHTTPMiddleware
 from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
 
 load_dotenv()
@@ -35,24 +36,36 @@ METADATA_TABLE_NAME = "slack_content_metadata"
 # --- Middleware: Structured Logging ---
 
 
-class SecurityMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+class SecurityMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
         path = request.url.path
         method = request.method
 
         if path == "/health":
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
         if path != "/":
             logger.warning(
                 f"Stealth security: Unauthorized access attempt to {path} from {request.client.host}"
             )
-            return JSONResponse({"error": "Forbidden"}, status_code=403)
+            response = JSONResponse({"error": "Forbidden"}, status_code=403)
+            await response(scope, receive, send)
+            return
 
         try:
-            response = await call_next(request)
-            logger.debug(f"Path {path} returned {response.status_code}")
-            return response
+            await self.app(scope, receive, send)
+            # In raw ASGI, we don't have the response object here easily
+            # to log its status code unless we wrap 'send'.
+            # For brevity, we skip that log here.
         except Exception as e:
             logger.error(
                 f"Error processing path {path}",
@@ -69,7 +82,6 @@ app = FastAPI(
 app.add_middleware(SecurityMiddleware)
 
 
-@app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     request_id = str(uuid.uuid4())
     logger.error(
@@ -88,7 +100,10 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# --- Service Logic ---
+app.add_exception_handler(Exception, global_exception_handler)
+
+# Add the security middleware (last added = first executed)
+app.add_middleware(SecurityMiddleware)
 
 
 class MessageWithEmbeddings(Message):
