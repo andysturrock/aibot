@@ -9,8 +9,17 @@ os.environ.setdefault("GCP_LOCATION", "us-central1")
 os.environ.setdefault("GOOGLE_CLOUD_PROJECT", "test-project")
 os.environ.setdefault("CUSTOM_FQDN", "test.example.com")
 os.environ.setdefault("SLACK_SIGNING_SECRET", "test-secret")
-# os.environ.setdefault("K_SERVICE", "test-service")
-# os.environ.setdefault("ENV", "test")
+
+
+@pytest.fixture(autouse=True)
+def mock_google_auth_default():
+    """Prevent google.auth.default from raising errors in CI."""
+    with patch("google.auth.default") as mock:
+        mock.return_value = (
+            None,
+            os.environ.get("GOOGLE_CLOUD_PROJECT", "test-project"),
+        )
+        yield mock
 
 
 @pytest.fixture(autouse=True)
@@ -23,8 +32,6 @@ def mock_env_vars():
             "GOOGLE_CLOUD_PROJECT": "test-project",
             "CUSTOM_FQDN": "test.example.com",
             "SLACK_SIGNING_SECRET": "test-secret",
-            # "K_SERVICE": "test-service",
-            # "ENV": "test",
         },
     ):
         yield

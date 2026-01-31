@@ -21,8 +21,6 @@ from shared.slack_api import (
     get_channel_messages_using_token,
     get_public_channels,
 )
-
-# from starlette.middleware.base import BaseHTTPMiddleware
 from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
 
 load_dotenv()
