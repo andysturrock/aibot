@@ -135,9 +135,13 @@ async def run_test():
         try:
             from google.cloud import firestore
 
-            db = firestore.Client(
-                project=os.environ.get("GOOGLE_CLOUD_PROJECT", "PROJECT_ID_PLACEHOLDER")
-            )
+            project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
+            if not project_id:
+                logger.error(
+                    "❌ GOOGLE_CLOUD_PROJECT environment variable is required for Firestore."
+                )
+                return
+            db = firestore.Client(project=project_id)
             docs = (
                 db.collection("AIBot_Google_Tokens")
                 .where("email", "==", user_email)
