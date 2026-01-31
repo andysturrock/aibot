@@ -44,6 +44,57 @@ jobs:
           export PYTHONPATH=$PYTHONPATH:$(pwd)/python/libs/shared:$(pwd)/python/services/aibot_logic:$(pwd)/python/services/slack_collector:$(pwd)/python/services/slack_search_mcp
           pytest --ignore=python/tests/integration_test.py
 
+  terraform:
+    needs: [lint, test]
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    environment: ${{ (github.ref == 'refs/heads/main' || github.base_ref == 'main') && 'prod' || 'beta' }}
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+      - name: Get Project Number
+        id: project
+        run: |
+          PROJECT_NUMBER=$(gcloud projects describe ${{ secrets.GCP_PROJECT_ID }} --format='value(projectNumber)')
+          echo "::add-mask::$PROJECT_NUMBER"
+          echo "number=$PROJECT_NUMBER" >> $GITHUB_OUTPUT
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init \
+            -backend-config="bucket=${{ secrets.GCP_PROJECT_ID }}-aibot-terraform-state" \
+            -backend-config="prefix=aibot/terraform/state"
+      - name: Terraform Plan
+        run: |
+          cd terraform
+          terraform plan -no-color \
+            -var="gcp_gemini_project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            -var="gcp_gemini_project_number=${{ steps.project.outputs.number }}" \
+            -var="gcp_region=${{ secrets.GCP_REGION }}" \
+            -var="custom_fqdn=${{ secrets.CUSTOM_FQDN }}" \
+            -var="iap_client_id=${{ secrets.IAP_CLIENT_ID }}" \
+            -var="iap_client_secret=${{ secrets.IAP_CLIENT_SECRET }}"
+      - name: Terraform Apply
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
+        run: |
+          cd terraform
+          terraform apply -auto-approve \
+            -var="gcp_gemini_project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            -var="gcp_gemini_project_number=${{ steps.project.outputs.number }}" \
+            -var="gcp_region=${{ secrets.GCP_REGION }}" \
+            -var="custom_fqdn=${{ secrets.CUSTOM_FQDN }}" \
+            -var="iap_client_id=${{ secrets.IAP_CLIENT_ID }}" \
+            -var="iap_client_secret=${{ secrets.IAP_CLIENT_SECRET }}"
+
   build-base:
     needs: [lint, test]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
@@ -97,7 +148,8 @@ jobs:
           docker push $LATEST_IMAGE
 
   deploy-services:
-    needs: build-services
+    needs: [build-services, terraform]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
     runs-on: ubuntu-latest
     environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'beta' }}
     strategy:
