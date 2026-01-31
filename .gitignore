@@ -45,6 +45,7 @@ _override.tf.json
 # Environment
 .env
 .env.*
+.sops.yaml
 
 # IDEs
 .vscode/

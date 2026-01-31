@@ -6,6 +6,8 @@ import os
 import random
 import time
 import traceback
+import uuid
+from contextlib import asynccontextmanager
 
 # Service specific imports
 from agents import create_supervisor_agent
@@ -150,18 +152,33 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             raise
 
 
+# --- Lifespan Handler ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Log all registered routes for debugging 404s
+    for route in app.routes:
+        logger.info(f"Registered route: {route.path} [{','.join(route.methods)}]")
+    yield
+
+
 # --- FastAPI App ---
 app = FastAPI(
-    title="AIBot Logic (FastAPI)", docs_url=None, redoc_url=None, openapi_url=None
+    title="AIBot Logic (FastAPI)",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    lifespan=lifespan,
 )
 app.add_middleware(SecurityMiddleware)
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    request_id = str(uuid.uuid4())
     logger.error(
-        "Unhandled exception in FastAPI",
+        f"Unhandled exception in FastAPI [Request ID: {request_id}]",
         extra={
+            "request_id": request_id,
             "path": request.url.path,
             "method": request.method,
             "exception": str(exc),
@@ -169,15 +186,9 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
     )
     return JSONResponse(
-        status_code=500, content={"message": f"Internal Server Error: {str(exc)}"}
+        status_code=500,
+        content={"message": "Internal Server Error", "request_id": request_id},
     )
-
-
-@app.on_event("startup")
-async def startup_event():
-    # Log all registered routes for debugging 404s
-    for route in app.routes:
-        logger.info(f"Registered route: {route.path} [{','.join(route.methods)}]")
 
 
 # --- Slack Helpers ---
@@ -253,7 +264,7 @@ async def handle_home_tab_event(event):
                 }
             )
         else:
-            redirect_uri = f"https://{custom_fqdn}/auth/callback/google"
+            redirect_uri = f"https://{custom_fqdn}/auth/callback"
             client_id = await get_secret_value("iapClientId")
 
             auth_url = get_google_auth_url(client_id, redirect_uri, state=user_id)

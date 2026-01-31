@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import traceback
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -69,9 +70,11 @@ app.add_middleware(SecurityMiddleware)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    request_id = str(uuid.uuid4())
     logger.error(
-        "Unhandled exception in Slack Collector",
+        f"Unhandled exception in Slack Collector [Request ID: {request_id}]",
         extra={
+            "request_id": request_id,
             "path": request.url.path,
             "method": request.method,
             "exception": str(exc),
@@ -79,7 +82,8 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
     )
     return JSONResponse(
-        status_code=500, content={"message": f"Internal Server Error: {str(exc)}"}
+        status_code=500,
+        content={"message": "Internal Server Error", "request_id": request_id},
     )
 
 
@@ -239,10 +243,22 @@ async def get_channels_metadata(
 ) -> dict[str, ChannelMetadata]:
     if not channels:
         return {}
-    sql_channel_ids = ", ".join([f"\"{c['id']}\"" for c in channels])
-    query = f"SELECT channel_id, channel_name, created_datetime, MAX(last_download_datetime) as last_download_datetime FROM {DATASET_NAME}.{METADATA_TABLE_NAME} WHERE channel_id in ({sql_channel_ids}) GROUP BY channel_id, channel_name, created_datetime"
+    query = f"""
+        SELECT channel_id, channel_name, created_datetime, MAX(last_download_datetime) as last_download_datetime
+        FROM {DATASET_NAME}.{METADATA_TABLE_NAME}
+        WHERE channel_id in UNNEST(@channel_ids)
+        GROUP BY channel_id, channel_name, created_datetime
+    """
+    channel_id_list = [c["id"] for c in channels]
+    job_config = bigquery.QueryJobConfiguration(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("channel_ids", "STRING", channel_id_list),
+        ]
+    )
     loop = asyncio.get_event_loop()
-    query_job = await loop.run_in_executor(None, bigquery_client.query, query)
+    query_job = await loop.run_in_executor(
+        None, lambda: bigquery_client.query(query, job_config=job_config)
+    )
     rows = await loop.run_in_executor(None, query_job.result)
     return {
         r["channel_id"]: ChannelMetadata(

@@ -123,13 +123,6 @@ resource "google_cloud_run_v2_service" "aibot_logic" {
   }
 }
 
-# Allow unauthenticated access (Protected by IAP on the Load Balancer)
-resource "google_cloud_run_v2_service_iam_member" "logic_public_invoker" {
-  location = google_cloud_run_v2_service.aibot_logic.location
-  name     = google_cloud_run_v2_service.aibot_logic.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 resource "google_service_account" "aibot_logic" {
   account_id   = "aibot-logic"
@@ -194,13 +187,6 @@ resource "google_cloud_run_v2_service" "slack_search_mcp" {
   }
 }
 
-# Allow unauthenticated access (Protected by IAP on the Load Balancer)
-resource "google_cloud_run_v2_service_iam_member" "mcp_public_invoker" {
-  location = google_cloud_run_v2_service.slack_search_mcp.location
-  name     = google_cloud_run_v2_service.slack_search_mcp.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
 
 resource "google_service_account" "slack_search_mcp" {
   account_id   = "slack-search-mcp"
@@ -249,10 +235,12 @@ resource "google_cloud_run_v2_service" "slack_collector" {
   }
 }
 
-# Allow Scheduler to invoke slack-collector
-resource "google_cloud_run_v2_service_iam_member" "scheduler_collector_invoker" {
+# Allow Scheduler to invoke slack-collector (Authoritative)
+resource "google_cloud_run_v2_service_iam_binding" "scheduler_collector_invoker" {
   location = google_cloud_run_v2_service.slack_collector.location
   name     = google_cloud_run_v2_service.slack_collector.name
   role     = "roles/run.invoker"
-  member   = "serviceAccount:${google_service_account.collect_slack_messages.email}"
+  members = [
+    "serviceAccount:${google_service_account.collect_slack_messages.email}"
+  ]
 }
