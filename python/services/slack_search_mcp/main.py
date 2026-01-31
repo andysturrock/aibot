@@ -71,11 +71,6 @@ class SecurityMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # 0. Bypass for testing
-        if os.environ.get("ENV") == "test":
-            await self.app(scope, receive, send)
-            return
-
         try:
             # 1. Whitelist Verification
             if path not in ["/mcp/sse", "/mcp/messages", "/mcp/messages/"]:
@@ -85,7 +80,6 @@ class SecurityMiddleware:
                 response = JSONResponse({"error": "Forbidden"}, status_code=403)
                 await response(scope, receive, send)
                 return
-
             # 2. Extract and Verify IAP JWT Assertion
             iap_jwt = request.headers.get("X-Goog-IAP-JWT-Assertion")
             if not iap_jwt:
