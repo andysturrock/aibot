@@ -19,6 +19,12 @@ resource "google_project_iam_member" "github_actions_iap_admin" {
   member  = "serviceAccount:${google_service_account.github_actions.email}"
 }
 
+resource "google_project_iam_member" "github_actions_pubsub_admin" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/pubsub.admin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
+
 resource "google_project_iam_member" "github_actions_registry_writer" {
   project = var.gcp_gemini_project_id
   role    = "roles/artifactregistry.writer"
