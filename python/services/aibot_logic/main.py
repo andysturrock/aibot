@@ -684,8 +684,18 @@ if service_role in ["aibot-logic", "test-service"]:
                     ):
                         if event.content and event.content.parts:
                             for part in event.content.parts:
-                                if part.text:
-                                    responses.append(part.text)
+                                # Check for text part specifically to avoid SDK warnings about non-text parts (like function_calls)
+                                # That are handled internally by the agent-sdk.
+                                try:
+                                    if hasattr(part, "to_dict"):
+                                        text_part = part.to_dict().get("text")
+                                        if text_part:
+                                            responses.append(text_part)
+                                    elif getattr(part, "text", None):
+                                        responses.append(part.text)
+                                except Exception:
+                                    if getattr(part, "text", None):
+                                        responses.append(part.text)
 
                     final_response = "".join(responses).strip()
 
