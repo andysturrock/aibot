@@ -6,7 +6,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-# 1. Environment Loading
+# 1. Option Defaults
+FAST_MODE=false
+NO_TF=false
+NO_SECRETS=false
+SECRETS_ONLY=false
+TARGET_SERVICE=""
+
+# 2. Environment Loading
 ENV=""
 while [[ "$#" -gt 0 ]]; do
   case $1 in
@@ -27,13 +34,26 @@ if [[ "$ENV" != "prod" && "$ENV" != "beta" ]]; then
 fi
 
 ENV_FILE=".env.$ENV"
-if [ ! -f "$ENV_FILE" ]; then
-  echo "Error: $ENV_FILE not found."
+ENC_FILE=".env.$ENV.enc"
+
+if [ -f "$ENC_FILE" ]; then
+  echo "--- Decrypting $ENC_FILE with SOPS ---"
+  # Use a temporary file with restrictive permissions and a trap for cleanup
+  TEMP_ENV=$(mktemp)
+  chmod 600 "$TEMP_ENV"
+  trap 'rm -f "$TEMP_ENV"' EXIT
+  # Note: Encrypted .env files are typically stored in a JSON structure under a "data" key.
+  sops -d --extract '["data"]' "$ENC_FILE" > "$TEMP_ENV"
+  source "$TEMP_ENV"
+  rm "$TEMP_ENV"
+  trap - EXIT # Clear the trap after successful removal
+elif [ -f "$ENV_FILE" ]; then
+  echo "--- Loading plaintext $ENV_FILE file ---"
+  source "$ENV_FILE"
+else
+  echo "Error: Neither $ENV_FILE nor $ENC_FILE found."
   exit 1
 fi
-
-echo "--- Loading $ENV_FILE file ---"
-source "$ENV_FILE"
 
 # Fallback Configuration
 echo "Using Project ID: $PROJECT_ID ($ENV)"
@@ -86,12 +106,6 @@ TF_VARS="-var=gcp_gemini_project_id=$PROJECT_ID \
          -var=iap_client_secret=$IAP_CLIENT_SECRET \
          -var=github_repo=$GITHUB_REPO"
 
-FAST_MODE=false
-NO_TF=false
-NO_SECRETS=false
-SECRETS_ONLY=false
-TARGET_SERVICE=""
-
 # Arguments already parsed above for environment loading
 
 if [ "$FAST_MODE" = true ]; then
@@ -123,7 +137,7 @@ fi
 # 2. Infrastructure Provisioning
 if [[ "$FAST_MODE" = false && "$NO_TF" = false ]]; then
   echo "--- Provisioning Infrastructure ---"
-  ( cd terraform && terraform apply -auto-approve $TF_VARS )
+  ( cd terraform && ./init.sh --env="$ENV" && terraform apply -auto-approve $TF_VARS )
 fi
 
 # 3. Optimized Build Process
@@ -210,15 +224,25 @@ fi
 # 5. Secret Synchronization
 if [ "$NO_SECRETS" = false ]; then
   echo "--- Synchronizing Secrets ---"
-  # Function to disable older versions of a secret
   disable_old_versions() {
-    local SECRET_ID=$1
+    local SECRET_ID="$1"
+    if [[ -z "$SECRET_ID" ]]; then
+      echo "Warning: No Secret ID provided to disable_old_versions"
+      return
+    fi
+
     echo "Disabling older versions of $SECRET_ID..."
     # List all enabled versions, skip the first one (latest), and disable the rest
-    VERSIONS=$(gcloud secrets versions list "$SECRET_ID" --filter="state=enabled" --format="value(name)" | tail -n +2)
-    for V in $VERSIONS; do
-      gcloud secrets versions disable "$V" --secret="$SECRET_ID" --quiet || true
-    done
+    # We use --format="value(name)" and carefully handle output
+    local VERSIONS
+    VERSIONS=$(gcloud secrets versions list "$SECRET_ID" --filter="state=enabled" --format="value(name)" --project="$PROJECT_ID" 2>/dev/null | tail -n +2) || true
+
+    if [[ -n "$VERSIONS" ]]; then
+      for V in $VERSIONS; do
+        echo "  Disabling version $V..."
+        gcloud secrets versions disable "$V" --secret="$SECRET_ID" --project="$PROJECT_ID" --quiet || true
+      done
+    fi
   }
 
   if [ -n "$SLACK_BOT_TOKEN" ]; then
