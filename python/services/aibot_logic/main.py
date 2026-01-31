@@ -667,15 +667,25 @@ async def pubsub_worker(request: Request):
                             # Check for text part specifically to avoid SDK warnings about non-text parts (like function_calls)
                             # That are handled internally by the agent-sdk.
                             try:
-                                # Use to_dict() to check for text without triggering property warnings on non-text parts
-                                p_dict = (
-                                    part.to_dict() if hasattr(part, "to_dict") else {}
-                                )
+                                # Safe extraction: support Pydantic model_dump, to_dict, or raw dicts
+                                if hasattr(part, "model_dump"):
+                                    p_dict = part.model_dump()
+                                elif hasattr(part, "to_dict"):
+                                    p_dict = part.to_dict()
+                                elif isinstance(part, dict):
+                                    p_dict = part
+                                else:
+                                    # Fallback for objects that might have a .text attribute but aren't models
+                                    text = getattr(part, "text", None)
+                                    if text and isinstance(text, str):
+                                        responses.append(text)
+                                    continue
+
                                 text = p_dict.get("text")
                                 if text:
                                     responses.append(text)
                             except Exception as e:
-                                logger.debug(f"Skipping non-text part or error: {e}")
+                                logger.debug(f"Skipping part or error: {e}")
 
                 final_response = "".join(responses).strip()
 
