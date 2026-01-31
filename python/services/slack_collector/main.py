@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from google.cloud import bigquery
-from google.cloud.bigquery import ArrayQueryParameter, QueryJobConfiguration
+from google.cloud.bigquery import ArrayQueryParameter, QueryJobConfig
 from shared.gcp_api import get_secret_value
 
 # Import from shared library submodules
@@ -251,7 +251,7 @@ async def get_channels_metadata(
         GROUP BY channel_id, channel_name, created_datetime
     """
     channel_id_list = [c["id"] for c in channels]
-    job_config = QueryJobConfiguration(
+    job_config = QueryJobConfig(
         query_parameters=[
             ArrayQueryParameter("channel_ids", "STRING", channel_id_list),
         ]

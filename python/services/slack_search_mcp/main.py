@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from dotenv import load_dotenv
 from google import genai
 from google.cloud import bigquery
-from google.cloud.bigquery import ArrayQueryParameter, QueryJobConfiguration
+from google.cloud.bigquery import ArrayQueryParameter, QueryJobConfig
 from google.genai import types
 from mcp.server.fastmcp import FastMCP
 from shared.gcp_api import get_secret_value
@@ -328,7 +328,7 @@ async def perform_vector_search(embeddings: list[float]):
         )
         ORDER BY distance
     """
-    job_config = QueryJobConfiguration(
+    job_config = QueryJobConfig(
         query_parameters=[
             ArrayQueryParameter("query_embeddings", "FLOAT64", embeddings),
         ]
