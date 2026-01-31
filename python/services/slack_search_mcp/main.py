@@ -222,7 +222,7 @@ async def search_slack_messages(query: str) -> str:
             logger.error("No user_id found in contextvars for search request")
             return "Unauthorized lookup"
 
-        permitted_channels = set()
+        permitted_channels = {}  # Map channel_id -> channel_name
         try:
             # Note: types can include public_channel, private_channel
             # We use an admin/shared token to see which channels THIS user is in.
@@ -242,7 +242,7 @@ async def search_slack_messages(query: str) -> str:
                     break
 
                 for channel in user_convs.get("channels", []):
-                    permitted_channels.add(channel["id"])
+                    permitted_channels[channel["id"]] = channel.get("name")
 
                 cursor = user_convs.get("response_metadata", {}).get("next_cursor")
                 if not cursor:
@@ -286,27 +286,53 @@ async def search_slack_messages(query: str) -> str:
             )
 
         # 4. Fetch Threads from Slack in Parallel
+        # We also maintain a cache for user names to avoid redundant calls
+        user_name_cache = {}
+
         async def fetch_thread(row):
             try:
+                channel_id = row["channel"]
+                channel_name = permitted_channels.get(channel_id, "unknown-channel")
+
                 resp = await slack_client.conversations_replies(
-                    channel=row["channel"], ts=str(row["ts"]), inclusive=True
+                    channel=channel_id, ts=str(row["ts"]), inclusive=True
                 )
                 if resp.get("ok"):
                     thread_messages = []
                     for msg in resp.get("messages", []):
+                        user_id = msg.get("user")
+                        user_name = "unknown-user"
+                        if user_id:
+                            if user_id in user_name_cache:
+                                user_name = user_name_cache[user_id]
+                            else:
+                                try:
+                                    u_resp = await slack_client.users_info(user=user_id)
+                                    if u_resp.get("ok"):
+                                        user_name = (
+                                            u_resp.get("user", {}).get("real_name")
+                                            or u_resp.get("user", {}).get("name")
+                                            or user_id
+                                        )
+                                        user_name_cache[user_id] = user_name
+                                except Exception:
+                                    pass
+
                         ts_str = msg.get("ts", "")
                         ts_digits = ts_str.replace(".", "")
-                        url = f"https://{team_domain}.slack.com/archives/{row['channel']}/p{ts_digits}"
+                        url = f"https://{team_domain}.slack.com/archives/{channel_id}/p{ts_digits}"
                         if msg.get("thread_ts") and msg.get("thread_ts") != ts_str:
-                            url += f"?thread_ts={msg.get('thread_ts')}&cid={row['channel']}"
+                            url += f"?thread_ts={msg.get('thread_ts')}&cid={channel_id}"
 
                         thread_messages.append(
                             {
                                 "text": msg.get("text"),
                                 "team_id": team_id,
-                                "channel_id": row["channel"],
+                                "channel_id": channel_id,
+                                "channel_name": channel_name,
                                 "ts": ts_str,
-                                "user_id": msg.get("user"),
+                                "user_id": user_id,
+                                "user_name": user_name,
                                 "url": url,
                                 "thread_ts": msg.get("thread_ts"),
                             }

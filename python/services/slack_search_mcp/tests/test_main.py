@@ -48,14 +48,22 @@ async def test_search_tool_logic():
                         mock_client.conversations_replies = AsyncMock(
                             return_value={
                                 "ok": True,
-                                "messages": [{"text": "found it", "ts": "1.1"}],
+                                "messages": [
+                                    {"text": "found it", "ts": "1.1", "user": "U123"}
+                                ],
                             }
                         )
                         mock_client.users_conversations = AsyncMock(
                             return_value={
                                 "ok": True,
-                                "channels": [{"id": "C1"}],
+                                "channels": [{"id": "C1", "name": "general"}],
                                 "response_metadata": {"next_cursor": ""},
+                            }
+                        )
+                        mock_client.users_info = AsyncMock(
+                            return_value={
+                                "ok": True,
+                                "user": {"real_name": "Test User", "id": "U123"},
                             }
                         )
 
@@ -69,3 +77,5 @@ async def test_search_tool_logic():
                         result = json.loads(result_json)
                         assert len(result) == 1
                         assert result[0]["text"] == "found it"
+                        assert result[0]["channel_name"] == "general"
+                        assert result[0]["user_name"] == "Test User"
