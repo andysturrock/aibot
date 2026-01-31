@@ -13,6 +13,14 @@ with patch("shared.gcp_api.get_secret_value", new_callable=AsyncMock) as mock_se
     from services.slack_search_mcp.main import app
 
 
+@pytest.fixture(autouse=True)
+def clean_env(monkeypatch):
+    """Ensure ENV is NOT 'test' for security middleware tests."""
+    monkeypatch.delenv("ENV", raising=False)
+    # Also ensure K_SERVICE doesn't bypass if it leaks
+    monkeypatch.delenv("K_SERVICE", raising=False)
+
+
 @pytest.mark.asyncio
 async def test_health_check_bypasses_security():
     async with AsyncClient(

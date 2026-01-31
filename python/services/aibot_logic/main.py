@@ -67,26 +67,16 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         # Differentiation based on service role (Webhook vs Logic Worker)
         service_name = os.environ.get("K_SERVICE", "aibot-logic")
 
-        allowed_paths = []
-        if service_name == "aibot-webhook":
-            allowed_paths = [
-                "/slack/events",
-                "/slack/interactivity",
-                "/slack/install",
-                "/slack/oauth-redirect",
-            ]
-        elif service_name == "aibot-logic":
-            allowed_paths = ["/pubsub/worker"]
-        elif os.environ.get("ENV") == "test" or service_name == "test-service":
-            # Allow everything in tests to avoid 403 blocks during component tests
-            allowed_paths = [
-                "/health",
-                "/slack/events",
-                "/slack/interactivity",
-                "/slack/install",
-                "/slack/oauth-redirect",
-                "/pubsub/worker",
-            ]
+        # Whitelist of all possible legitimate paths across all roles
+        # In production, specific roles will only ever receive traffic for their paths
+        allowed_paths = [
+            "/health",
+            "/slack/events",
+            "/slack/interactivity",
+            "/slack/install",
+            "/slack/oauth-redirect",
+            "/pubsub/worker",
+        ]
 
         if path not in allowed_paths and not path.startswith("/auth/"):
             logger.warning(
@@ -305,15 +295,12 @@ async def handle_home_tab_event(event):
         user_id=user_id, view={"type": "home", "blocks": blocks}
     )
     if response["ok"]:
-        logger.info(f"Successfully published Home tab for user {user_id}")
+        logger.debug(f"Successfully published Home tab for user {user_id}")
     else:
         logger.error(
             f"Failed to publish Home tab for user {user_id}: {response['error']}"
         )
 
-
-# --- Service Role Identification ---
-service_role = os.environ.get("K_SERVICE", "aibot-logic")
 
 # --- Routes ---
 
@@ -365,395 +352,386 @@ async def keep_alive_status_updates(channel_id: str, user_id: str, thread_ts: st
         logger.debug("Keep-alive task cancelled.")
 
 
-if service_role in ["aibot-webhook", "test-service"]:
-    logger.info("Registering Webhook routes")
+# --- Webhook Routes ---
+@app.post("/slack/events")
+async def slack_events(request: Request):
+    payload = await request.json()
 
-    @app.post("/slack/events")
-    async def slack_events(request: Request):
-        payload = await request.json()
+    # URL Verification (Challenge)
+    if payload.get("type") == "url_verification":
+        return {"challenge": payload.get("challenge")}
 
-        # URL Verification (Challenge)
-        if payload.get("type") == "url_verification":
-            return {"challenge": payload.get("challenge")}
+    # Core Logic: Publish to Pub/Sub (Already verified by Middleware)
+    # Check if it's a message we should acknowledge with eyes
+    event = payload.get("event", {})
+    inner_type = event.get("type")
+    channel_id = event.get("channel")
+    message_ts = event.get("ts")
 
-        # Core Logic: Publish to Pub/Sub (Already verified by Middleware)
-        # Check if it's a message we should acknowledge with eyes
-        event = payload.get("event", {})
-        inner_type = event.get("type")
-        channel_id = event.get("channel")
-        message_ts = event.get("ts")
+    # We handle app_mentions and non-bot DM messages
+    should_react = inner_type == "app_mention" or (
+        inner_type == "message"
+        and event.get("channel_type") == "im"
+        and not event.get("bot_id")
+        and not event.get("subtype")
+    )
 
-        # We handle app_mentions and non-bot DM messages
-        should_react = inner_type == "app_mention" or (
-            inner_type == "message"
-            and event.get("channel_type") == "im"
-            and not event.get("bot_id")
-            and not event.get("subtype")
+    if should_react and channel_id and message_ts:
+        try:
+            await add_reaction(channel_id, message_ts, "eyes")
+        except Exception:
+            logger.warning("Failed to add eyes reaction")
+
+    # For non-challenge events, we just publish to Pub/Sub and return 200
+    # This keeps the webhook response time very low to satisfy Slack's 3s limit.
+    try:
+        # We add the user who triggered it to the payload if available
+        # to help the worker identify them without another API call.
+        at_user = None
+        if payload.get("event"):
+            at_user = payload["event"].get("user") or payload["event"].get("user_id")
+
+        if at_user:
+            payload["at_user"] = at_user
+
+        await publish_to_topic(TOPIC_ID, json.dumps(payload))
+        return Response(content="OK", status_code=200)
+    except Exception as e:
+        logger.exception("Failed to publish to Pub/Sub")
+        return Response(content=f"Error: {str(e)}", status_code=500)
+
+
+@app.get("/auth/login")
+async def login(slack_user_id: str):
+    # 1. Check if user already has a valid refresh token
+    token_data = await get_google_token(slack_user_id)
+    if token_data and token_data.get("refresh_token"):
+        return Response(
+            content="<h1>Already Authenticated</h1><p>You are already signed in to Google. You can close this window.</p>",
+            media_type="text/html",
         )
 
-        if should_react and channel_id and message_ts:
-            try:
-                await add_reaction(channel_id, message_ts, "eyes")
-            except Exception:
-                logger.warning("Failed to add eyes reaction")
+    # 2. Generate Google Auth URL
+    # We pass slack_user_id in state to tie the tokens back to them in the callback
+    state = json.dumps({"slack_user_id": slack_user_id})
 
-        # For non-challenge events, we just publish to Pub/Sub and return 200
-        # This keeps the webhook response time very low to satisfy Slack's 3s limit.
-        try:
-            # We add the user who triggered it to the payload if available
-            # to help the worker identify them without another API call.
-            at_user = None
-            if payload.get("event"):
-                at_user = payload["event"].get("user") or payload["event"].get(
-                    "user_id"
-                )
+    # We need to use the actual FQDN for the redirect URI
+    custom_fqdn = await get_secret_value("customFqdn")
+    if not custom_fqdn:
+        return Response(content="Error: customFqdn not configured", status_code=500)
 
-            if at_user:
-                payload["at_user"] = at_user
+    redirect_uri = f"https://{custom_fqdn}/auth/callback"
+    logger.debug(f"Using Redirect URI: {redirect_uri}")
 
-            await publish_to_topic(TOPIC_ID, json.dumps(payload))
-            return Response(content="OK", status_code=200)
-        except Exception as e:
-            logger.exception("Failed to publish to Pub/Sub")
-            return Response(content=f"Error: {str(e)}", status_code=500)
+    client_id = await get_secret_value("iapClientId")
+    auth_url = get_google_auth_url(client_id, redirect_uri, state=state)
+    return RedirectResponse(url=auth_url)
 
-    @app.get("/auth/login")
-    async def login(slack_user_id: str):
-        # 1. Check if user already has a valid refresh token
-        token_data = await get_google_token(slack_user_id)
-        if token_data and token_data.get("refresh_token"):
-            return Response(
-                content="<h1>Already Authenticated</h1><p>You are already signed in to Google. You can close this window.</p>",
-                media_type="text/html",
-            )
 
-        # 2. Generate Google Auth URL
-        # We pass slack_user_id in state to tie the tokens back to them in the callback
-        state = json.dumps({"slack_user_id": slack_user_id})
+@app.get("/auth/callback")
+async def callback(request: Request):
+    code = request.query_params.get("code")
+    state_str = request.query_params.get("state")
 
-        # We need to use the actual FQDN for the redirect URI
+    if not code or not state_str:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+
+    try:
+        state = json.loads(state_str)
+        slack_user_id = state.get("slack_user_id")
+
+        # 1. Exchange code for tokens
         custom_fqdn = await get_secret_value("customFqdn")
         if not custom_fqdn:
-            return Response(content="Error: customFqdn not configured", status_code=500)
+            return Response(content="Error: customFqdn secret missing", status_code=500)
 
         redirect_uri = f"https://{custom_fqdn}/auth/callback"
         logger.debug(f"Using Redirect URI: {redirect_uri}")
 
-        client_id = await get_secret_value("iapClientId")
-        auth_url = get_google_auth_url(client_id, redirect_uri, state=state)
-        return RedirectResponse(url=auth_url)
+        tokens = await exchange_google_code(code, redirect_uri)
 
-    @app.get("/auth/callback")
-    async def callback(request: Request):
-        code = request.query_params.get("code")
-        state_str = request.query_params.get("state")
-
-        if not code or not state_str:
-            raise HTTPException(status_code=400, detail="Missing code or state")
-
-        try:
-            state = json.loads(state_str)
-            slack_user_id = state.get("slack_user_id")
-
-            # 1. Exchange code for tokens
-            custom_fqdn = await get_secret_value("customFqdn")
-            if not custom_fqdn:
-                return Response(
-                    content="Error: customFqdn secret missing", status_code=500
-                )
-
-            redirect_uri = f"https://{custom_fqdn}/auth/callback"
-            logger.debug(f"Using Redirect URI: {redirect_uri}")
-
-            tokens = await exchange_google_code(code, redirect_uri)
-
-            if not tokens or not tokens.get("id_token"):
-                return Response(
-                    content="<h1>Authentication Failed</h1><p>Could not retrieve ID token from Google.</p>",
-                    status_code=400,
-                    media_type="text/html",
-                )
-
-            # 2. Verify and Decode ID Token
-            try:
-                client_id = await get_secret_value("iapClientId")
-                # verify_oauth2_token handles signature, expiry, and audience verification.
-                id_token_payload = id_token.verify_oauth2_token(
-                    tokens.get("id_token"), auth_requests.Request(), client_id
-                )
-                email = id_token_payload.get("email", "Unknown")
-            except Exception as verify_err:
-                logger.error(f"Failed to verify Google ID token: {verify_err}")
-                return Response(
-                    content=f"<h1>Authentication Failed</h1><p>Google token verification failed: {str(verify_err)}</p>",
-                    status_code=401,
-                    media_type="text/html",
-                )
-
-            # 3. Store tokens in Firestore
-            # The put_google_token function expects a dictionary with specific keys
-            await put_google_token(
-                slack_user_id,
-                {
-                    "id_token": tokens.get("id_token"),
-                    "refresh_token": tokens.get("refresh_token"),
-                    "email": email,
-                    "expires_at": time.time() + tokens.get("expires_in", 3600),
-                },
-            )
-
-            logger.info(
-                f"Successfully authenticated Google user: {email} (Slack User ID: {slack_user_id})"
-            )
-
+        if not tokens or not tokens.get("id_token"):
             return Response(
-                content=f"<h1>Success!</h1><p>You are now signed in as <b>{email}</b>. You can close this window and return to Slack.</p>",
+                content="<h1>Authentication Failed</h1><p>Could not retrieve ID token from Google.</p>",
+                status_code=400,
                 media_type="text/html",
             )
-        except Exception as e:
-            logger.exception("Google OAuth callback failed")
-            return Response(content=f"Error: {str(e)}", status_code=500)
 
-    @app.get("/slack/oauth-redirect")
-    async def slack_oauth_redirect(code: str):
-        # We KEEP this for Slack Bot installation if needed,
-        # but user authentication is now via Google.
-        return Response(
-            content="Slack Bot Auth successful. Please use 'Sign in with Google' on the Home tab for search access.",
-            status_code=200,
+        # 2. Verify and Decode ID Token
+        try:
+            client_id = await get_secret_value("iapClientId")
+            # verify_oauth2_token handles signature, expiry, and audience verification.
+            id_token_payload = id_token.verify_oauth2_token(
+                tokens.get("id_token"), auth_requests.Request(), client_id
+            )
+            email = id_token_payload.get("email", "Unknown")
+        except Exception as verify_err:
+            logger.error(f"Failed to verify Google ID token: {verify_err}")
+            return Response(
+                content=f"<h1>Authentication Failed</h1><p>Google token verification failed: {str(verify_err)}</p>",
+                status_code=401,
+                media_type="text/html",
+            )
+
+        # 3. Store tokens in Firestore
+        # The put_google_token function expects a dictionary with specific keys
+        await put_google_token(
+            slack_user_id,
+            {
+                "id_token": tokens.get("id_token"),
+                "refresh_token": tokens.get("refresh_token"),
+                "email": email,
+                "expires_at": time.time() + tokens.get("expires_in", 3600),
+            },
         )
 
+        logger.info(
+            f"Successfully authenticated Google user: {email} (Slack User ID: {slack_user_id})"
+        )
 
-if service_role in ["aibot-logic", "test-service"]:
-    logger.info("Registering Logic Worker routes")
+        return Response(
+            content=f"<h1>Success!</h1><p>You are now signed in as <b>{email}</b>. You can close this window and return to Slack.</p>",
+            media_type="text/html",
+        )
+    except Exception as e:
+        logger.exception("Google OAuth callback failed")
+        return Response(content=f"Error: {str(e)}", status_code=500)
 
-    @app.post("/pubsub/worker")
-    async def pubsub_worker(request: Request):
-        keep_alive_task = None
-        envelope = await request.json()
-        logger.info(f"Received Pub/Sub envelope: {json.dumps(envelope)}")
-        if not envelope or "message" not in envelope:
-            logger.error("Missing 'message' in Pub/Sub envelope")
-            raise HTTPException(status_code=400, detail="Bad Request")
 
-        message = envelope["message"]
-        data = base64.b64decode(message["data"]).decode("utf-8")
-        payload = json.loads(data)
-        logger.info(f"Pub/Sub Payload: {json.dumps(payload)}")
+@app.get("/slack/oauth-redirect")
+async def slack_oauth_redirect(code: str):
+    # We KEEP this for Slack Bot installation if needed,
+    # but user authentication is now via Google.
+    return Response(
+        content="Slack Bot Auth successful. Please use 'Sign in with Google' on the Home tab for search access.",
+        status_code=200,
+    )
 
-        event_type = payload.get("type")
-        event = payload.get("event") or {}
 
-        # Dispatching
-        if event_type == "event_callback":
-            inner_type = event.get("type")
-            logger.info(f"Processing event_callback: {inner_type}")
+# --- Logic Worker Routes ---
+@app.post("/pubsub/worker")
+async def pubsub_worker(request: Request):
+    keep_alive_task = None
+    envelope = await request.json()
+    logger.info(f"Received Pub/Sub envelope: {json.dumps(envelope)}")
+    if not envelope or "message" not in envelope:
+        logger.error("Missing 'message' in Pub/Sub envelope")
+        raise HTTPException(status_code=400, detail="Bad Request")
 
-            # Check if this is a message we should respond to
-            should_handle = False
-            if inner_type == "app_mention":
+    message = envelope["message"]
+    data = base64.b64decode(message["data"]).decode("utf-8")
+    payload = json.loads(data)
+    logger.info(f"Pub/Sub Payload: {json.dumps(payload)}")
+
+    event_type = payload.get("type")
+    event = payload.get("event") or {}
+
+    # Dispatching
+    if event_type == "event_callback":
+        inner_type = event.get("type")
+        logger.info(f"Processing event_callback: {inner_type}")
+
+        # Check if this is a message we should respond to
+        should_handle = False
+        if inner_type == "app_mention":
+            should_handle = True
+        elif inner_type == "message":
+            # Handle Direct Messages (IMs)
+            # Ignore messages with subtypes (like message_changed) and bot messages
+            if (
+                event.get("channel_type") == "im"
+                and not event.get("bot_id")
+                and not event.get("subtype")
+            ):
                 should_handle = True
-            elif inner_type == "message":
-                # Handle Direct Messages (IMs)
-                # Ignore messages with subtypes (like message_changed) and bot messages
-                if (
-                    event.get("channel_type") == "im"
-                    and not event.get("bot_id")
-                    and not event.get("subtype")
-                ):
-                    should_handle = True
-                # Optional: Support group messages if bot is mentioned by name,
-                # but app_mention usually covers this if @bot is used.
+            # Optional: Support group messages if bot is mentioned by name,
+            # but app_mention usually covers this if @bot is used.
 
-            if should_handle:
-                logger.info(f"Handling {inner_type} event")
-                channel_id = event.get("channel")
-                message_ts = event.get("ts")
-                thread_ts = event.get("thread_ts") or message_ts
-                text = event.get("text")
+        if should_handle:
+            logger.info(f"Handling {inner_type} event")
+            channel_id = event.get("channel")
+            message_ts = event.get("ts")
+            thread_ts = event.get("thread_ts") or message_ts
+            text = event.get("text")
 
-                # Check for bot loops just in case
-                if event.get("bot_id") or event.get("subtype") == "bot_message":
-                    logger.info("Ignoring bot message")
-                    return Response(content="OK", status_code=200)
+            # Check for bot loops just in case
+            if event.get("bot_id") or event.get("subtype") == "bot_message":
+                logger.info("Ignoring bot message")
+                return Response(content="OK", status_code=200)
 
-                # 1. Swap eyes for thinking face
-                try:
-                    await remove_reaction(channel_id, message_ts, "eyes")
-                except Exception:
-                    pass  # Might not have been added or already removed
+            # 1. Swap eyes for thinking face
+            try:
+                await remove_reaction(channel_id, message_ts, "eyes")
+            except Exception:
+                pass  # Might not have been added or already removed
 
-                try:
-                    await add_reaction(channel_id, message_ts, "thinking_face")
-                except Exception as e:
-                    if "already_reacted" not in str(e):
-                        logger.warning(f"Failed to add thinking_face reaction: {e}")
+            try:
+                await add_reaction(channel_id, message_ts, "thinking_face")
+            except Exception as e:
+                if "already_reacted" not in str(e):
+                    logger.warning(f"Failed to add thinking_face reaction: {e}")
 
-                # 2. Run Agent
-                try:
-                    # Load history
-                    history = (
-                        await get_history(channel_id, thread_ts, "supervisor") or []
+            # 2. Run Agent
+            try:
+                # Load history
+                history = await get_history(channel_id, thread_ts, "supervisor") or []
+
+                # Create Supervisor Agent with Slack User ID
+                # Slack events can have 'user' or 'user_id' depending on the type
+                user_id = (
+                    event.get("user") or event.get("user_id") or payload.get("at_user")
+                )
+                logger.info(
+                    f"Extracted user_id: {user_id} from event_type: {inner_type}"
+                )
+
+                if not user_id:
+                    logger.error(
+                        f"Failed to extract user_id from payload: {json.dumps(payload)}"
                     )
-
-                    # Create Supervisor Agent with Slack User ID
-                    # Slack events can have 'user' or 'user_id' depending on the type
-                    user_id = (
-                        event.get("user")
-                        or event.get("user_id")
-                        or payload.get("at_user")
-                    )
-                    logger.info(
-                        f"Extracted user_id: {user_id} from event_type: {inner_type}"
-                    )
-
-                    if not user_id:
-                        logger.error(
-                            f"Failed to extract user_id from payload: {json.dumps(payload)}"
-                        )
-                        await post_message(
-                            channel_id,
-                            "Sorry, I couldn't identify your Slack user ID. This might be due to an unsupported event type.",
-                            thread_ts=thread_ts,
-                        )
-                        return Response(
-                            content="User identification failed", status_code=200
-                        )
-
-                    supervisor = await create_supervisor_agent(slack_user_id=user_id)
-                    session_service = InMemorySessionService()
-                    session = await session_service.create_session(
-                        app_name="AIBot", user_id=user_id, session_id=thread_ts
-                    )
-
-                    # Seed history from Firestore
-                    logger.info(
-                        f"Seeding history for session {thread_ts} with {len(history)} items"
-                    )
-                    for i, item in enumerate(history):
-                        role = item.get("role")
-                        # Join parts to form a single text string per turn
-                        content_text = " ".join(
-                            [
-                                p.get("text", "")
-                                for p in item.get("parts", [])
-                                if p.get("text")
-                            ]
-                        )
-
-                        content = types.Content(
-                            role=role, parts=[types.Part(text=content_text)]
-                        )
-                        # ADK filters by author match. 'user' is fixed, model author must match agent name.
-                        author = "user" if role == "user" else supervisor.name
-
-                        await session_service.append_event(
-                            session=session,
-                            event=Event(
-                                author=author,
-                                content=content,
-                                invocation_id=f"hist_{i//2}",  # Group pairs into virtual invocations
-                            ),
-                        )
-
-                    runner = Runner(
-                        agent=supervisor,
-                        app_name="AIBot",
-                        session_service=session_service,
-                    )
-
-                    # Start keep-alive background task
-                    if user_id:
-                        keep_alive_task = asyncio.create_task(
-                            keep_alive_status_updates(channel_id, user_id, thread_ts)
-                        )
-
-                    # Pre-process text (remove bot mention)
-                    bot_info = await (await create_bot_client()).auth_test()
-                    bot_user_id = bot_info["user_id"]
-                    prompt = text.replace(f"<@{bot_user_id}>", "").strip()
-
-                    # Execute agent flow
-                    # Convert history to Adk Event objects if necessary, or just use run_async
-                    # For now, let's use run_async with the new message
-                    new_message = types.Content(
-                        role="user", parts=[types.Part(text=prompt)]
-                    )
-
-                    responses = []
-                    async for event in runner.run_async(
-                        user_id=user_id, session_id=thread_ts, new_message=new_message
-                    ):
-                        if event.content and event.content.parts:
-                            for part in event.content.parts:
-                                # Check for text part specifically to avoid SDK warnings about non-text parts (like function_calls)
-                                # That are handled internally by the agent-sdk.
-                                try:
-                                    # Use to_dict() to check for text without triggering property warnings on non-text parts
-                                    p_dict = (
-                                        part.to_dict()
-                                        if hasattr(part, "to_dict")
-                                        else {}
-                                    )
-                                    if p_dict.get("text"):
-                                        responses.append(p_dict["text"])
-                                    elif not p_dict and getattr(part, "text", None):
-                                        responses.append(part.text)
-                                except Exception:
-                                    pass
-
-                    final_response = "".join(responses).strip()
-
-                    if not final_response:
-                        final_response = "I couldn't generate a response."
-
-                    await post_message(channel_id, final_response, thread_ts=thread_ts)
-
-                    # 3. Save history is handled by Runner if using a real session service,
-                    # but we are using InMemorySessionService so we might still want manual persistence
-                    # if we want to survive worker restarts.
-
-                    # 4. Save history
-                    new_history = history + [
-                        {"role": "user", "parts": [{"text": prompt}]},
-                        {"role": "model", "parts": [{"text": final_response}]},
-                    ]
-                    await put_history(channel_id, thread_ts, new_history, "supervisor")
-
-                except Exception as e:
-                    logger.exception("Error in processing bot logic")
-                    # Cancel keep-alive task immediately on error
-                    if keep_alive_task:
-                        keep_alive_task.cancel()
-
-                    error_msg = f"🔴 *Internal Error*: {str(e)}"
-                    if "403" in str(e) or "forbidden" in str(e).lower():
-                        error_msg = "🔴 *Access Denied*: I was blocked by the security policy while trying to search Slack. I'm investigating this with the team."
-
                     await post_message(
                         channel_id,
-                        error_msg,
+                        "Sorry, I couldn't identify your Slack user ID. This might be due to an unsupported event type.",
                         thread_ts=thread_ts,
                     )
-                finally:
-                    # Cancel keep-alive task
-                    if keep_alive_task:
-                        keep_alive_task.cancel()
-                        try:
-                            await keep_alive_task
-                        except asyncio.CancelledError:
-                            pass
+                    return Response(
+                        content="User identification failed", status_code=200
+                    )
 
-                    # 3. Cleanup thinking face
+                supervisor = await create_supervisor_agent(slack_user_id=user_id)
+                session_service = InMemorySessionService()
+                session = await session_service.create_session(
+                    app_name="AIBot", user_id=user_id, session_id=thread_ts
+                )
+
+                # Seed history from Firestore
+                logger.info(
+                    f"Seeding history for session {thread_ts} with {len(history)} items"
+                )
+                for i, item in enumerate(history):
+                    role = item.get("role")
+                    # Join parts to form a single text string per turn
+                    content_text = " ".join(
+                        [
+                            p.get("text", "")
+                            for p in item.get("parts", [])
+                            if p.get("text")
+                        ]
+                    )
+
+                    content = types.Content(
+                        role=role, parts=[types.Part(text=content_text)]
+                    )
+                    # ADK filters by author match. 'user' is fixed, model author must match agent name.
+                    author = "user" if role == "user" else supervisor.name
+
+                    await session_service.append_event(
+                        session=session,
+                        event=Event(
+                            author=author,
+                            content=content,
+                            invocation_id=f"hist_{i//2}",  # Group pairs into virtual invocations
+                        ),
+                    )
+
+                runner = Runner(
+                    agent=supervisor,
+                    app_name="AIBot",
+                    session_service=session_service,
+                )
+
+                # Start keep-alive background task
+                if user_id:
+                    keep_alive_task = asyncio.create_task(
+                        keep_alive_status_updates(channel_id, user_id, thread_ts)
+                    )
+
+                # Pre-process text (remove bot mention)
+                bot_info = await (await create_bot_client()).auth_test()
+                bot_user_id = bot_info["user_id"]
+                prompt = text.replace(f"<@{bot_user_id}>", "").strip()
+
+                # Execute agent flow
+                # Convert history to Adk Event objects if necessary, or just use run_async
+                # For now, let's use run_async with the new message
+                new_message = types.Content(
+                    role="user", parts=[types.Part(text=prompt)]
+                )
+
+                responses = []
+                async for event in runner.run_async(
+                    user_id=user_id, session_id=thread_ts, new_message=new_message
+                ):
+                    if event.content and event.content.parts:
+                        for part in event.content.parts:
+                            # Check for text part specifically to avoid SDK warnings about non-text parts (like function_calls)
+                            # That are handled internally by the agent-sdk.
+                            try:
+                                # Use to_dict() to check for text without triggering property warnings on non-text parts
+                                p_dict = (
+                                    part.to_dict() if hasattr(part, "to_dict") else {}
+                                )
+                                if p_dict.get("text"):
+                                    responses.append(p_dict["text"])
+                                elif not p_dict and getattr(part, "text", None):
+                                    responses.append(part.text)
+                            except Exception:
+                                pass
+                            except Exception:
+                                pass
+
+                final_response = "".join(responses).strip()
+
+                if not final_response:
+                    final_response = "I couldn't generate a response."
+
+                await post_message(channel_id, final_response, thread_ts=thread_ts)
+
+                # 3. Save history is handled by Runner if using a real session service,
+                # but we are using InMemorySessionService so we might still want manual persistence
+                # if we want to survive worker restarts.
+
+                # 4. Save history
+                new_history = history + [
+                    {"role": "user", "parts": [{"text": prompt}]},
+                    {"role": "model", "parts": [{"text": final_response}]},
+                ]
+                await put_history(channel_id, thread_ts, new_history, "supervisor")
+
+            except Exception as e:
+                logger.exception("Error in processing bot logic")
+                # Cancel keep-alive task immediately on error
+                if keep_alive_task:
+                    keep_alive_task.cancel()
+
+                error_msg = f"🔴 *Internal Error*: {str(e)}"
+                if "403" in str(e) or "forbidden" in str(e).lower():
+                    error_msg = "🔴 *Access Denied*: I was blocked by the security policy while trying to search Slack. I'm investigating this with the team."
+
+                await post_message(
+                    channel_id,
+                    error_msg,
+                    thread_ts=thread_ts,
+                )
+            finally:
+                # Cancel keep-alive task
+                if keep_alive_task:
+                    keep_alive_task.cancel()
                     try:
-                        await remove_reaction(channel_id, message_ts, "thinking_face")
-                    except Exception:
+                        await keep_alive_task
+                    except asyncio.CancelledError:
                         pass
 
-            elif inner_type == "app_home_opened":
-                await handle_home_tab_event(event)
+                # 3. Cleanup thinking face
+                try:
+                    await remove_reaction(channel_id, message_ts, "thinking_face")
+                except Exception:
+                    pass
 
-        return Response(content="OK", status_code=200)
+        elif inner_type == "app_home_opened":
+            await handle_home_tab_event(event)
+
+    return Response(content="OK", status_code=200)
 
 
 if __name__ == "__main__":
