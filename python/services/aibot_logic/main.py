@@ -6,6 +6,7 @@ import os
 import random
 import time
 import traceback
+import uuid
 from contextlib import asynccontextmanager
 
 # Service specific imports
@@ -173,9 +174,11 @@ app.add_middleware(SecurityMiddleware)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    request_id = str(uuid.uuid4())
     logger.error(
-        "Unhandled exception in FastAPI",
+        f"Unhandled exception in FastAPI [Request ID: {request_id}]",
         extra={
+            "request_id": request_id,
             "path": request.url.path,
             "method": request.method,
             "exception": str(exc),
@@ -183,7 +186,8 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
     )
     return JSONResponse(
-        status_code=500, content={"message": f"Internal Server Error: {str(exc)}"}
+        status_code=500,
+        content={"message": "Internal Server Error", "request_id": request_id},
     )
 
 
@@ -260,7 +264,7 @@ async def handle_home_tab_event(event):
                 }
             )
         else:
-            redirect_uri = f"https://{custom_fqdn}/auth/callback/google"
+            redirect_uri = f"https://{custom_fqdn}/auth/callback"
             client_id = await get_secret_value("iapClientId")
 
             auth_url = get_google_auth_url(client_id, redirect_uri, state=user_id)
