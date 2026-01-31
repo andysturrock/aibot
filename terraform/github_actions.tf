@@ -7,6 +7,12 @@ resource "google_service_account" "github_actions" {
 }
 
 # IAM Roles for Build and Deployment
+resource "google_project_iam_member" "github_actions_editor" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/editor"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
+
 resource "google_project_iam_member" "github_actions_registry_writer" {
   project = var.gcp_gemini_project_id
   role    = "roles/artifactregistry.writer"
@@ -24,6 +30,13 @@ resource "google_project_iam_member" "github_actions_sa_user" {
   project = var.gcp_gemini_project_id
   role    = "roles/iam.serviceAccountUser"
   member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
+
+# Explicitly grant storage access for Terraform state
+resource "google_storage_bucket_iam_member" "github_actions_state_access" {
+  bucket = "${var.gcp_gemini_project_id}-aibot-terraform-state"
+  role   = "roles/storage.admin"
+  member = "serviceAccount:${google_service_account.github_actions.email}"
 }
 
 # --- Workload Identity Federation ---
