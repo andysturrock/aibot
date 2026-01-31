@@ -21,8 +21,6 @@ from shared.security import is_team_authorized
 from shared.slack_api import create_client_for_token
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-
-# from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 

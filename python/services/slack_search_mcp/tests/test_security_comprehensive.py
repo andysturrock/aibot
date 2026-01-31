@@ -14,6 +14,16 @@ with patch("shared.gcp_api.get_secret_value", new_callable=AsyncMock) as mock_se
 
 
 @pytest.fixture(autouse=True)
+def mock_common_secrets():
+    """Globally patch secrets and GCP calls for all tests in this execution."""
+    with patch(
+        "services.slack_search_mcp.main.get_secret_value", new_callable=AsyncMock
+    ) as mock_sec:
+        mock_sec.return_value = "dummy"
+        yield mock_sec
+
+
+@pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
     """Ensure ENV is NOT 'test' for security middleware tests."""
     monkeypatch.delenv("ENV", raising=False)
