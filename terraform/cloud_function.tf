@@ -7,16 +7,6 @@ resource "google_service_account" "collect_slack_messages" {
   display_name = "Service Account for running collect_slack_messages function"
 }
 
-# Give the service account permission to invoke the function
-data "google_iam_policy" "collect_slack_messages_run_invoker" {
-  binding {
-    role = "roles/run.invoker"
-    members = [
-      "serviceAccount:${google_service_account.collect_slack_messages.email}"
-    ]
-  }
-}
-
 # Give the service account permission to get the AIBot secret
 resource "google_secret_manager_secret_iam_member" "collect_slack_messages_secrets" {
   secret_id = google_secret_manager_secret.shared_config.secret_id
@@ -219,7 +209,7 @@ EOF
 
 resource "random_id" "job_name_suffix" {
   keepers = {
-    first = "${timestamp()}"
+    first = timestamp()
   }
   byte_length = 2
 }
