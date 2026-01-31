@@ -142,30 +142,30 @@ resource "google_compute_security_policy" "aibot_policy" {
     description = "WAF: RCE for Slack (Surgical Map-based Exclusion in CEL)"
   }
 
-  # Rule 499: Verified Slack SQLi
+  # Rule 499: Verified Slack & MCP SQLi
   # We trust that Rules 90-91 already killed any "Fake" Slack traffic.
-  # So here we simply apply the WAF with the exclusion.
+  # We also trust IAP for the /mcp/* path.
   rule {
     action   = "deny(403)"
     priority = "499"
     preview  = false
     match {
       expr {
-        expression = "${local.slack_path_scope} && evaluatePreconfiguredWaf('sqli-v33-stable', {'sensitivity': 1, 'opt_out_rule_ids': ['owasp-crs-v030301-id942200-sqli', 'owasp-crs-v030301-id942260-sqli', 'owasp-crs-v030301-id942340-sqli', 'owasp-crs-v030301-id942220-sqli', 'owasp-crs-v030301-id942330-sqli', 'owasp-crs-v030301-id942210-sqli', 'owasp-crs-v030301-id942370-sqli', 'owasp-crs-v030301-id942430-sqli']})"
+        expression = "(${local.slack_path_scope} || request.path.startsWith('/mcp/')) && evaluatePreconfiguredWaf('sqli-v33-stable', {'sensitivity': 1, 'opt_out_rule_ids': ['owasp-crs-v030301-id942200-sqli', 'owasp-crs-v030301-id942260-sqli', 'owasp-crs-v030301-id942340-sqli', 'owasp-crs-v030301-id942220-sqli', 'owasp-crs-v030301-id942330-sqli', 'owasp-crs-v030301-id942210-sqli', 'owasp-crs-v030301-id942370-sqli', 'owasp-crs-v030301-id942430-sqli']})"
       }
     }
-    description = "WAF: SQLi for Slack (Surgical Map-based Exclusion in CEL)"
+    description = "WAF: SQLi for Slack/MCP (Surgical Map-based Exclusion in CEL)"
   }
 
   # Rule 500: Global SQLi
-  # Everyone else (Non-Slack) gets full SQLi protection.
+  # Everyone else (Non-Slack, Non-MCP) gets full SQLi protection.
   rule {
     action   = "deny(403)"
     priority = "500"
     preview  = false
     match {
       expr {
-        expression = "!(${local.slack_path_scope}) && evaluatePreconfiguredWaf('sqli-v33-stable')"
+        expression = "!(${local.slack_path_scope}) && !request.path.startsWith('/mcp/') && evaluatePreconfiguredWaf('sqli-v33-stable')"
       }
     }
     description = "WAF: SQLi for Global Traffic"

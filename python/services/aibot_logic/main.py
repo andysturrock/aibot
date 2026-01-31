@@ -707,9 +707,17 @@ if service_role in ["aibot-logic", "test-service"]:
 
                 except Exception as e:
                     logger.exception("Error in processing bot logic")
+                    # Cancel keep-alive task immediately on error
+                    if keep_alive_task:
+                        keep_alive_task.cancel()
+
+                    error_msg = f"🔴 *Internal Error*: {str(e)}"
+                    if "403" in str(e) or "forbidden" in str(e).lower():
+                        error_msg = "🔴 *Access Denied*: I was blocked by the security policy while trying to search Slack. I'm investigating this with the team."
+
                     await post_message(
                         channel_id,
-                        f"Sorry, I encountered an error: {str(e)}",
+                        error_msg,
                         thread_ts=thread_ts,
                     )
                 finally:
