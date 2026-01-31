@@ -1,0 +1,94 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.7, pytest-9.0.2, pluggy-1.6.0 -- /home/andy/.pyenv/versions/3.13.7/envs/aibot-beta/bin/python
+cachedir: .pytest_cache
+rootdir: /home/andy/git_repos/aibot_beta/python/services/slack_search_mcp
+configfile: pyproject.toml
+plugins: anyio-4.12.1, asyncio-1.3.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... {"severity": "INFO", "message": "Initializing FastMCP with host: aibot.example.com", "timestamp": "2026-01-31T17:55:03.266104Z", "logging.googleapis.com/sourceLocation": {"file": "/home/andy/git_repos/aibot_beta/python/services/slack_search_mcp/main.py", "line": 182, "function": "<module>"}, "taskName": null}
+{"severity": "INFO", "message": "DEBUG: Registering Routes during Import:", "timestamp": "2026-01-31T17:55:03.274081Z", "logging.googleapis.com/sourceLocation": {"file": "/home/andy/git_repos/aibot_beta/python/services/slack_search_mcp/main.py", "line": 402, "function": "<module>"}, "taskName": null}
+{"severity": "INFO", "message": " - /mcp/sse [methods={'HEAD', 'GET'}] (Route)", "timestamp": "2026-01-31T17:55:03.274326Z", "logging.googleapis.com/sourceLocation": {"file": "/home/andy/git_repos/aibot_beta/python/services/slack_search_mcp/main.py", "line": 408, "function": "<module>"}, "taskName": null}
+{"severity": "INFO", "message": " - /mcp/messages [methods=N/A] (Mount)", "timestamp": "2026-01-31T17:55:03.274443Z", "logging.googleapis.com/sourceLocation": {"file": "/home/andy/git_repos/aibot_beta/python/services/slack_search_mcp/main.py", "line": 408, "function": "<module>"}, "taskName": null}
+{"severity": "INFO", "message": " - /health [methods={'HEAD', 'GET'}] (Route)", "timestamp": "2026-01-31T17:55:03.274580Z", "logging.googleapis.com/sourceLocation": {"file": "/home/andy/git_repos/aibot_beta/python/services/slack_search_mcp/main.py", "line": 408, "function": "<module>"}, "taskName": null}
+collected 1 item
+
+python/services/slack_search_mcp/tests/test_security_comprehensive.py::test_internal_security_error_returns_500 {"severity": "DEBUG", "message": "Using selector: EpollSelector", "timestamp": "2026-01-31T17:55:03.280123Z", "logging.googleapis.com/sourceLocation": {"file": "/home/andy/.pyenv/versions/3.13.7/lib/python3.13/asyncio/selector_events.py", "line": 64, "function": "__init__"}, "taskName": null}
+{"severity": "DEBUG", "message": "Using selector: EpollSelector", "timestamp": "2026-01-31T17:55:03.280660Z", "logging.googleapis.com/sourceLocation": {"file": "/home/andy/.pyenv/versions/3.13.7/lib/python3.13/asyncio/selector_events.py", "line": 64, "function": "__init__"}, "taskName": null}
+{"severity": "ERROR", "message": "Unhandled exception in slack-search-mcp [Request ID: 439e3f52-4dff-4877-b434-24529163dd88]", "timestamp": "2026-01-31T17:55:03.284465Z", "logging.googleapis.com/sourceLocation": {"file": "/home/andy/git_repos/aibot_beta/python/services/slack_search_mcp/main.py", "line": 373, "function": "global_exception_handler"}, "taskName": "Task-1", "request_id": "439e3f52-4dff-4877-b434-24529163dd88", "path": "/mcp/sse", "method": "GET", "exception": "Database down", "traceback": "Traceback (most recent call last):\n  File \"/home/andy/.pyenv/versions/3.13.7/envs/aibot-beta/lib/python3.13/site-packages/starlette/middleware/errors.py\", line 164, in __call__\n    await self.app(scope, receive, _send)\n  File \"/home/andy/git_repos/aibot_beta/python/services/slack_search_mcp/main.py\", line 98, in __call__\n    payload = await verify_iap_jwt(iap_jwt, expected_audience=iap_audience)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/andy/.pyenv/versions/3.13.7/lib/python3.13/unittest/mock.py\", line 2321, in _execute_mock_call\n    raise effect\nException: Database down\n"}
+FAILED
+
+=================================== FAILURES ===================================
+___________________ test_internal_security_error_returns_500 ___________________
+
+    @pytest.mark.asyncio
+    async def test_internal_security_error_returns_500():
+        with patch(
+            "services.slack_search_mcp.main.verify_iap_jwt",
+            side_effect=Exception("Database down"),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as ac:
+>               response = await ac.get(
+                    "/mcp/sse", headers={"X-Goog-IAP-JWT-Assertion": "valid"}
+                )
+
+python/services/slack_search_mcp/tests/test_security_comprehensive.py:131:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../.pyenv/versions/3.13.7/envs/aibot-beta/lib/python3.13/site-packages/httpx/_client.py:1768: in get
+    return await self.request(
+../../.pyenv/versions/3.13.7/envs/aibot-beta/lib/python3.13/site-packages/httpx/_client.py:1540: in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.13.7/envs/aibot-beta/lib/python3.13/site-packages/httpx/_client.py:1629: in send
+    response = await self._send_handling_auth(
+../../.pyenv/versions/3.13.7/envs/aibot-beta/lib/python3.13/site-packages/httpx/_client.py:1657: in _send_handling_auth
+    response = await self._send_handling_redirects(
+../../.pyenv/versions/3.13.7/envs/aibot-beta/lib/python3.13/site-packages/httpx/_client.py:1694: in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.13.7/envs/aibot-beta/lib/python3.13/site-packages/httpx/_client.py:1730: in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.13.7/envs/aibot-beta/lib/python3.13/site-packages/httpx/_transports/asgi.py:170: in handle_async_request
+    await self.app(scope, receive, send)
+../../.pyenv/versions/3.13.7/envs/aibot-beta/lib/python3.13/site-packages/starlette/applications.py:107: in __call__
+    await self.middleware_stack(scope, receive, send)
+../../.pyenv/versions/3.13.7/envs/aibot-beta/lib/python3.13/site-packages/starlette/middleware/errors.py:186: in __call__
+    raise exc
+../../.pyenv/versions/3.13.7/envs/aibot-beta/lib/python3.13/site-packages/starlette/middleware/errors.py:164: in __call__
+    await self.app(scope, receive, _send)
+python/services/slack_search_mcp/main.py:98: in __call__
+    payload = await verify_iap_jwt(iap_jwt, expected_audience=iap_audience)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <AsyncMock name='verify_iap_jwt' id='136640735515648'>, args = ('valid',)
+kwargs = {'expected_audience': 'dummy'}
+_call = call('valid', expected_audience='dummy')
+effect = Exception('Database down')
+
+    async def _execute_mock_call(self, /, *args, **kwargs):
+        # This is nearly just like super(), except for special handling
+        # of coroutines
+
+        _call = _Call((args, kwargs), two=True)
+        self.await_count += 1
+        self.await_args = _call
+        self.await_args_list.append(_call)
+
+        effect = self.side_effect
+        if effect is not None:
+            if _is_exception(effect):
+>               raise effect
+E               Exception: Database down
+
+../../.pyenv/versions/3.13.7/lib/python3.13/unittest/mock.py:2321: Exception
+------------------------------ Captured log setup ------------------------------
+DEBUG    asyncio:selector_events.py:64 Using selector: EpollSelector
+DEBUG    asyncio:selector_events.py:64 Using selector: EpollSelector
+------------------------------ Captured log call -------------------------------
+ERROR    slack-search-mcp:main.py:373 Unhandled exception in slack-search-mcp [Request ID: 439e3f52-4dff-4877-b434-24529163dd88]
+=========================== short test summary info ============================
+FAILED python/services/slack_search_mcp/tests/test_security_comprehensive.py::test_internal_security_error_returns_500
+============================== 1 failed in 4.38s ===============================

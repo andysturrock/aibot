@@ -172,7 +172,6 @@ app = FastAPI(
 app.add_middleware(SecurityMiddleware)
 
 
-@app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     request_id = str(uuid.uuid4())
     logger.error(
@@ -189,6 +188,9 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"message": "Internal Server Error", "request_id": request_id},
     )
+
+
+app.add_exception_handler(Exception, global_exception_handler)
 
 
 # --- Slack Helpers ---
@@ -687,15 +689,18 @@ if service_role in ["aibot-logic", "test-service"]:
                                 # Check for text part specifically to avoid SDK warnings about non-text parts (like function_calls)
                                 # That are handled internally by the agent-sdk.
                                 try:
-                                    if hasattr(part, "to_dict"):
-                                        text_part = part.to_dict().get("text")
-                                        if text_part:
-                                            responses.append(text_part)
-                                    elif getattr(part, "text", None):
+                                    # Use to_dict() to check for text without triggering property warnings on non-text parts
+                                    p_dict = (
+                                        part.to_dict()
+                                        if hasattr(part, "to_dict")
+                                        else {}
+                                    )
+                                    if p_dict.get("text"):
+                                        responses.append(p_dict["text"])
+                                    elif not p_dict and getattr(part, "text", None):
                                         responses.append(part.text)
                                 except Exception:
-                                    if getattr(part, "text", None):
-                                        responses.append(part.text)
+                                    pass
 
                     final_response = "".join(responses).strip()
 
