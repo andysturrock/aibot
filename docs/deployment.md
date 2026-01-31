@@ -6,6 +6,7 @@ Deploying AIBot requires a Google Cloud Project and a Slack App.
 
 - [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) installed and authenticated.
 - [Terraform](https://www.terraform.io/downloads.html) installed.
+- [SOPS](https://github.com/getsops/sops) (Secrets Operations) installed (for secure manual deployments).
 - A Slack Workspace where you have permission to create apps.
 
 ---
@@ -45,19 +46,34 @@ Use the provided manifest template to configure your Slack App.
 
 ---
 
-## 3. Secret Synchronization
+## 3. Secret Synchronization (Manual Deployment)
 
-The deployment relies on a `.env` file for sensitive tokens.
+For manual deployments using `deploy.sh`, it is highly recommended to encrypt your `.env` files using **SOPS** to prevent secrets from accidentally being tracked or left in plaintext.
 
-1. Create a `.env` file based on `env.template`.
-2. Populate the following critical values:
-   - `slackBotToken`: Your Slack `xoxb-` token.
-   - `slackSigningSecret`: From the Slack App "Basic Information" tab.
-   - `iapClientId` / `iapClientSecret`: Created in the "APIs & Services > Credentials" page for the IAP OAuth client.
-3. Sync secrets to GCP:
+1. Create a `.env.beta` or `.env.prod` file based on `env.template`.
+2. Populate the sensitive values (Slack tokens, IAP credentials, etc.).
+3. **Encrypt Locally** (One-time setup per project):
    ```bash
-   ./scripts/deploy.sh --secrets-only
+   # 1. Create a KMS key for encryption (e.g., London region)
+   gcloud kms keyrings create [YOUR_KEYRING_NAME] --location europe-west2
+   gcloud kms keys create sops-key --location europe-west2 --keyring [YOUR_KEYRING_NAME] --purpose encryption
+
+   # 2. Configure .sops.yaml (this file is ignored by Git)
+   # creation_rules:
+   #   - path_regex: \.env\.(beta|prod)$
+   #     gcp_kms: projects/[PROJECT_ID]/locations/europe-west2/keyRings/[YOUR_KEYRING_NAME]/cryptoKeys/sops-key
+
+   # 3. Generate the encrypted file
+   sops -e .env.beta > .env.beta.enc
    ```
+   > **Note**: While SOPS-encrypted files are cryptographically safe to commit to version control, the policy for this project is to **KEEP ALL .env files (plaintext or encrypted) UNTRACKED** to minimize any potential exposure.
+4. **Cleanup Plaintext**:
+   Delete your plaintext `.env.beta` or `.env.prod` files immediately after encryption to ensure they are never accidentally exposed.
+5. **Sync to GCP**:
+   ```bash
+   ./scripts/deploy.sh --env=beta --secrets-only
+   ```
+   > **How it works**: `deploy.sh` detects the `.enc` file, creates a temporary secure file (`chmod 600`), sources it, and deletes it immediately using a trap, ensuring no plaintext remains after the sync.
 
 ---
 

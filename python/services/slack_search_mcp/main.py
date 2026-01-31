@@ -3,6 +3,8 @@ import json
 import logging
 import os
 import traceback
+import uuid
+from contextvars import ContextVar
 
 from dotenv import load_dotenv
 from google import genai
@@ -37,6 +39,10 @@ if not GCP_LOCATION:
 genai_client = genai.Client(
     vertexai=True, project=GOOGLE_CLOUD_PROJECT, location=GCP_LOCATION
 )
+
+# Context variable to store current user's Slack ID for tool filtering
+user_id_ctx: ContextVar[str] = ContextVar("user_id", default=None)
+
 
 # --- Middleware: Security Verification ---
 
@@ -108,6 +114,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 
             # 4. Check team ID matches whitelist
             user_info = slack_user_resp.get("user", {})
+            slack_user_id = user_info.get("id")
             team_id = user_info.get("team_id")
             enterprise_id = user_info.get("enterprise_id")
 
@@ -130,8 +137,13 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 {"error": "Security validation failed"}, status_code=500
             )
 
-        # 5. Success - Proceed with request
-        response = await call_next(request)
+        # 5. Success - Set user ID in context and proceed
+        token = user_id_ctx.set(slack_user_id)
+        try:
+            response = await call_next(request)
+        finally:
+            user_id_ctx.reset(token)
+
         logger.debug(
             f"SecurityMiddleware FINISHED for {email} with status {response.status_code}"
         )
@@ -167,13 +179,65 @@ async def search_slack_messages(query: str) -> str:
 
     try:
         slack_client = await create_client_for_token(token)
-        # 1. Generate Embeddings
+
+        # 1. Fetch User's Permitted Channels (Security Check)
+        # We fetch the user's current channel memberships in real-time. This ensures that
+        # if a channel was public but is now private (and the user is not a member),
+        # or if a user was removed from a group, they will not see results from that channel.
+        user_id = user_id_ctx.get()
+        if not user_id:
+            logger.error("No user_id found in contextvars for search request")
+            return "Unauthorized lookup"
+
+        permitted_channels = set()
+        try:
+            # Note: types can include public_channel, private_channel
+            # We use an admin/shared token to see which channels THIS user is in.
+            cursor = None
+            while True:
+                user_convs = await slack_client.users_conversations(
+                    user=user_id,
+                    types="public_channel,private_channel",
+                    cursor=cursor,
+                    limit=1000,
+                )
+                if not user_convs.get("ok"):
+                    logger.error(
+                        f"Failed to fetch user conversations: {user_convs.get('error')}"
+                    )
+                    break
+
+                for channel in user_convs.get("channels", []):
+                    permitted_channels.add(channel["id"])
+
+                cursor = user_convs.get("response_metadata", {}).get("next_cursor")
+                if not cursor:
+                    break
+            logger.info(
+                f"User {user_id} is member of {len(permitted_channels)} channels"
+            )
+        except Exception as e:
+            logger.error(f"Error checking user permissions: {str(e)}")
+            return "Error validating permissions"
+
+        # 2. Generate Embeddings
         embeddings = await generate_embeddings(query)
 
-        # 2. Perform Vector Search in BigQuery
+        # 3. Perform Vector Search in BigQuery
         results = await perform_vector_search(embeddings)
 
-        # 3. Fetch Workspace Info for Deep Links
+        # 4. Filter Results by Permissions
+        filtered_results = [
+            row for row in results if row["channel"] in permitted_channels
+        ]
+        logger.info(
+            f"Filtered {len(results)} results down to {len(filtered_results)} for user {user_id}"
+        )
+
+        if not filtered_results:
+            return "No messages found in your authorized channels."
+
+        # 5. Fetch Workspace Info for Deep Links
         team_resp = await slack_client.team_info()
         if not team_resp.get("ok"):
             raise Exception(
@@ -224,7 +288,9 @@ async def search_slack_messages(query: str) -> str:
                 )
             return []
 
-        thread_results = await asyncio.gather(*[fetch_thread(row) for row in results])
+        thread_results = await asyncio.gather(
+            *[fetch_thread(row) for row in filtered_results]
+        )
         messages = [msg for thread in thread_results for msg in thread]
 
         return json.dumps(messages, indent=2)
@@ -246,19 +312,26 @@ async def generate_embeddings(text: str) -> list[float]:
 
 async def perform_vector_search(embeddings: list[float]):
     client = bigquery.Client(project=GOOGLE_CLOUD_PROJECT)
-    query = f"""
+    query = """
         SELECT distinct base.channel, base.ts, distance
         FROM VECTOR_SEARCH(
             TABLE aibot_slack_messages.slack_content,
             'embeddings',
-            (SELECT {embeddings} as search_embeddings),
+            (SELECT @query_embeddings as search_embeddings),
             query_column_to_search => 'search_embeddings',
             top_k => 15
         )
         ORDER BY distance
     """
+    job_config = bigquery.QueryJobConfiguration(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("query_embeddings", "FLOAT64", embeddings),
+        ]
+    )
     loop = asyncio.get_event_loop()
-    query_job = await loop.run_in_executor(None, client.query, query)
+    query_job = await loop.run_in_executor(
+        None, lambda: client.query(query, job_config=job_config)
+    )
     rows = await loop.run_in_executor(None, query_job.result)
     return [dict(row) for row in rows]
 
@@ -269,9 +342,11 @@ app = mcp.sse_app()
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    request_id = str(uuid.uuid4())
     logger.error(
-        "Unhandled exception in slack-search-mcp",
+        f"Unhandled exception in slack-search-mcp [Request ID: {request_id}]",
         extra={
+            "request_id": request_id,
             "path": request.url.path,
             "method": request.method,
             "exception": str(exc),
@@ -279,7 +354,8 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
     )
     return JSONResponse(
-        status_code=500, content={"message": f"Internal Server Error: {str(exc)}"}
+        status_code=500,
+        content={"message": "Internal Server Error", "request_id": request_id},
     )
 
 
