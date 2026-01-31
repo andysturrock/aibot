@@ -38,91 +38,146 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pytest pytest-asyncio httpx google-cloud-firestore google-cloud-bigquery slack-sdk google-cloud-aiplatform vertexai "mcp[fastapi]" pydantic python-dotenv fastapi starlette google-genai google-cloud-pubsub google-adk pytz pyjwt
-          # Install shared library in editable mode
           pip install -e ./python/libs/shared
       - name: Run tests
         run: |
-          # Add libs/shared and service directories to PYTHONPATH
           export PYTHONPATH=$PYTHONPATH:$(pwd)/python/libs/shared:$(pwd)/python/services/aibot_logic:$(pwd)/python/services/slack_collector:$(pwd)/python/services/slack_search_mcp
           pytest --ignore=python/tests/integration_test.py
 
-  deploy:
+  terraform:
     needs: [lint, test]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'beta' }}
+    environment: ${{ (github.ref == 'refs/heads/main' || github.base_ref == 'main') && 'prod' || 'beta' }}
     permissions:
       contents: 'read'
       id-token: 'write'
-
     steps:
       - uses: actions/checkout@v6
-
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SA_EMAIL }}
+      - name: Get Project Number
+        id: project
+        run: |
+          PROJECT_NUMBER=$(gcloud projects describe ${{ secrets.GCP_PROJECT_ID }} --format='value(projectNumber)')
+          echo "::add-mask::$PROJECT_NUMBER"
+          echo "number=$PROJECT_NUMBER" >> $GITHUB_OUTPUT
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init \
+            -backend-config="bucket=${{ secrets.GCP_PROJECT_ID }}-aibot-terraform-state" \
+            -backend-config="prefix=aibot/terraform/state"
+      - name: Terraform Plan
+        run: |
+          cd terraform
+          terraform plan -no-color \
+            -var="gcp_gemini_project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            -var="gcp_gemini_project_number=${{ steps.project.outputs.number }}" \
+            -var="gcp_region=${{ secrets.GCP_REGION }}" \
+            -var="custom_fqdn=${{ secrets.CUSTOM_FQDN }}" \
+            -var="iap_client_id=${{ secrets.IAP_CLIENT_ID }}" \
+            -var="iap_client_secret=${{ secrets.IAP_CLIENT_SECRET }}"
+      - name: Terraform Apply
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
+        run: |
+          cd terraform
+          terraform apply -auto-approve \
+            -var="gcp_gemini_project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            -var="gcp_gemini_project_number=${{ steps.project.outputs.number }}" \
+            -var="gcp_region=${{ secrets.GCP_REGION }}" \
+            -var="custom_fqdn=${{ secrets.CUSTOM_FQDN }}" \
+            -var="iap_client_id=${{ secrets.IAP_CLIENT_ID }}" \
+            -var="iap_client_secret=${{ secrets.IAP_CLIENT_SECRET }}"
 
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v3
-
-      - name: Configure Docker for GCP
+  build-base:
+    needs: [lint, test]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+      - name: Configure Docker
         run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
-
       - name: Build and Push Base Image
         run: |
           BASE_IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/aibot-base:latest"
           docker build -t $BASE_IMAGE -f python/base.Dockerfile .
           docker push $BASE_IMAGE
 
-      - name: Build and Push Service Images
+  build-services:
+    needs: build-base
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [aibot-logic, slack-collector, slack-search-mcp]
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
+      - name: Build and Push Service Image
         run: |
-          SERVICES=("aibot-logic" "slack-collector" "slack-search-mcp")
-          FOR_DIRS=("aibot_logic" "slack_collector" "slack_search_mcp")
+          SERVICE_NAME=$(echo "${{ matrix.service }}" | tr '-' '_')
           BASE_IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/aibot-base:latest"
+          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/${{ matrix.service }}:${{ github.sha }}"
+          LATEST_IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/${{ matrix.service }}:latest"
 
-          for i in "${!SERVICES[@]}"; do
-            SERVICE=${SERVICES[$i]}
-            DIR=${FOR_DIRS[$i]}
-            IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/$SERVICE:${{ github.sha }}"
-            LATEST_IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/$SERVICE:latest"
+          docker build --build-arg SERVICE_NAME=$SERVICE_NAME --build-arg BASE_IMAGE=$BASE_IMAGE -t $IMAGE -f python/Dockerfile .
+          docker tag $IMAGE $LATEST_IMAGE
+          docker push $IMAGE
+          docker push $LATEST_IMAGE
 
-            echo "Building $SERVICE from python/services/$DIR..."
-            docker build --build-arg SERVICE_NAME=$DIR --build-arg BASE_IMAGE=$BASE_IMAGE -t $IMAGE -f python/Dockerfile .
-            docker tag $IMAGE $LATEST_IMAGE
-
-            echo "Pushing $SERVICE..."
-            docker push $IMAGE
-            docker push $LATEST_IMAGE
-          done
-
+  deploy-services:
+    needs: [build-services, terraform]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'beta' }}
+    strategy:
+      matrix:
+        run_service: [aibot-webhook, aibot-logic, slack-search-mcp, slack-collector]
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
       - name: Deploy to Cloud Run
         run: |
-          # Deploy services
-          # aibot-webhook and aibot-logic both use the aibot-logic image
-          LOGIC_IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/aibot-logic:${{ github.sha }}"
+          # Map run_service to the correct docker image name
+          if [[ "${{ matrix.run_service }}" == "aibot-webhook" ]]; then
+            IMAGE_NAME="aibot-logic"
+          else
+            IMAGE_NAME="${{ matrix.run_service }}"
+          fi
 
-          gcloud run deploy aibot-webhook \
-            --image $LOGIC_IMAGE \
-            --region ${{ secrets.GCP_REGION }} \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
-            --quiet
+          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/$IMAGE_NAME:${{ github.sha }}"
 
-          gcloud run deploy aibot-logic \
-            --image $LOGIC_IMAGE \
-            --region ${{ secrets.GCP_REGION }} \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
-            --quiet
-
-          gcloud run deploy slack-search-mcp \
-            --image ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/slack-search-mcp:${{ github.sha }} \
-            --region ${{ secrets.GCP_REGION }} \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
-            --quiet
-
-          gcloud run deploy slack-collector \
-            --image ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/aibot-images/slack-collector:${{ github.sha }} \
+          gcloud run deploy ${{ matrix.run_service }} \
+            --image $IMAGE \
             --region ${{ secrets.GCP_REGION }} \
             --project ${{ secrets.GCP_PROJECT_ID }} \
             --quiet
