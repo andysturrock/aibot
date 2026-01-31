@@ -25,6 +25,15 @@ jobs:
           pip install ruff
       - name: Lint with ruff
         run: ruff check .
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+      - name: Terraform Validate
+        run: |
+          cd terraform
+          terraform init -backend=false
+          terraform validate
 
   test:
     runs-on: ubuntu-latest
