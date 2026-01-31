@@ -2,168 +2,248 @@
 data "google_project" "project" {
 }
 
+locals {
+  # --- DEFINITIONS ---
+  # We stay consistent and avoid magic numbers.
+  # If Slack's infrastructure changes, we only update here.
+
+  slack_path_scope = "(request.path == '/slack/events' || request.path == '/slack/interactivity')"
+
+  # Slack infrastructure ASNs (AWS 16509, 14618)
+  # Standard logical OR for platform compatibility.
+  slack_asns_check = "origin.asn == 16509 || origin.asn == 14618"
+
+  # Slack User Agent
+  slack_ua = "Slackbot 1.0"
+}
 
 resource "google_compute_security_policy" "aibot_policy" {
   provider    = google-beta
   name        = "aibot-security-policy"
-  description = "Security policy for AIBot public endpoints"
+  description = "Security policy for AIBot Cloud Function (Atomic & Limit-Compliant)"
 
-  # --- SEC-004: Surgical WAF Exclusions (No Broad Allows) ---
+  # =========================================================
+  # 1. EARLY DROP: SLACK IMPOSTORS (Priority 90-99)
+  #    We filter out "fake" Slack traffic here (wrong ASN, headers, or method).
+  #    This simplifies later rules and protects your function execution cost.
+  # =========================================================
 
-  # 1. Global Protections (Applies to EVERYONE, including Slack)
+  # Rule 90: Network & Protocol Impostors
+  # Blocks if: (Slack Path) AND (Wrong ASN OR Wrong Method)
+  # Complexity: Path(1) + ASN1(1) + ASN2(1) + Method(1) = 4 atoms. Safe.
+  rule {
+    action   = "deny(403)"
+    priority = "90"
+    match {
+      expr {
+        expression = "${local.slack_path_scope} && (!(${local.slack_asns_check}) || request.method != 'POST')"
+      }
+    }
+    description = "Block: Fake Slack (Wrong ASN or Method)"
+  }
+
+  # Rule 91: Identity & Header Impostors
+  # Blocks if: (Slack Path) AND (Missing Headers OR Wrong UA)
+  # Complexity: Path(1) + Sig(1) + TS(1) + UA(1) = 4 atoms. Safe.
+  rule {
+    action   = "deny(403)"
+    priority = "91"
+    match {
+      expr {
+        expression = "${local.slack_path_scope} && (!has(request.headers['x-slack-signature']) || !has(request.headers['x-slack-request-timestamp']) || !request.headers['user-agent'].contains('${local.slack_ua}'))"
+      }
+    }
+    description = "Block: Fake Slack (Missing Headers or Wrong UA)"
+  }
+
+  # =========================================================
+  # 2. GLOBAL WAF GAUNTLET (Rules 100-199)
+  #    Standard blocking of malicious signatures (XSS, RCE, LFI).
+  # =========================================================
+
+  # Rule 100: Global WAF Gauntlet
+  # Combines XSS, LFI, RCE, Scanners, and Protocol attacks.
+  # Complexity: 5 subexpressions (Max). Safe and Quota-efficient.
+  # --- Rule 100: Global XSS (Non-Slack) ---
   rule {
     action   = "deny(403)"
     priority = "100"
     match {
       expr {
-        expression = "evaluatePreconfiguredWaf('xss-v33-stable')"
+        expression = "!(${local.slack_path_scope}) && evaluatePreconfiguredWaf('xss-v33-stable')"
       }
     }
-    description = "WAF: Full XSS protection (Global)"
+    description = "WAF: XSS Protection for Global Traffic"
   }
 
+  # --- Rule 101: Global LFI (Non-Slack) ---
   rule {
     action   = "deny(403)"
     priority = "101"
     match {
       expr {
-        expression = "evaluatePreconfiguredWaf('lfi-v33-stable')"
+        expression = "!(${local.slack_path_scope}) && evaluatePreconfiguredWaf('lfi-v33-stable')"
       }
     }
-    description = "WAF: Full LFI protection (Global)"
+    description = "WAF: LFI Protection for Global Traffic"
   }
 
+  # --- Rule 102: Global RCE (Non-Slack) ---
   rule {
     action   = "deny(403)"
     priority = "102"
     match {
       expr {
-        expression = "evaluatePreconfiguredWaf('rce-v33-stable')"
+        expression = "!(${local.slack_path_scope}) && evaluatePreconfiguredWaf('rce-v33-stable')"
       }
     }
-    description = "WAF: Full RCE protection (Global)"
+    description = "WAF: RCE Protection for Global Traffic"
   }
 
+  # --- Rule 103: Global Scanners (Non-Slack) ---
   rule {
     action   = "deny(403)"
     priority = "103"
     match {
       expr {
-        expression = "evaluatePreconfiguredWaf('scannerdetection-v33-stable')"
+        expression = "!(${local.slack_path_scope}) && evaluatePreconfiguredWaf('scannerdetection-v33-stable')"
       }
     }
-    description = "WAF: Block security scanners (Global)"
+    description = "WAF: Scanner Detection for Global Traffic"
   }
 
+  # --- Rule 104: Global Protocol Attacks (Non-Slack) ---
   rule {
     action   = "deny(403)"
     priority = "104"
     match {
       expr {
-        expression = "evaluatePreconfiguredWaf('protocolattack-v33-stable')"
+        expression = "!(${local.slack_path_scope}) && evaluatePreconfiguredWaf('protocolattack-v33-stable')"
       }
     }
-    description = "WAF: Block malformed protocol attacks (Global)"
+    description = "WAF: Protocol Attack Protection for Global Traffic"
   }
 
-  # 2. Slack-Specific SQLi Protection (With Surgical Exclusion)
-  # This rule ensures Slack traffic is protected by SQLi rules, but permits the 942200 false positive.
-  # We restrict this rule to specific Slack POST endpoints to minimize the exception surface.
+  # =========================================================
+  # 3. SQL INJECTION & EXCLUSIONS (Rules 499-500)
+  # =========================================================
+
+  # Rule 497: Verified Slack RCE
+  # Slack payloads often contain shell characters that trip RCE rules.
+  rule {
+    action   = "deny(403)"
+    priority = "497"
+    preview  = false
+    match {
+      expr {
+        expression = "${local.slack_path_scope} && evaluatePreconfiguredWaf('rce-v33-stable', {'sensitivity': 1, 'opt_out_rule_ids': ['owasp-crs-v030301-id932100-rce', 'owasp-crs-v030301-id932110-rce', 'owasp-crs-v030301-id932200-rce']})"
+      }
+    }
+    description = "WAF: RCE for Slack (Surgical Map-based Exclusion in CEL)"
+  }
+
+  # Rule 499: Verified Slack SQLi
+  # We trust that Rules 90-91 already killed any "Fake" Slack traffic.
+  # So here we simply apply the WAF with the exclusion.
   rule {
     action   = "deny(403)"
     priority = "499"
+    preview  = false
     match {
       expr {
-        expression = "request.path.matches('/slack/(?:events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618) && evaluatePreconfiguredWaf('sqli-v33-stable')"
+        expression = "${local.slack_path_scope} && evaluatePreconfiguredWaf('sqli-v33-stable', {'sensitivity': 1, 'opt_out_rule_ids': ['owasp-crs-v030301-id942200-sqli', 'owasp-crs-v030301-id942260-sqli', 'owasp-crs-v030301-id942340-sqli', 'owasp-crs-v030301-id942220-sqli', 'owasp-crs-v030301-id942330-sqli', 'owasp-crs-v030301-id942210-sqli', 'owasp-crs-v030301-id942370-sqli', 'owasp-crs-v030301-id942430-sqli']})"
       }
     }
-    description = "WAF: Surgical SQLi protection for Slack traffic (Excl. 942200)"
-
-    preconfigured_waf_config {
-      exclusion {
-        target_rule_set = "sqli-v33-stable"
-        target_rule_ids = ["owasp-crs-v030301-id942200-sqli"]
-      }
-    }
+    description = "WAF: SQLi for Slack (Surgical Map-based Exclusion in CEL)"
   }
 
-  # 3. Global SQLi Protection (Excludes Slack traffic checked above)
-  # All other traffic (including Slack installation flows) gets full SQLi protection.
+  # Rule 500: Global SQLi
+  # Everyone else (Non-Slack) gets full SQLi protection.
   rule {
     action   = "deny(403)"
     priority = "500"
+    preview  = false
     match {
       expr {
-        expression = "!(request.path.matches('/slack/(?:events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618)) && evaluatePreconfiguredWaf('sqli-v33-stable')"
+        expression = "!(${local.slack_path_scope}) && evaluatePreconfiguredWaf('sqli-v33-stable')"
       }
     }
-    description = "WAF: Full SQLi protection (Global, non-Slack)"
+    description = "WAF: SQLi for Global Traffic"
   }
 
-  # Rule 2: Path-based Allow Rules - Priority 1000+
-  # These now only trigger IF the request passed the WAF checks above.
+  # =========================================================
+  # 4. ALLOW RULES (Rules 1000+)
+  #    Traffic that reaches here is clean (passed WAF).
+  # =========================================================
 
-  # 2.1 Strict Allow for Slack Identity (Authenticated POSTs)
+  # --- Group: Slack (Webhooks & Browser Flow) ---
+  # --- Group: Slack Webhooks (Verified) ---
   rule {
     action   = "allow"
     priority = "1000"
     match {
       expr {
-        expression = "request.method == 'POST' && request.path.matches('/slack/(?:events|interactivity)') && (origin.asn == 16509 || origin.asn == 14618) && has(request.headers['user-agent']) && request.headers['user-agent'].contains('Slackbot')"
+        # Simple path check. Legitimacy is guaranteed by earlier Drop rules (90/91).
+        expression = local.slack_path_scope
       }
     }
-    description = "Slack Identity: Verified Slack POST events only"
+    description = "Allow: Verified Slack POST Events"
   }
 
-  # 2.2 Slack Installation Flow (Browser GETs)
+  # --- Group: Slack Browser Flow (Install/OAuth) ---
   rule {
     action   = "allow"
     priority = "1001"
     match {
       expr {
-        expression = "request.method == 'GET' && request.path.matches('/slack/(?:install|oauth-redirect)')"
+        expression = "request.method == 'GET' && (request.path == '/slack/install' || request.path == '/slack/oauth-redirect')"
       }
     }
-    description = "Slack Flow: Installation and OAuth-redirect (Browser)"
+    description = "Allow: Slack Browser Flow"
   }
 
-  # 2.3 User Authentication (Browser GETs)
+  # --- Group: User Authentication ---
   rule {
     action   = "allow"
-    priority = "1002"
+    priority = "1100"
     match {
       expr {
-        expression = "request.method == 'GET' && request.path.matches('/auth/(?:login|callback)')"
+        # Complexity: Method(1) && (Path(1) || Path(1)) = 3 atoms. Safe.
+        expression = "request.method == 'GET' && (request.path == '/auth/login' || request.path == '/auth/callback')"
       }
     }
-    description = "Auth Flow: login and callback"
+    description = "Allow: User Login Flow"
   }
 
-  # 2.4 MCP Search (GET for SSE, POST for Messages)
+  # --- Group: MCP Search ---
   rule {
     action   = "allow"
-    priority = "1003"
+    priority = "1200"
     match {
       expr {
-        expression = "(request.method == 'GET' && request.path == '/mcp/sse') || (request.method == 'POST' && request.path.matches('/mcp/messages/?'))"
+        # Complexity: (Method(1) && Path(1)) || (Method(1) && (Path(1) || Path(1))) = 5 atoms. Safe.
+        expression = "(request.method == 'GET' && request.path == '/mcp/sse') || (request.method == 'POST' && (request.path == '/mcp/messages' || request.path == '/mcp/messages/'))"
       }
     }
-    description = "MCP Search: SSE and JSON-RPC messages"
+    description = "Allow: MCP Search (SSE/POST)"
   }
 
-  # 2.5 Utilities & IAP Maintenance
+  # --- Group: Utilities & Maintenance ---
   rule {
     action   = "allow"
-    priority = "1004"
+    priority = "1300"
     match {
       expr {
-        expression = "request.method == 'GET' && (request.path == '/health' || request.path.matches('/_gcp_iap/(?:authenticate|clear_login_cookie|sessioninfo)'))"
+        # Complexity: Method(1) && (Path(1) || Path(1)) = 3 atoms. Safe.
+        expression = "request.method == 'GET' && (request.path == '/health' || request.path.startsWith('/_gcp_iap/'))"
       }
     }
-    description = "Utilities: Health checks and IAP management"
+    description = "Allow: Health Check and IAP"
   }
 
-  # Default rule: Deny all (Principle of Deny by Default)
+  # =========================================================
+  # 5. DEFAULT DENY
+  # =========================================================
   rule {
     action   = "deny(403)"
     priority = "2147483647"

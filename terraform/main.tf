@@ -12,17 +12,17 @@ terraform {
 }
 
 provider "google" {
-  project                 = var.gcp_gemini_project_id
-  region                  = var.gcp_region
-  zone                    = var.gcp_zone
-  user_project_override   = true
-  billing_project         = var.gcp_gemini_project_id
+  project               = var.gcp_gemini_project_id
+  region                = var.gcp_region
+  zone                  = var.gcp_zone
+  user_project_override = true
+  billing_project       = var.gcp_gemini_project_id
 }
 
 provider "google-beta" {
-  project                 = var.gcp_gemini_project_id
-  region                  = var.gcp_region
-  zone                    = var.gcp_zone
-  user_project_override   = true
-  billing_project         = var.gcp_gemini_project_id
+  project               = var.gcp_gemini_project_id
+  region                = var.gcp_region
+  zone                  = var.gcp_zone
+  user_project_override = true
+  billing_project       = var.gcp_gemini_project_id
 }
