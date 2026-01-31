@@ -42,6 +42,7 @@ genai_client = genai.Client(
 
 # Context variable to store current user's Slack ID for tool filtering
 user_id_ctx: ContextVar[str] = ContextVar("user_id", default=None)
+team_id_ctx: ContextVar[str] = ContextVar("team_id", default=None)
 
 
 # --- Middleware: Security Verification ---
@@ -139,10 +140,12 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 
         # 5. Success - Set user ID in context and proceed
         token = user_id_ctx.set(slack_user_id)
+        team_token = team_id_ctx.set(team_id)
         try:
             response = await call_next(request)
         finally:
             user_id_ctx.reset(token)
+            team_id_ctx.reset(team_token)
 
         logger.debug(
             f"SecurityMiddleware FINISHED for {email} with status {response.status_code}"
@@ -200,6 +203,7 @@ async def search_slack_messages(query: str) -> str:
                     types="public_channel,private_channel",
                     cursor=cursor,
                     limit=1000,
+                    team_id=team_id_ctx.get(),
                 )
                 if not user_convs.get("ok"):
                     logger.error(
