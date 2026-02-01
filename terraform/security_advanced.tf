@@ -6,9 +6,7 @@ locals {
   # --- DEFINITIONS ---
   # We stay consistent and avoid magic numbers.
   # If Slack's infrastructure changes, we only update here.
-
   slack_path_scope = "(request.path == '/slack/events' || request.path == '/slack/interactivity')"
-  auth_path_scope  = "(request.path == '/auth/login' || request.path == '/auth/callback')"
 
   # Simplification to stay within Cloud Armor's 5-atom limit per rule.
   # We use startsWith to reduce 4 equality checks into 2 prefix checks.
