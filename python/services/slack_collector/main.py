@@ -211,15 +211,23 @@ async def create_message_embeddings(
     messages: list[Message]
 ) -> list[MessageWithEmbeddings]:
     model = TextEmbeddingModel.from_pretrained("text-embedding-004")
-    messages_with_embeddings: list[MessageWithEmbeddings] = list()
-    for message in messages:
-        message_with_embeddings = MessageWithEmbeddings(message)
-        inputs = [
-            TextEmbeddingInput(message_with_embeddings.text, "RETRIEVAL_DOCUMENT")
-        ]
-        embeddings = await model.get_embeddings_async(inputs)
-        message_with_embeddings.embeddings = embeddings[0].values
-        messages_with_embeddings.append(message_with_embeddings)
+
+    # Batch size for Vertex AI text-embedding-004 is up to 250, using 100 for safety.
+    batch_size = 100
+    messages_with_embeddings: list[MessageWithEmbeddings] = []
+
+    for i in range(0, len(messages), batch_size):
+        batch = messages[i : i + batch_size]
+        inputs = [TextEmbeddingInput(m.text, "RETRIEVAL_DOCUMENT") for m in batch]
+
+        logger.info(f"Generating embeddings for batch of {len(batch)} messages...")
+        embeddings_list = await model.get_embeddings_async(inputs)
+
+        for m, emb in zip(batch, embeddings_list):
+            m_with_emb = MessageWithEmbeddings(m)
+            m_with_emb.embeddings = emb.values
+            messages_with_embeddings.append(m_with_emb)
+
     return messages_with_embeddings
 
 
