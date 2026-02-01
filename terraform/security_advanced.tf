@@ -6,8 +6,11 @@ locals {
   # --- DEFINITIONS ---
   # We stay consistent and avoid magic numbers.
   # If Slack's infrastructure changes, we only update here.
-
   slack_path_scope = "(request.path == '/slack/events' || request.path == '/slack/interactivity')"
+
+  # Simplification to stay within Cloud Armor's 5-atom limit per rule.
+  # We use startsWith to reduce 4 equality checks into 2 prefix checks.
+  global_waf_exclusion_scope = "(request.path.startsWith('/slack/') || request.path.startsWith('/auth/'))"
 
   # Slack infrastructure ASNs (AWS 16509, 14618)
   # Standard logical OR for platform compatibility.
@@ -70,7 +73,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     priority = "100"
     match {
       expr {
-        expression = "!(${local.slack_path_scope}) && evaluatePreconfiguredWaf('xss-v33-stable')"
+        expression = "!(${local.global_waf_exclusion_scope}) && evaluatePreconfiguredWaf('xss-v33-stable')"
       }
     }
     description = "WAF: XSS Protection for Global Traffic"
@@ -82,7 +85,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     priority = "101"
     match {
       expr {
-        expression = "!(${local.slack_path_scope}) && evaluatePreconfiguredWaf('lfi-v33-stable')"
+        expression = "!(${local.global_waf_exclusion_scope}) && evaluatePreconfiguredWaf('lfi-v33-stable')"
       }
     }
     description = "WAF: LFI Protection for Global Traffic"
@@ -94,7 +97,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     priority = "102"
     match {
       expr {
-        expression = "!(${local.slack_path_scope}) && evaluatePreconfiguredWaf('rce-v33-stable')"
+        expression = "!(${local.global_waf_exclusion_scope}) && evaluatePreconfiguredWaf('rce-v33-stable')"
       }
     }
     description = "WAF: RCE Protection for Global Traffic"
@@ -106,7 +109,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     priority = "103"
     match {
       expr {
-        expression = "!(${local.slack_path_scope}) && evaluatePreconfiguredWaf('scannerdetection-v33-stable')"
+        expression = "!(${local.global_waf_exclusion_scope}) && evaluatePreconfiguredWaf('scannerdetection-v33-stable')"
       }
     }
     description = "WAF: Scanner Detection for Global Traffic"
@@ -118,7 +121,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     priority = "104"
     match {
       expr {
-        expression = "!(${local.slack_path_scope}) && evaluatePreconfiguredWaf('protocolattack-v33-stable')"
+        expression = "!(${local.global_waf_exclusion_scope}) && evaluatePreconfiguredWaf('protocolattack-v33-stable')"
       }
     }
     description = "WAF: Protocol Attack Protection for Global Traffic"
@@ -165,7 +168,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     preview  = false
     match {
       expr {
-        expression = "!(${local.slack_path_scope}) && !request.path.startsWith('/mcp/') && evaluatePreconfiguredWaf('sqli-v33-stable')"
+        expression = "!(${local.global_waf_exclusion_scope}) && !request.path.startsWith('/mcp/') && evaluatePreconfiguredWaf('sqli-v33-stable')"
       }
     }
     description = "WAF: SQLi for Global Traffic"

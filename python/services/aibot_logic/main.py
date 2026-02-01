@@ -257,7 +257,8 @@ async def handle_home_tab_event(event):
             redirect_uri = f"https://{custom_fqdn}/auth/callback"
             client_id = await get_secret_value("iapClientId")
 
-            auth_url = get_google_auth_url(client_id, redirect_uri, state=user_id)
+            state = json.dumps({"slack_user_id": user_id})
+            auth_url = get_google_auth_url(client_id, redirect_uri, state=state)
             logger.info(f"Generated Google Auth URL for user {user_id}: {auth_url}")
             logger.debug(f"Using Redirect URI: {redirect_uri}")
 
@@ -435,9 +436,18 @@ async def callback(request: Request):
         raise HTTPException(status_code=400, detail="Missing code or state")
 
     try:
-        state = json.loads(state_str)
-        slack_user_id = state.get("slack_user_id")
+        try:
+            state = json.loads(state_str)
+            slack_user_id = (
+                state.get("slack_user_id") if isinstance(state, dict) else state
+            )
+        except (json.JSONDecodeError, TypeError):
+            # Fallback for old/simple state format (just the ID)
+            slack_user_id = state_str
+            logger.warning(f"Fallback: Google Auth state was not JSON: {state_str}")
 
+        if not slack_user_id:
+            raise ValueError("No slack_user_id found in state")
         # 1. Exchange code for tokens
         custom_fqdn = await get_secret_value("customFqdn")
         if not custom_fqdn:
@@ -511,7 +521,7 @@ async def slack_oauth_redirect(code: str):
 async def pubsub_worker(request: Request):
     keep_alive_task = None
     envelope = await request.json()
-    logger.info(f"Received Pub/Sub envelope: {json.dumps(envelope)}")
+    logger.debug(f"Received Pub/Sub envelope: {json.dumps(envelope)}")
     if not envelope or "message" not in envelope:
         logger.error("Missing 'message' in Pub/Sub envelope")
         raise HTTPException(status_code=400, detail="Bad Request")
@@ -519,7 +529,7 @@ async def pubsub_worker(request: Request):
     message = envelope["message"]
     data = base64.b64decode(message["data"]).decode("utf-8")
     payload = json.loads(data)
-    logger.info(f"Pub/Sub Payload: {json.dumps(payload)}")
+    logger.debug(f"Pub/Sub Payload: {json.dumps(payload)}")
 
     event_type = payload.get("type")
     event = payload.get("event") or {}
@@ -554,7 +564,7 @@ async def pubsub_worker(request: Request):
 
             # Check for bot loops just in case
             if event.get("bot_id") or event.get("subtype") == "bot_message":
-                logger.info("Ignoring bot message")
+                logger.debug("Ignoring bot message")
                 return Response(content="OK", status_code=200)
 
             # 1. Swap eyes for thinking face
@@ -662,28 +672,22 @@ async def pubsub_worker(request: Request):
                 ):
                     if event.content and event.content.parts:
                         for part in event.content.parts:
-                            # Check for text part specifically to avoid SDK warnings about non-text parts (like function_calls)
-                            # That are handled internally by the agent-sdk.
                             try:
-                                # Safe extraction: support Pydantic model_dump, to_dict, or raw dicts
-                                if hasattr(part, "model_dump"):
-                                    p_dict = part.model_dump()
-                                elif hasattr(part, "to_dict"):
-                                    p_dict = part.to_dict()
-                                elif isinstance(part, dict):
-                                    p_dict = part
-                                else:
-                                    # Fallback for objects that might have a .text attribute but aren't models
-                                    text = getattr(part, "text", None)
-                                    if text and isinstance(text, str):
-                                        responses.append(text)
+                                # Use getattr directly to avoid triggering model_dump or vars which might hit properties
+                                # that log warnings (like .text on a multi-part content).
+                                f_call = getattr(part, "function_call", None)
+                                if f_call:
+                                    logger.debug(
+                                        "Skipping function_call part in response stream"
+                                    )
                                     continue
 
-                                text = p_dict.get("text")
-                                if text:
-                                    responses.append(text)
+                                # Access text field directly if it exists and is not None
+                                text_val = getattr(part, "text", None)
+                                if text_val:
+                                    responses.append(text_val)
                             except Exception as e:
-                                logger.debug(f"Skipping part or error: {e}")
+                                logger.debug(f"Error extracting text from part: {e}")
 
                 final_response = "".join(responses).strip()
 

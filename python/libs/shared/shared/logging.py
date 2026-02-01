@@ -77,6 +77,18 @@ class GCPJSONFormatter(logging.Formatter):
         return json.dumps(log_record)
 
 
+class SilenceGenAIWarningFilter(logging.Filter):
+    """
+    Selective filter to silence the specific 'non-text parts' warning from GenAI SDK
+    while leaving other warnings enabled.
+    """
+
+    def filter(self, record):
+        if "non-text parts in the response" in record.getMessage():
+            return False
+        return True
+
+
 def setup_logging(level=logging.INFO):
     """
     Configures the root logger to use the GCPJSONFormatter and output to stdout.
@@ -85,6 +97,8 @@ def setup_logging(level=logging.INFO):
     # Use stdout for all logs to ensure Cloud Run captures them
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(GCPJSONFormatter())
+    # Apply selective silence filter
+    handler.addFilter(SilenceGenAIWarningFilter())
 
     root_logger = logging.getLogger()
     # Remove existing handlers to avoid duplicate logs (especially from FastAPI/Uvicorn)
@@ -99,3 +113,7 @@ def setup_logging(level=logging.INFO):
         lgr = logging.getLogger(logger_name)
         lgr.handlers = [handler]
         lgr.propagate = False
+
+    # Ensure GenAI loggers respect the requested log level
+    logging.getLogger("google.genai").setLevel(level)
+    logging.getLogger("google.generativeai").setLevel(level)

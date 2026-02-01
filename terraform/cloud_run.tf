@@ -19,7 +19,7 @@ resource "google_cloud_run_v2_service" "aibot_webhook" {
       }
       env {
         name  = "LOG_LEVEL"
-        value = "DEBUG"
+        value = var.log_level
       }
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
@@ -116,7 +116,7 @@ resource "google_cloud_run_v2_service" "aibot_logic" {
       }
       env {
         name  = "LOG_LEVEL"
-        value = "DEBUG"
+        value = var.log_level
       }
     }
     service_account = google_service_account.aibot_logic.email
@@ -180,7 +180,7 @@ resource "google_cloud_run_v2_service" "slack_search_mcp" {
       }
       env {
         name  = "LOG_LEVEL"
-        value = "DEBUG"
+        value = var.log_level
       }
     }
     service_account = google_service_account.slack_search_mcp.email
@@ -228,7 +228,7 @@ resource "google_cloud_run_v2_service" "slack_collector" {
       }
       env {
         name  = "LOG_LEVEL"
-        value = "DEBUG"
+        value = var.log_level
       }
     }
     service_account = google_service_account.collect_slack_messages.email

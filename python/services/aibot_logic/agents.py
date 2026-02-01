@@ -210,8 +210,12 @@ async def create_supervisor_agent(slack_user_id: str):
                 - Use `<url|text>` for embedded links.
             4. **Citations**: Whenever you reference information from Slack or Google, you MUST include an inline link using the URL provided by the agent. For example: "...as discussed in <https://...|this conversation>."
             5. **Sources Section**: At the end of EVERY response where you used a search tool, you MUST add a section titled "Sources" or "References". List all unique sources you used, formatted as:
-               - Slack: `<url|#channel_name> - user_name: "snippet..."`
+               - Slack: `<url|#channel_name>` - author: `user_name` - "snippet..."
                - Google: `<url|Source Title>`
+
+            **Metadata Handling**:
+            - For Slack results, use the `channel_name` and `user_name` fields. If they are missing or "unknown", fallback to the `channel_id` or `user_id`.
+            - Ensure URLs are exactly as provided in the tool output.
         """,
         model=supervisor_model,
         tools=[
