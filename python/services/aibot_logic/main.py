@@ -448,7 +448,6 @@ async def callback(request: Request):
 
         if not slack_user_id:
             raise ValueError("No slack_user_id found in state")
-
         # 1. Exchange code for tokens
         custom_fqdn = await get_secret_value("customFqdn")
         if not custom_fqdn:

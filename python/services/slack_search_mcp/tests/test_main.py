@@ -109,6 +109,12 @@ async def test_search_tool_logic():
                         mock_client.conversations_replies = AsyncMock(
                             side_effect=mock_replies
                         )
+                        mock_client.users_info = AsyncMock(
+                            return_value={
+                                "ok": True,
+                                "user": {"real_name": "Test User", "id": "U123"},
+                            }
+                        )
 
                         # Set contextvar for the test
                         token = user_id_ctx.set("U123")
