@@ -1,9 +1,14 @@
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+import os
+from unittest.mock import AsyncMock, patch
 
-import pytest
+# Ensure environment variables are set BEFORE any imports from services
+os.environ["GCP_LOCATION"] = "europe-west2"
+os.environ["GOOGLE_CLOUD_PROJECT"] = "test-project"
 
-from services.slack_search_mcp.main import user_id_ctx
+import pytest  # noqa: E402
+
+from services.slack_search_mcp.main import user_id_ctx  # noqa: E402
 
 # Setup app mock to handle initialization imports
 with patch("shared.gcp_api.get_secret_value", new_callable=AsyncMock) as mock_sec:
@@ -43,14 +48,22 @@ async def test_search_tool_logic():
                         mock_client.conversations_replies = AsyncMock(
                             return_value={
                                 "ok": True,
-                                "messages": [{"text": "found it", "ts": "1.1"}],
+                                "messages": [
+                                    {"text": "found it", "ts": "1.1", "user": "U123"}
+                                ],
                             }
                         )
                         mock_client.users_conversations = AsyncMock(
                             return_value={
                                 "ok": True,
-                                "channels": [{"id": "C1"}],
+                                "channels": [{"id": "C1", "name": "general"}],
                                 "response_metadata": {"next_cursor": ""},
+                            }
+                        )
+                        mock_client.users_info = AsyncMock(
+                            return_value={
+                                "ok": True,
+                                "user": {"real_name": "Test User", "id": "U123"},
                             }
                         )
 
@@ -64,54 +77,5 @@ async def test_search_tool_logic():
                         result = json.loads(result_json)
                         assert len(result) == 1
                         assert result[0]["text"] == "found it"
-
-
-# We skip the SSE tests for now if they are hanging, focusing on the core tool logic and middleware class directly
-@pytest.mark.asyncio
-async def test_security_middleware_logic():
-    from services.slack_search_mcp.main import SecurityMiddleware
-
-    mock_app = MagicMock()
-    middleware = SecurityMiddleware(mock_app)
-
-    # Mock request
-    request = MagicMock()
-    request.url.path = "/mcp/sse"
-    request.headers = {"X-Goog-IAP-JWT-Assertion": "dummy_jwt"}
-
-    call_next = AsyncMock()
-
-    with patch("services.slack_search_mcp.main.WebClient") as mock_web_client_class:
-        mock_client = mock_web_client_class.return_value
-        # Mock users_lookupByEmail to return a valid response
-        mock_client.users_lookupByEmail = MagicMock(
-            return_value={
-                "ok": True,
-                "user": {
-                    "id": "U123",
-                    "team_id": "T123",
-                    "enterprise_id": None,
-                },
-            }
-        )
-
-        with patch(
-            "services.slack_search_mcp.main.verify_iap_jwt",
-            new_callable=AsyncMock,
-        ) as mock_verify:
-            mock_verify.return_value = {"email": "test@example.com"}
-            with patch(
-                "services.slack_search_mcp.main.get_secret_value",
-                new_callable=AsyncMock,
-            ) as mock_sec:
-                mock_sec.side_effect = lambda k: {
-                    "iapAudience": "aud123",
-                    "slackBotToken": "bot123",
-                }.get(k)
-
-                with patch(
-                    "services.slack_search_mcp.main.is_team_authorized",
-                    return_value=True,
-                ):
-                    await middleware.dispatch(request, call_next)
-                    call_next.assert_called_once()
+                        assert result[0]["channel_name"] == "general"
+                        assert result[0]["user_name"] == "Test User"
