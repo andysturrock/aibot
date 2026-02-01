@@ -83,7 +83,7 @@ To allow users to search their own history, the bot requires Google authenticati
 
 1. **Configure OAuth Screen**: In the GCP Console, configure your OAuth Consent Screen.
 2. **Add Scopes**: Ensure `openid`, `https://www.googleapis.com/auth/userinfo.email`, and `https://www.googleapis.com/auth/userinfo.profile` are added.
-3. **Redirect URL**: Add `https://YOUR_FQDN/auth/callback/google` to your authorized redirect URIs in the Google Cloud Console.
+3. **Redirect URL**: Add `https://YOUR_FQDN/auth/callback` to your authorized redirect URIs in the Google Cloud Console.
 
 ---
 
