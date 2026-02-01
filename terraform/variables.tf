@@ -25,12 +25,6 @@ variable "gcp_zone" {
   default     = "europe-west2-a"
 }
 
-variable "enable_gemini_apis" {
-  type        = bool
-  description = "Enable Gemini APIs"
-  default     = true
-}
-
 variable "custom_fqdn" {
   type        = string
   description = "Fully Qualified Domain Name (FQDN) for the Load Balancer (e.g. aibot.example.com)"

@@ -13,9 +13,16 @@ os.environ["K_SERVICE"] = "test-service"
 os.environ["GOOGLE_CLOUD_PROJECT"] = "test-project"
 os.environ["GCP_LOCATION"] = "europe-west2"
 
-# Import app but mock out the shared library calls within main.py
+
+@pytest.fixture(autouse=True)
+def env_setup(monkeypatch):
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("K_SERVICE", "test-service")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("GCP_LOCATION", "europe-west2")
+
+
 with patch("shared.gcp_api.get_secret_value", new_callable=AsyncMock) as mock_sec:
-    # Set defaults for imports during initialization
     mock_sec.return_value = "dummy"
     from services.aibot_logic.main import app
 

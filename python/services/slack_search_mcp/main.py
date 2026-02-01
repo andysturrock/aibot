@@ -9,6 +9,7 @@ from contextvars import ContextVar
 from dotenv import load_dotenv
 from google import genai
 from google.cloud import bigquery
+from google.cloud.bigquery import ArrayQueryParameter, QueryJobConfig
 from google.genai import types
 from mcp.server.fastmcp import FastMCP
 from shared.gcp_api import get_secret_value
@@ -20,7 +21,6 @@ from shared.security import is_team_authorized
 from shared.slack_api import create_client_for_token
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -42,60 +42,76 @@ genai_client = genai.Client(
 
 # Context variable to store current user's Slack ID for tool filtering
 user_id_ctx: ContextVar[str] = ContextVar("user_id", default=None)
+team_id_ctx: ContextVar[str] = ContextVar("team_id", default=None)
 
 
 # --- Middleware: Security Verification ---
 
 
-class SecurityMiddleware(BaseHTTPMiddleware):
+class SecurityMiddleware:
     """
-    Starlette middleware for MCP SSE backend to verify access.
-    Supports both:
-    1. Bearer Token (Directly provided Slack token)
-    2. IAP (Google Identity mapping to Slack ID/Token)
+    ASGI middleware for MCP SSE backend to verify access.
+    Avoids BaseHTTPMiddleware to prevent issues with streaming responses (SSE).
     """
 
-    async def dispatch(self, request, call_next):
-        logger.info(f"SecurityMiddleware START: {request.method} {request.url.path}")
-        if request.url.path == "/health":
-            return await call_next(request)
+    def __init__(self, app):
+        self.app = app
 
-        # 0. Bypass for testing
-        if os.environ.get("ENV") == "test":
-            return await call_next(request)
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-        # 1. Whitelist Verification
-        if request.url.path not in ["/mcp/sse", "/mcp/messages", "/mcp/messages/"]:
-            logger.warning(
-                f"Stealth security: Unauthorized access attempt to {request.url.path} from {request.client.host}"
-            )
-            return JSONResponse({"error": "Forbidden"}, status_code=403)
+        request = Request(scope, receive)
+        path = request.url.path
 
-        # 2. Extract and Verify IAP JWT Assertion
-        iap_jwt = request.headers.get("X-Goog-IAP-JWT-Assertion")
-        if not iap_jwt:
-            logger.warning("Missing X-Goog-IAP-JWT-Assertion header")
-            return JSONResponse(
-                {"error": "Authentication required (IAP)"}, status_code=401
-            )
+        if path == "/health":
+            await self.app(scope, receive, send)
+            return
 
-        iap_audience = await get_secret_value("iapAudience")
-        payload = await verify_iap_jwt(iap_jwt, expected_audience=iap_audience)
-        if not payload:
-            logger.error(f"IAP JWT Verification failed for audience: {iap_audience}")
-            return JSONResponse({"error": "Invalid IAP Assertion"}, status_code=403)
-
-        email = payload.get("email")
-        if not email:
-            logger.error(
-                f"IAP JWT payload missing 'email' claim. Payload keys: {list(payload.keys())}"
-            )
-            return JSONResponse(
-                {"error": "Email missing from identity"}, status_code=403
-            )
-
-        # 3. Verify Slack Membership using Bot Token
         try:
+            # 1. Whitelist Verification
+            if path not in ["/mcp/sse", "/mcp/messages", "/mcp/messages/"]:
+                logger.warning(
+                    f"Stealth security: Unauthorized access attempt to {path} from {request.client.host}"
+                )
+                response = JSONResponse({"error": "Forbidden"}, status_code=403)
+                await response(scope, receive, send)
+                return
+            # 2. Extract and Verify IAP JWT Assertion
+            iap_jwt = request.headers.get("X-Goog-IAP-JWT-Assertion")
+            if not iap_jwt:
+                logger.warning("Missing X-Goog-IAP-JWT-Assertion header")
+                response = JSONResponse(
+                    {"error": "Authentication required (IAP)"}, status_code=401
+                )
+                await response(scope, receive, send)
+                return
+
+            iap_audience = await get_secret_value("iapAudience")
+            payload = await verify_iap_jwt(iap_jwt, expected_audience=iap_audience)
+            if not payload:
+                logger.error(
+                    f"IAP JWT Verification failed for audience: {iap_audience}"
+                )
+                response = JSONResponse(
+                    {"error": "Invalid IAP Assertion"}, status_code=403
+                )
+                await response(scope, receive, send)
+                return
+
+            email = payload.get("email")
+            if not email:
+                logger.error(
+                    f"IAP JWT payload missing 'email' claim. Payload keys: {list(payload.keys())}"
+                )
+                response = JSONResponse(
+                    {"error": "Email missing from identity"}, status_code=403
+                )
+                await response(scope, receive, send)
+                return
+
+            # 3. Verify Slack Membership using Bot Token
             bot_token = await get_secret_value("slackBotToken")
             slack_client = WebClient(token=bot_token)
 
@@ -108,9 +124,11 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 logger.warning(
                     f"User {email} not found in Slack: {slack_user_resp.get('error')}"
                 )
-                return JSONResponse(
+                response = JSONResponse(
                     {"error": "User not recognized in Slack workspace"}, status_code=403
                 )
+                await response(scope, receive, send)
+                return
 
             # 4. Check team ID matches whitelist
             user_info = slack_user_resp.get("user", {})
@@ -118,36 +136,48 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             team_id = user_info.get("team_id")
             enterprise_id = user_info.get("enterprise_id")
 
+            # Fallback for Enterprise Grid where team_id might be inside enterprise_user
+            if not team_id and "enterprise_user" in user_info:
+                ent_user = user_info["enterprise_user"]
+                teams = ent_user.get("teams", [])
+                if teams:
+                    team_id = teams[0]
+                    logger.info(
+                        f"Extracted team_id from enterprise_user.teams: {team_id}"
+                    )
+
             logger.info(
-                f"Checking authorization for user {email}: team={team_id}, enterprise={enterprise_id}"
+                f"Authorizing user {email}: slack_id={slack_user_id}, team={team_id}, enterprise={enterprise_id}"
             )
-            logger.debug(f"Full Slack user info: {json.dumps(user_info)}")
 
             if not await is_team_authorized(team_id, enterprise_id=enterprise_id):
                 logger.warning(
                     f"User {email} belongs to unauthorized team {team_id} or enterprise {enterprise_id}"
                 )
-                return JSONResponse(
+                response = JSONResponse(
                     {"error": "Workspace not authorized"}, status_code=403
                 )
+                await response(scope, receive, send)
+                return
+
+            # 5. Success - Set user ID in context and proceed
+            token = user_id_ctx.set(slack_user_id)
+            team_token = team_id_ctx.set(team_id)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                user_id_ctx.reset(token)
+                team_id_ctx.reset(team_token)
+
+            logger.debug(f"SecurityMiddleware FINISHED for {email}")
 
         except Exception:
-            logger.exception(f"Internal security validation error for {email}")
-            return JSONResponse(
+            logger.exception("Internal security validation error during auth check")
+            response = JSONResponse(
                 {"error": "Security validation failed"}, status_code=500
             )
-
-        # 5. Success - Set user ID in context and proceed
-        token = user_id_ctx.set(slack_user_id)
-        try:
-            response = await call_next(request)
-        finally:
-            user_id_ctx.reset(token)
-
-        logger.debug(
-            f"SecurityMiddleware FINISHED for {email} with status {response.status_code}"
-        )
-        return response
+            await response(scope, receive, send)
+            return
 
 
 # --- Service Logic ---
@@ -185,11 +215,14 @@ async def search_slack_messages(query: str) -> str:
         # if a channel was public but is now private (and the user is not a member),
         # or if a user was removed from a group, they will not see results from that channel.
         user_id = user_id_ctx.get()
+        team_id = team_id_ctx.get()
+        logger.info(f"Using context: user_id={user_id}, team_id={team_id}")
+
         if not user_id:
             logger.error("No user_id found in contextvars for search request")
             return "Unauthorized lookup"
 
-        permitted_channels = set()
+        permitted_channels = {}  # Map channel_id -> channel_name
         try:
             # Note: types can include public_channel, private_channel
             # We use an admin/shared token to see which channels THIS user is in.
@@ -200,6 +233,7 @@ async def search_slack_messages(query: str) -> str:
                     types="public_channel,private_channel",
                     cursor=cursor,
                     limit=1000,
+                    team_id=team_id,
                 )
                 if not user_convs.get("ok"):
                     logger.error(
@@ -208,7 +242,7 @@ async def search_slack_messages(query: str) -> str:
                     break
 
                 for channel in user_convs.get("channels", []):
-                    permitted_channels.add(channel["id"])
+                    permitted_channels[channel["id"]] = channel.get("name")
 
                 cursor = user_convs.get("response_metadata", {}).get("next_cursor")
                 if not cursor:
@@ -252,27 +286,53 @@ async def search_slack_messages(query: str) -> str:
             )
 
         # 4. Fetch Threads from Slack in Parallel
+        # We also maintain a cache for user names to avoid redundant calls
+        user_name_cache = {}
+
         async def fetch_thread(row):
             try:
+                channel_id = row["channel"]
+                channel_name = permitted_channels.get(channel_id, "unknown-channel")
+
                 resp = await slack_client.conversations_replies(
-                    channel=row["channel"], ts=str(row["ts"]), inclusive=True
+                    channel=channel_id, ts=str(row["ts"]), inclusive=True
                 )
                 if resp.get("ok"):
                     thread_messages = []
                     for msg in resp.get("messages", []):
+                        user_id = msg.get("user")
+                        user_name = "unknown-user"
+                        if user_id:
+                            if user_id in user_name_cache:
+                                user_name = user_name_cache[user_id]
+                            else:
+                                try:
+                                    u_resp = await slack_client.users_info(user=user_id)
+                                    if u_resp.get("ok"):
+                                        user_name = (
+                                            u_resp.get("user", {}).get("real_name")
+                                            or u_resp.get("user", {}).get("name")
+                                            or user_id
+                                        )
+                                        user_name_cache[user_id] = user_name
+                                except Exception:
+                                    pass
+
                         ts_str = msg.get("ts", "")
                         ts_digits = ts_str.replace(".", "")
-                        url = f"https://{team_domain}.slack.com/archives/{row['channel']}/p{ts_digits}"
+                        url = f"https://{team_domain}.slack.com/archives/{channel_id}/p{ts_digits}"
                         if msg.get("thread_ts") and msg.get("thread_ts") != ts_str:
-                            url += f"?thread_ts={msg.get('thread_ts')}&cid={row['channel']}"
+                            url += f"?thread_ts={msg.get('thread_ts')}&cid={channel_id}"
 
                         thread_messages.append(
                             {
                                 "text": msg.get("text"),
                                 "team_id": team_id,
-                                "channel_id": row["channel"],
+                                "channel_id": channel_id,
+                                "channel_name": channel_name,
                                 "ts": ts_str,
-                                "user_id": msg.get("user"),
+                                "user_id": user_id,
+                                "user_name": user_name,
                                 "url": url,
                                 "thread_ts": msg.get("thread_ts"),
                             }
@@ -323,9 +383,9 @@ async def perform_vector_search(embeddings: list[float]):
         )
         ORDER BY distance
     """
-    job_config = bigquery.QueryJobConfiguration(
+    job_config = QueryJobConfig(
         query_parameters=[
-            bigquery.ArrayQueryParameter("query_embeddings", "FLOAT64", embeddings),
+            ArrayQueryParameter("query_embeddings", "FLOAT64", embeddings),
         ]
     )
     loop = asyncio.get_event_loop()
@@ -340,7 +400,6 @@ async def perform_vector_search(embeddings: list[float]):
 app = mcp.sse_app()
 
 
-@app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     request_id = str(uuid.uuid4())
     logger.error(
@@ -358,6 +417,15 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"message": "Internal Server Error", "request_id": request_id},
     )
 
+
+async def health(request: Request):
+    return JSONResponse({"status": "ok"})
+
+
+app.add_route("/health", health)
+
+# Add exception handler explicitly to avoid deprecation warnings
+app.add_exception_handler(Exception, global_exception_handler)
 
 # Add the security middleware (last added = first executed)
 app.add_middleware(SecurityMiddleware)

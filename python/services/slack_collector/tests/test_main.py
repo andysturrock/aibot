@@ -3,6 +3,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+
+@pytest.fixture(autouse=True)
+def env_setup(monkeypatch):
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("K_SERVICE", "test-service")
+
+
 with patch("shared.gcp_api.get_secret_value", new_callable=AsyncMock) as mock_sec:
     mock_sec.return_value = "dummy"
     from services.slack_collector.main import app
