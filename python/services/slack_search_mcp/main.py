@@ -210,63 +210,65 @@ async def search_slack_messages(query: str) -> str:
     try:
         slack_client = await create_client_for_token(token)
 
-        # 1. Fetch User's Permitted Channels (Security Check)
-        # We fetch the user's current channel memberships in real-time. This ensures that
-        # if a channel was public but is now private (and the user is not a member),
-        # or if a user was removed from a group, they will not see results from that channel.
-        user_id = user_id_ctx.get()
-        team_id = team_id_ctx.get()
-        logger.info(f"Using context: user_id={user_id}, team_id={team_id}")
-
-        if not user_id:
-            logger.error("No user_id found in contextvars for search request")
-            return "Unauthorized lookup"
-
-        permitted_channels = {}  # Map channel_id -> channel_name
-        try:
-            # Note: types can include public_channel, private_channel
-            # We use an admin/shared token to see which channels THIS user is in.
-            cursor = None
-            while True:
-                user_convs = await slack_client.users_conversations(
-                    user=user_id,
-                    types="public_channel,private_channel",
-                    cursor=cursor,
-                    limit=1000,
-                    team_id=team_id,
-                )
-                if not user_convs.get("ok"):
-                    logger.error(
-                        f"Failed to fetch user conversations: {user_convs.get('error')}"
-                    )
-                    break
-
-                for channel in user_convs.get("channels", []):
-                    permitted_channels[channel["id"]] = channel.get("name")
-
-                cursor = user_convs.get("response_metadata", {}).get("next_cursor")
-                if not cursor:
-                    break
-            logger.info(
-                f"User {user_id} is member of {len(permitted_channels)} channels"
-            )
-        except Exception as e:
-            logger.error(f"Error checking user permissions: {str(e)}")
-            return "Error validating permissions"
-
-        # 2. Generate Embeddings
+        # 1. Generate Embeddings for search
         embeddings = await generate_embeddings(query)
 
-        # 3. Perform Vector Search in BigQuery
+        # 2. Perform Vector Search in BigQuery first
         results = await perform_vector_search(embeddings)
+        if not results:
+            return "No messages found."
 
-        # 4. Filter Results by Permissions
+        # 3. Reactive Permission Check & Metadata Fetching
+        # We check each channel found in the results to see if it's public or if user is a member.
+        permitted_channels = {}  # channel_id -> channel_info (name, is_permitted)
+        team_id = team_id_ctx.get()
+
+        async def check_channel_access(channel_id):
+            if channel_id in permitted_channels:
+                return permitted_channels[channel_id]
+
+            try:
+                # Use User Token to check info/membership
+                info = await slack_client.conversations_info(channel=channel_id)
+                if not info.get("ok"):
+                    logger.warning(
+                        f"Could not fetch info for channel {channel_id}: {info.get('error')}"
+                    )
+                    permitted_channels[channel_id] = {"permitted": False}
+                    return permitted_channels[channel_id]
+
+                channel = info.get("channel", {})
+                is_private = channel.get("is_private", False)
+                is_member = channel.get("is_member", False)
+                name = channel.get("name", "unknown-channel")
+
+                # Allowed if Public OR (Private AND user is member)
+                allowed = not is_private or is_member
+
+                permitted_channels[channel_id] = {"permitted": allowed, "name": name}
+                return permitted_channels[channel_id]
+            except Exception as e:
+                logger.error(f"Error checking access for {channel_id}: {str(e)}")
+                return {"permitted": False}
+
+        # Identify unique channels and check permissions
+        unique_channels = list(set(row["channel"] for row in results))
+        await asyncio.gather(*[check_channel_access(cid) for cid in unique_channels])
+
+        # 4. Filter Results
         filtered_results = [
-            row for row in results if row["channel"] in permitted_channels
+            row
+            for row in results
+            if permitted_channels.get(row["channel"], {}).get("permitted")
         ]
         logger.info(
-            f"Filtered {len(results)} results down to {len(filtered_results)} for user {user_id}"
+            f"Filtered {len(results)} results down to {len(filtered_results)} based on real-time permissions"
         )
+
+        if not filtered_results:
+            return "No messages found in your authorized channels."
+
+        # 5. Fetch Workspace Info for Deep Links
 
         if not filtered_results:
             return "No messages found in your authorized channels."
@@ -292,7 +294,8 @@ async def search_slack_messages(query: str) -> str:
         async def fetch_thread(row):
             try:
                 channel_id = row["channel"]
-                channel_name = permitted_channels.get(channel_id, "unknown-channel")
+                channel_info = permitted_channels.get(channel_id, {})
+                channel_name = channel_info.get("name", "unknown-channel")
 
                 resp = await slack_client.conversations_replies(
                     channel=channel_id, ts=str(row["ts"]), inclusive=True
@@ -352,6 +355,11 @@ async def search_slack_messages(query: str) -> str:
             *[fetch_thread(row) for row in filtered_results]
         )
         messages = [msg for thread in thread_results for msg in thread]
+
+        logger.info(f"Returning {len(messages)} messages to agent")
+        # Diagnostic: Log the first message structure to debug 'unknown' metadata
+        if messages:
+            logger.debug(f"Sample result: {json.dumps(messages[0])}")
 
         return json.dumps(messages, indent=2)
 
@@ -431,13 +439,13 @@ app.add_exception_handler(Exception, global_exception_handler)
 app.add_middleware(SecurityMiddleware)
 
 # Log registered routes for debugging 404s (Runs on import)
-logger.info("DEBUG: Registering Routes during Import:")
+logger.debug("Registering Routes during Import:")
 for route in app.routes:
     # Use getattr to safely access path/methods if they exist
     path = getattr(route, "path", str(route))
     methods = getattr(route, "methods", "N/A")
     name = getattr(route, "name", "N/A")
-    logger.info(f" - {path} [methods={methods}] ({route.__class__.__name__})")
+    logger.debug(f" - {path} [methods={methods}] ({route.__class__.__name__})")
 
 if __name__ == "__main__":
     import uvicorn

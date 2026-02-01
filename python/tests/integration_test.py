@@ -8,6 +8,8 @@ import time
 import httpx
 import pytest
 from dotenv import load_dotenv
+from google.auth.transport.requests import Request
+from google.oauth2 import id_token
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -35,6 +37,22 @@ def generate_slack_headers(body: str, timestamp: str = None):
         "X-Slack-Request-Timestamp": timestamp,
         "X-Slack-Signature": signature,
         "Content-Type": "application/json",
+    }
+
+
+def get_iap_token(client_id: str) -> str:
+    """Generates an OIDC token for IAP authentication using default credentials."""
+    # The client_id here is the IAP OAuth Client ID
+    auth_req = Request()
+    token = id_token.fetch_id_token(auth_req, client_id)
+    return token
+
+
+def generate_iap_headers(client_id: str) -> dict:
+    """Generates headers with the Authorization Bearer token for IAP."""
+    token = get_iap_token(client_id)
+    return {
+        "Authorization": f"Bearer {token}",
     }
 
 
