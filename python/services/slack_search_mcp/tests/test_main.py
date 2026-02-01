@@ -34,6 +34,49 @@ async def test_search_tool_logic():
                 return_value={"ok": True, "team": {"domain": "test-team", "id": "T123"}}
             )
 
+            # Mock conversations_info for reactive permission checks
+            async def mock_info(channel):
+                if channel == "C_PUB":
+                    return {
+                        "ok": True,
+                        "channel": {
+                            "id": "C_PUB",
+                            "name": "public-gen",
+                            "is_private": False,
+                            "is_member": False,
+                        },
+                    }
+                if channel == "C_PRIV":
+                    return {
+                        "ok": True,
+                        "channel": {
+                            "id": "C_PRIV",
+                            "name": "private-sec",
+                            "is_private": True,
+                            "is_member": True,
+                        },
+                    }
+                if channel == "C_HIDDEN":
+                    return {
+                        "ok": True,
+                        "channel": {
+                            "id": "C_HIDDEN",
+                            "name": "secret-stuff",
+                            "is_private": True,
+                            "is_member": False,
+                        },
+                    }
+                return {"ok": False, "error": "channel_not_found"}
+
+            mock_client.conversations_info = AsyncMock(side_effect=mock_info)
+
+            mock_client.users_info = AsyncMock(
+                return_value={
+                    "ok": True,
+                    "user": {"real_name": "Test User", "id": "U123"},
+                }
+            )
+
             with patch(
                 "services.slack_search_mcp.main.is_team_authorized", return_value=True
             ):
@@ -41,30 +84,30 @@ async def test_search_tool_logic():
                     "services.slack_search_mcp.main.generate_embeddings",
                     return_value=[0.1],
                 ):
+                    # Mock BQ search to return messages from diverse channels
                     with patch(
                         "services.slack_search_mcp.main.perform_vector_search",
-                        return_value=[{"channel": "C1", "ts": "1.1"}],
+                        return_value=[
+                            {"channel": "C_PUB", "ts": "1.1"},
+                            {"channel": "C_PRIV", "ts": "2.1"},
+                            {"channel": "C_HIDDEN", "ts": "3.1"},
+                        ],
                     ):
-                        mock_client.conversations_replies = AsyncMock(
-                            return_value={
+                        # Mock replies for all channels
+                        async def mock_replies(channel, ts, inclusive):
+                            return {
                                 "ok": True,
                                 "messages": [
-                                    {"text": "found it", "ts": "1.1", "user": "U123"}
+                                    {
+                                        "text": f"msg in {channel}",
+                                        "ts": ts,
+                                        "user": "U123",
+                                    }
                                 ],
                             }
-                        )
-                        mock_client.users_conversations = AsyncMock(
-                            return_value={
-                                "ok": True,
-                                "channels": [{"id": "C1", "name": "general"}],
-                                "response_metadata": {"next_cursor": ""},
-                            }
-                        )
-                        mock_client.users_info = AsyncMock(
-                            return_value={
-                                "ok": True,
-                                "user": {"real_name": "Test User", "id": "U123"},
-                            }
+
+                        mock_client.conversations_replies = AsyncMock(
+                            side_effect=mock_replies
                         )
 
                         # Set contextvar for the test
@@ -75,7 +118,19 @@ async def test_search_tool_logic():
                             user_id_ctx.reset(token)
 
                         result = json.loads(result_json)
-                        assert len(result) == 1
-                        assert result[0]["text"] == "found it"
-                        assert result[0]["channel_name"] == "general"
-                        assert result[0]["user_name"] == "Test User"
+                        # Should have 2 messages (C_PUB and C_PRIV, C_HIDDEN filtered out)
+                        assert len(result) == 2
+
+                        # Verify metadata
+                        pub_msg = next(m for m in result if m["channel_id"] == "C_PUB")
+                        assert pub_msg["channel_name"] == "public-gen"
+                        assert pub_msg["user_name"] == "Test User"
+
+                        priv_msg = next(
+                            m for m in result if m["channel_id"] == "C_PRIV"
+                        )
+                        assert priv_msg["channel_name"] == "private-sec"
+                        assert priv_msg["user_name"] == "Test User"
+
+                        # Verify C_HIDDEN is NOT in result
+                        assert not any(m["channel_id"] == "C_HIDDEN" for m in result)

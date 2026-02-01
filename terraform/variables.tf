@@ -47,3 +47,9 @@ variable "github_repo" {
   description = "GitHub repository in 'owner/repo' format (e.g. andysturrock/aibot)"
   default     = "andysturrock/aibot"
 }
+
+variable "log_level" {
+  type        = string
+  description = "Log level for all services (DEBUG, INFO, WARNING, ERROR)"
+  default     = "INFO"
+}
