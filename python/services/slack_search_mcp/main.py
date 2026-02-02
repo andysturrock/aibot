@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import traceback
 import uuid
 from contextvars import ContextVar
@@ -20,7 +21,6 @@ from shared.logging import setup_logging
 from shared.security import is_team_authorized
 from shared.slack_api import create_client_for_token
 from slack_sdk import WebClient
-from slack_sdk.errors import SlackApiError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -197,11 +197,41 @@ mcp = FastMCP(
 )
 
 
+class GlobalCache:
+    """Simple in-memory cache with TTL for Cloud Run instance re-use."""
+
+    def __init__(self):
+        self._user_names = {}  # user_id -> (name, expiry)
+        self._channel_info = {}  # channel_id -> (data, expiry)
+
+    def get_user_name(self, user_id):
+        if user_id in self._user_names:
+            name, expiry = self._user_names[user_id]
+            if time.time() < expiry:
+                return name
+        return None
+
+    def set_user_name(self, user_id, name, ttl=3600):
+        self._user_names[user_id] = (name, time.time() + ttl)
+
+    def get_channel_info(self, channel_id):
+        if channel_id in self._channel_info:
+            data, expiry = self._channel_info[channel_id]
+            if time.time() < expiry:
+                return data
+        return None
+
+    def set_channel_info(self, channel_id, data, ttl=600):
+        self._channel_info[channel_id] = (data, time.time() + ttl)
+
+
+cache = GlobalCache()
+
+
 @mcp.tool()
 async def search_slack_messages(query: str) -> str:
     """Search Slack messages using vector search and return thread context."""
     logger.info(f"TOOL START: search_slack_messages for query: {query}")
-    # Use User Token for fetching thread context to avoid 'not_in_channel' error.
     token = await get_secret_value("slackUserToken")
 
     if not token:
@@ -213,45 +243,38 @@ async def search_slack_messages(query: str) -> str:
         # 1. Generate Embeddings for search
         embeddings = await generate_embeddings(query)
 
-        # 2. Perform Vector Search in BigQuery first
+        # 2. Perform Vector Search in BigQuery
         results = await perform_vector_search(embeddings)
         if not results:
             return "No messages found."
 
         # 3. Reactive Permission Check & Metadata Fetching
-        # We check each channel found in the results to see if it's public or if user is a member.
         permitted_channels = {}  # channel_id -> channel_info (name, is_permitted)
-        team_id = team_id_ctx.get()
 
         async def check_channel_access(channel_id):
-            if channel_id in permitted_channels:
-                return permitted_channels[channel_id]
+            cached = cache.get_channel_info(channel_id)
+            if cached:
+                permitted_channels[channel_id] = cached
+                return cached
 
             try:
-                # Use User Token to check info/membership
                 info = await slack_client.conversations_info(channel=channel_id)
                 if not info.get("ok"):
-                    logger.warning(
-                        f"Could not fetch info for channel {channel_id}: {info.get('error')}"
-                    )
-                    permitted_channels[channel_id] = {"permitted": False}
-                    return permitted_channels[channel_id]
+                    res = {"permitted": False}
+                else:
+                    channel = info.get("channel", {})
+                    is_private = channel.get("is_private", False)
+                    is_member = channel.get("is_member", False)
+                    name = channel.get("name", "unknown-channel")
+                    res = {"permitted": not is_private or is_member, "name": name}
 
-                channel = info.get("channel", {})
-                is_private = channel.get("is_private", False)
-                is_member = channel.get("is_member", False)
-                name = channel.get("name", "unknown-channel")
-
-                # Allowed if Public OR (Private AND user is member)
-                allowed = not is_private or is_member
-
-                permitted_channels[channel_id] = {"permitted": allowed, "name": name}
-                return permitted_channels[channel_id]
+                cache.set_channel_info(channel_id, res)
+                permitted_channels[channel_id] = res
+                return res
             except Exception as e:
                 logger.error(f"Error checking access for {channel_id}: {str(e)}")
                 return {"permitted": False}
 
-        # Identify unique channels and check permissions
         unique_channels = list(set(row["channel"] for row in results))
         await asyncio.gather(*[check_channel_access(cid) for cid in unique_channels])
 
@@ -261,14 +284,6 @@ async def search_slack_messages(query: str) -> str:
             for row in results
             if permitted_channels.get(row["channel"], {}).get("permitted")
         ]
-        logger.info(
-            f"Filtered {len(results)} results down to {len(filtered_results)} based on real-time permissions"
-        )
-
-        if not filtered_results:
-            return "No messages found in your authorized channels."
-
-        # 5. Fetch Workspace Info for Deep Links
 
         if not filtered_results:
             return "No messages found in your authorized channels."
@@ -277,91 +292,93 @@ async def search_slack_messages(query: str) -> str:
         team_resp = await slack_client.team_info()
         if not team_resp.get("ok"):
             raise Exception(
-                f"Failed to fetch Slack team info: {team_resp.get('error')}. Ensure 'team:read' User scope is granted."
+                f"Failed to fetch Slack team info: {team_resp.get('error')}"
             )
 
         team_domain = team_resp.get("team", {}).get("domain")
-        team_id = team_resp.get("team", {}).get("id")
-        if not team_domain:
-            raise Exception(
-                "Slack team info returned successfully but 'domain' is missing."
-            )
+        team_id = team_id_ctx.get() or team_resp.get("team", {}).get("id")
 
-        # 4. Fetch Threads from Slack in Parallel
-        # We also maintain a cache for user names to avoid redundant calls
-        user_name_cache = {}
-
-        async def fetch_thread(row):
+        # 6. Fetch Threads from Slack in Parallel
+        async def fetch_thread_messages(row):
             try:
-                channel_id = row["channel"]
-                channel_info = permitted_channels.get(channel_id, {})
-                channel_name = channel_info.get("name", "unknown-channel")
-
                 resp = await slack_client.conversations_replies(
-                    channel=channel_id, ts=str(row["ts"]), inclusive=True
+                    channel=row["channel"], ts=str(row["ts"]), inclusive=True
                 )
                 if resp.get("ok"):
-                    thread_messages = []
-                    for msg in resp.get("messages", []):
-                        user_id = msg.get("user")
-                        user_name = "unknown-user"
-                        if user_id:
-                            if user_id in user_name_cache:
-                                user_name = user_name_cache[user_id]
-                            else:
-                                try:
-                                    u_resp = await slack_client.users_info(user=user_id)
-                                    if u_resp.get("ok"):
-                                        user_name = (
-                                            u_resp.get("user", {}).get("real_name")
-                                            or u_resp.get("user", {}).get("name")
-                                            or user_id
-                                        )
-                                        user_name_cache[user_id] = user_name
-                                except Exception:
-                                    pass
-
-                        ts_str = msg.get("ts", "")
-                        ts_digits = ts_str.replace(".", "")
-                        url = f"https://{team_domain}.slack.com/archives/{channel_id}/p{ts_digits}"
-                        if msg.get("thread_ts") and msg.get("thread_ts") != ts_str:
-                            url += f"?thread_ts={msg.get('thread_ts')}&cid={channel_id}"
-
-                        thread_messages.append(
-                            {
-                                "text": msg.get("text"),
-                                "team_id": team_id,
-                                "channel_id": channel_id,
-                                "channel_name": channel_name,
-                                "ts": ts_str,
-                                "user_id": user_id,
-                                "user_name": user_name,
-                                "url": url,
-                                "thread_ts": msg.get("thread_ts"),
-                            }
-                        )
-                    return thread_messages
-            except SlackApiError as e:
-                logger.warning(
-                    f"Slack API warning fetching thread {row['ts']} in {row['channel']}: {e.response['error']}"
-                )
+                    return row["channel"], resp.get("messages", [])
             except Exception as e:
-                logger.warning(
-                    f"Unexpected error fetching thread {row['ts']} in {row['channel']}: {e}"
-                )
-            return []
+                logger.warning(f"Error fetching thread {row['ts']}: {e}")
+            return row["channel"], []
 
-        thread_results = await asyncio.gather(
-            *[fetch_thread(row) for row in filtered_results]
+        thread_data = await asyncio.gather(
+            *[fetch_thread_messages(row) for row in filtered_results]
         )
-        messages = [msg for thread in thread_results for msg in thread]
 
-        logger.info(f"Returning {len(messages)} messages to agent")
-        # Diagnostic: Log the first message structure to debug 'unknown' metadata
-        if messages:
-            logger.debug(f"Sample result: {json.dumps(messages[0])}")
+        # 7. Collect all unique user IDs for batch fetching
+        all_user_ids = set()
+        for _, thread_msgs in thread_data:
+            for msg in thread_msgs:
+                if msg.get("user"):
+                    all_user_ids.add(msg["user"])
 
-        return json.dumps(messages, indent=2)
+        # 8. Batch Fetch User Names
+        async def fetch_user_name(user_id):
+            cached_name = cache.get_user_name(user_id)
+            if cached_name:
+                return user_id, cached_name
+
+            try:
+                u_resp = await slack_client.users_info(user=user_id)
+                if u_resp.get("ok"):
+                    user_name = (
+                        u_resp.get("user", {}).get("real_name")
+                        or u_resp.get("user", {}).get("name")
+                        or user_id
+                    )
+                    cache.set_user_name(user_id, user_name)
+                    return user_id, user_name
+            except Exception:
+                pass
+            return user_id, "unknown-user"
+
+        user_names_list = await asyncio.gather(
+            *[fetch_user_name(uid) for uid in all_user_ids]
+        )
+        user_map = dict(user_names_list)
+
+        # 9. Format Final Result
+        final_messages = []
+        for channel_id, thread_msgs in thread_data:
+            channel_name = permitted_channels.get(channel_id, {}).get(
+                "name", "unknown-channel"
+            )
+            for msg in thread_msgs:
+                ts_str = msg.get("ts", "")
+                ts_digits = ts_str.replace(".", "")
+                url = f"https://{team_domain}.slack.com/archives/{channel_id}/p{ts_digits}"
+                if msg.get("thread_ts") and msg.get("thread_ts") != ts_str:
+                    url += f"?thread_ts={msg.get('thread_ts')}&cid={channel_id}"
+
+                final_messages.append(
+                    {
+                        "text": msg.get("text"),
+                        "team_id": team_id,
+                        "channel_id": channel_id,
+                        "channel_name": channel_name,
+                        "ts": ts_str,
+                        "user_id": msg.get("user"),
+                        "user_name": user_map.get(msg.get("user"), "unknown-user"),
+                        "url": url,
+                        "thread_ts": msg.get("thread_ts"),
+                    }
+                )
+
+        logger.info(f"Returning {len(final_messages)} messages to agent")
+        return json.dumps(final_messages, indent=2)
+
+    except Exception as e:
+        logger.exception("Error during search_slack_messages")
+        return f"Error during search: {str(e)}"
 
     except Exception as e:
         logger.exception(f"Error during search_slack_messages for query: {query}")

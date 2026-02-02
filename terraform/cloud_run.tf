@@ -164,8 +164,9 @@ resource "google_cloud_run_v2_service" "slack_search_mcp" {
   ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
   template {
+    timeout = "60s"
     scaling {
-      min_instance_count = 0
+      min_instance_count = 1
       max_instance_count = 5
     }
     containers {
@@ -216,6 +217,7 @@ resource "google_cloud_run_v2_service" "slack_collector" {
   ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
   template {
+    timeout = "600s"
     scaling {
       min_instance_count = 0
       max_instance_count = 5
