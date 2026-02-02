@@ -93,6 +93,8 @@ resource "google_cloud_scheduler_job" "collect_slack_messages" {
     }
   }
 
+  attempt_deadline = "600s"
+
   # Removed depends_on and lifecycle blocks as function is now a Cloud Run service
 }
 
