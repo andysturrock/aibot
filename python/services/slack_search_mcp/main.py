@@ -66,7 +66,7 @@ class SecurityMiddleware:
         path = request.url.path
 
         if path == "/health" or path == "/healthz":
-            response = JSONResponse({"status": "healthy"}, status_code=200)
+            response = JSONResponse({"status": "ok"}, status_code=200)
             await response(scope, receive, send)
             return
 
