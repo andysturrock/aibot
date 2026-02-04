@@ -13,8 +13,24 @@ NO_SECRETS=false
 SECRETS_ONLY=false
 TARGET_SERVICE=""
 
+usage() {
+  echo "Usage: $0 --env=[prod|beta] [options]"
+  echo ""
+  echo "Options:"
+  echo "  --env=NAME       Specify environment (prod or beta). Required."
+  echo "  --fast           Skip infra checks, just sync secrets."
+  echo "  --no-tf          Skip Terraform apply."
+  echo "  --no-secrets     Skip secret synchronization."
+  echo "  --secrets-only   Only synchronize secrets, skip build and infra."
+  echo "  --encrypt        Re-encrypt the .env.[env] file to .env.[env].enc and exit."
+  echo "  --service NAME   Only build/deploy a specific service."
+  echo "  --help           Show this help message."
+  exit 0
+}
+
 # 2. Environment Loading
 ENV=""
+ENCRYPT_ONLY=false
 while [[ "$#" -gt 0 ]]; do
   case $1 in
     --env=*) ENV="${1#*=}" ;;
@@ -23,30 +39,56 @@ while [[ "$#" -gt 0 ]]; do
     --no-tf) NO_TF=true ;;
     --no-secrets) NO_SECRETS=true ;;
     --secrets-only) SECRETS_ONLY=true ;;
+    --encrypt) ENCRYPT_ONLY=true ;;
     --service) TARGET_SERVICE="$2"; shift ;;
+    --help|-h) usage ;;
+    *) echo "Unknown option: $1"; usage ;;
   esac
   shift
 done
 
 if [[ "$ENV" != "prod" && "$ENV" != "beta" ]]; then
   echo "Error: You must specify --env=prod or --env=beta"
-  exit 1
+  usage
 fi
 
 ENV_FILE=".env.$ENV"
 ENC_FILE=".env.$ENV.enc"
 
+if [ "$ENCRYPT_ONLY" = true ]; then
+  if [ ! -f "$ENV_FILE" ]; then
+    echo "Error: $ENV_FILE not found."
+    exit 1
+  fi
+  echo "--- Encrypting $ENV_FILE to $ENC_FILE ---"
+  # Use sops to encrypt the file directly
+  sops -e "$ENV_FILE" > "$ENC_FILE"
+  echo "Done. Please delete $ENV_FILE if you no longer need it in plaintext."
+  exit 0
+fi
+
+# 3. Environment Checks
+if [ ! -f "$ENC_FILE" ] && [ ! -f "$ENV_FILE" ]; then
+  echo "Error: Neither $ENC_FILE nor $ENV_FILE found."
+  exit 1
+fi
+
 if [ -f "$ENC_FILE" ]; then
   echo "--- Decrypting $ENC_FILE with SOPS ---"
-  # Use a temporary file with restrictive permissions and a trap for cleanup
   TEMP_ENV=$(mktemp)
   chmod 600 "$TEMP_ENV"
   trap 'rm -f "$TEMP_ENV"' EXIT
-  # Note: Encrypted .env files are typically stored in a JSON structure under a "data" key.
-  sops -d --extract '["data"]' "$ENC_FILE" > "$TEMP_ENV"
+
+  # Try to decrypt. If it's a JSON file with a "data" key, extract it raw.
+  if sops -d "$ENC_FILE" | grep -q '"data":'; then
+    sops -d --extract '["data"]' "$ENC_FILE" | python3 -c "import sys; content=sys.stdin.read().strip(); print(content[1:-1].replace('\\\\n', '\\n').replace('\\\\\"', '\"'))" > "$TEMP_ENV"
+  else
+    sops -d "$ENC_FILE" > "$TEMP_ENV"
+  fi
+
   source "$TEMP_ENV"
   rm "$TEMP_ENV"
-  trap - EXIT # Clear the trap after successful removal
+  trap - EXIT
 elif [ -f "$ENV_FILE" ]; then
   echo "--- Loading plaintext $ENV_FILE file ---"
   source "$ENV_FILE"
@@ -246,13 +288,18 @@ if [ "$NO_SECRETS" = false ]; then
   }
 
   if [ -n "$SLACK_BOT_TOKEN" ]; then
+    # Retrieve OAuth2 Client ID for IAP Audience (Target Client ID)
+    IAP_TARGET_CLIENT_ID=$(gcloud compute backend-services describe slack-search-mcp-backend --global --format='value(iap.oauth2ClientId)' --project=$PROJECT_ID 2>/dev/null || echo "PENDING")
+    B_ID=$(gcloud compute backend-services describe slack-search-mcp-backend --global --format='value(id)' --project=$PROJECT_ID 2>/dev/null || echo "PENDING")
+    IAP_AUDIENCE="/projects/${PROJECT_NUMBER}/global/backendServices/${B_ID}"
+
     # aibot-logic-config (Service-specific only)
     echo "Updating aibot-logic-config..."
-    JSON_LOGIC=$(printf '{"mcpSlackSearchUrl":"%s","iapClientId":"%s","iapClientSecret":"%s"}' "https://${CUSTOM_FQDN}/mcp" "$IAP_CLIENT_ID" "$IAP_CLIENT_SECRET")
+    JSON_LOGIC=$(printf '{"mcpSlackSearchUrl":"%s"}' "https://${CUSTOM_FQDN}/mcp")
     echo "$JSON_LOGIC" | gcloud secrets versions add aibot-logic-config --data-file=-
     disable_old_versions "aibot-logic-config"
 
-    # aibot-webhook-config (Service-specific only - currently empty but kept for consistency)
+    # aibot-webhook-config (Service-specific only)
     echo "Updating aibot-webhook-config..."
     JSON_WEBHOOK=$(printf '{"placeholder":"none"}')
     echo "$JSON_WEBHOOK" | gcloud secrets versions add aibot-webhook-config --data-file=-
@@ -260,15 +307,11 @@ if [ "$NO_SECRETS" = false ]; then
 
     # slack-search-mcp-config (Service-specific only)
     echo "Updating slack-search-mcp-config..."
-    # Retrieve Backend Service ID for IAP Audience
-    BACKEND_SERVICE_ID=$(gcloud compute backend-services describe slack-search-mcp-backend --global --format='value(id)' 2>/dev/null || echo "PENDING")
-    IAP_AUDIENCE="/projects/${PROJECT_NUMBER}/global/backendServices/${BACKEND_SERVICE_ID}"
-
-    JSON_MCP=$(printf '{"iapClientId":"%s","iapClientSecret":"%s","iapAudience":"%s"}' "$IAP_CLIENT_ID" "$IAP_CLIENT_SECRET" "$IAP_AUDIENCE")
+    JSON_MCP=$(printf '{"placeholder":"none"}')
     echo "$JSON_MCP" | gcloud secrets versions add slack-search-mcp-config --data-file=-
     disable_old_versions "slack-search-mcp-config"
 
-    # slack-collector-config (Currently inherited from shared)
+    # slack-collector-config (Service-specific only)
     echo "Updating slack-collector-config..."
     JSON_COLL=$(printf '{"placeholder":"none"}')
     echo "$JSON_COLL" | gcloud secrets versions add slack-collector-config --data-file=-
@@ -276,8 +319,8 @@ if [ "$NO_SECRETS" = false ]; then
 
     # AIBot-shared-config (Shared/Global)
     echo "Updating AIBot-shared-config..."
-    JSON_SHARED=$(printf '{"slackBotToken":"%s","slackSigningSecret":"%s","slackClientId":"%s","slackClientSecret":"%s","slackUserToken":"%s","teamIdsForSearch":"%s","enterpriseIdsForSearch":"%s","botName":"%s","supervisorModel":"%s","authUrl":"%s","customFqdn":"%s","iapClientId":"%s","iapClientSecret":"%s"}' \
-      "$SLACK_BOT_TOKEN" "$SLACK_SIGNING_SECRET" "$SLACK_CLIENT_ID" "$SLACK_CLIENT_SECRET" "$SLACK_USER_TOKEN" "$ALLOWED_TEAM_IDS" "$ALLOWED_ENTERPRISE_IDS" "$BOT_NAME" "$SUPERVISOR_MODEL" "$AUTH_URL" "$CUSTOM_FQDN" "$IAP_CLIENT_ID" "$IAP_CLIENT_SECRET")
+    JSON_SHARED=$(printf '{"slackBotToken":"%s","slackSigningSecret":"%s","slackClientId":"%s","slackClientSecret":"%s","slackUserToken":"%s","teamIdsForSearch":"%s","enterpriseIdsForSearch":"%s","botName":"%s","supervisorModel":"%s","authUrl":"%s","customFqdn":"%s","iapClientId":"%s","iapClientSecret":"%s","iapTargetClientId":"%s","iapAudience":"%s","tokenEncryptionKeyPath":"%s"}' \
+      "$SLACK_BOT_TOKEN" "$SLACK_SIGNING_SECRET" "$SLACK_CLIENT_ID" "$SLACK_CLIENT_SECRET" "$SLACK_USER_TOKEN" "$ALLOWED_TEAM_IDS" "$ALLOWED_ENTERPRISE_IDS" "$BOT_NAME" "$SUPERVISOR_MODEL" "$AUTH_URL" "$CUSTOM_FQDN" "$IAP_CLIENT_ID" "$IAP_CLIENT_SECRET" "$IAP_TARGET_CLIENT_ID" "$IAP_AUDIENCE" "$TOKEN_ENCRYPTION_KEY_PATH")
     echo "$JSON_SHARED" | gcloud secrets versions add AIBot-shared-config --data-file=-
     disable_old_versions "AIBot-shared-config"
   else

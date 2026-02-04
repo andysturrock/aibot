@@ -476,22 +476,27 @@ async def callback(request: Request):
         except Exception as verify_err:
             logger.error(f"Failed to verify Google ID token: {verify_err}")
             return Response(
-                content=f"<h1>Authentication Failed</h1><p>Google token verification failed: {str(verify_err)}</p>",
+                content="<h1>Authentication Failed</h1><p>We encountered an issue verifying your login. Please try again or contact support.</p>",
                 status_code=401,
                 media_type="text/html",
             )
 
         # 3. Store tokens in Firestore
         # The put_google_token function expects a dictionary with specific keys
-        await put_google_token(
-            slack_user_id,
-            {
-                "id_token": tokens.get("id_token"),
-                "refresh_token": tokens.get("refresh_token"),
-                "email": email,
-                "expires_at": time.time() + tokens.get("expires_in", 3600),
-            },
-        )
+        token_data = {
+            "id_token": tokens.get("id_token"),
+            "email": email,
+            "expires_at": time.time() + tokens.get("expires_in", 3600),
+        }
+
+        refresh_token = tokens.get("refresh_token")
+        if refresh_token:
+            from shared.google_auth import AIBotIdentityManager
+
+            identity_manager = AIBotIdentityManager()
+            token_data["refresh_token"] = await identity_manager.encrypt(refresh_token)
+
+        await put_google_token(slack_user_id, token_data)
 
         logger.info(
             f"Successfully authenticated Google user: {email} (Slack User ID: {slack_user_id})"
@@ -501,9 +506,13 @@ async def callback(request: Request):
             content=f"<h1>Success!</h1><p>You are now signed in as <b>{email}</b>. You can close this window and return to Slack.</p>",
             media_type="text/html",
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Google OAuth callback failed")
-        return Response(content=f"Error: {str(e)}", status_code=500)
+        return Response(
+            content="<h1>Internal Error</h1><p>An unexpected error occurred during authentication. We've logged the details and are looking into it.</p>",
+            status_code=500,
+            media_type="text/html",
+        )
 
 
 @app.get("/slack/oauth-redirect")
