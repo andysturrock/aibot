@@ -65,8 +65,9 @@ class SecurityMiddleware:
         request = Request(scope, receive)
         path = request.url.path
 
-        if path == "/health":
-            await self.app(scope, receive, send)
+        if path == "/health" or path == "/healthz":
+            response = JSONResponse({"status": "healthy"}, status_code=200)
+            await response(scope, receive, send)
             return
 
         try:
@@ -89,8 +90,8 @@ class SecurityMiddleware:
                 return
 
             iap_audience = await get_secret_value("iapAudience")
-            payload = await verify_iap_jwt(iap_jwt, expected_audience=iap_audience)
-            if not payload:
+            iap_payload = await verify_iap_jwt(iap_jwt, expected_audience=iap_audience)
+            if not iap_payload:
                 logger.error(
                     f"IAP JWT Verification failed for audience: {iap_audience}"
                 )
@@ -100,32 +101,69 @@ class SecurityMiddleware:
                 await response(scope, receive, send)
                 return
 
-            email = payload.get("email")
-            if not email:
-                logger.error(
-                    f"IAP JWT payload missing 'email' claim. Payload keys: {list(payload.keys())}"
-                )
+            caller_email = iap_payload.get("email")
+            if not caller_email:
                 response = JSONResponse(
                     {"error": "Email missing from identity"}, status_code=403
                 )
                 await response(scope, receive, send)
                 return
 
-            # 3. Verify Slack Membership using Bot Token
+            # 3. Determine User Identity
+            final_user_email = caller_email
+            is_logic_server = "aibot-logic" in caller_email
+
+            if is_logic_server:
+                # Require X-User-ID-Token for impersonation
+                user_id_token = request.headers.get("X-User-ID-Token")
+                if not user_id_token:
+                    logger.warning("Logic Server calling without X-User-ID-Token")
+                    response = JSONResponse(
+                        {"error": "X-User-ID-Token required for Logic Server"},
+                        status_code=401,
+                    )
+                    await response(scope, receive, send)
+                    return
+
+                # Verify User ID Token
+                from google.auth.transport import requests as auth_requests
+                from google.oauth2 import id_token as google_id_token
+
+                try:
+                    # The audience for these user tokens is the IAP Client ID.
+                    client_id = await get_secret_value("iapClientId")
+                    user_payload = google_id_token.verify_oauth2_token(
+                        user_id_token, auth_requests.Request(), client_id
+                    )
+                    final_user_email = user_payload.get("email")
+                    if not final_user_email:
+                        raise ValueError("User ID Token missing email")
+                except Exception as e:
+                    logger.error(f"User ID Token verification failed: {e}")
+                    response = JSONResponse(
+                        {"error": f"Invalid User ID Token: {str(e)}"},
+                        status_code=403,
+                    )
+                    await response(scope, receive, send)
+                    return
+
+            # 4. Verify Slack Membership using Bot Token
             bot_token = await get_secret_value("slackBotToken")
             slack_client = WebClient(token=bot_token)
 
             loop = asyncio.get_event_loop()
             slack_user_resp = await loop.run_in_executor(
-                None, lambda: slack_client.users_lookupByEmail(email=email)
+                None,
+                lambda: slack_client.users_lookupByEmail(email=final_user_email),
             )
 
             if not slack_user_resp.get("ok"):
                 logger.warning(
-                    f"User {email} not found in Slack: {slack_user_resp.get('error')}"
+                    f"User {final_user_email} not found in Slack: {slack_user_resp.get('error')}"
                 )
                 response = JSONResponse(
-                    {"error": "User not recognized in Slack workspace"}, status_code=403
+                    {"error": "User not recognized in Slack workspace"},
+                    status_code=403,
                 )
                 await response(scope, receive, send)
                 return
@@ -147,12 +185,12 @@ class SecurityMiddleware:
                     )
 
             logger.info(
-                f"Authorizing user {email}: slack_id={slack_user_id}, team={team_id}, enterprise={enterprise_id}"
+                f"Authorizing user {final_user_email}: slack_id={slack_user_id}, team={team_id}, enterprise={enterprise_id}"
             )
 
             if not await is_team_authorized(team_id, enterprise_id=enterprise_id):
                 logger.warning(
-                    f"User {email} belongs to unauthorized team {team_id} or enterprise {enterprise_id}"
+                    f"User {final_user_email} belongs to unauthorized team {team_id} or enterprise {enterprise_id}"
                 )
                 response = JSONResponse(
                     {"error": "Workspace not authorized"}, status_code=403
@@ -169,7 +207,7 @@ class SecurityMiddleware:
                 user_id_ctx.reset(token)
                 team_id_ctx.reset(team_token)
 
-            logger.debug(f"SecurityMiddleware FINISHED for {email}")
+            logger.debug(f"SecurityMiddleware FINISHED for {final_user_email}")
 
         except Exception:
             logger.exception("Internal security validation error during auth check")
