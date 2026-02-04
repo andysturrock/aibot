@@ -41,16 +41,28 @@ async def get_secret_value(secret_key: str) -> str:
 
     # 2. Check AIBot-shared-config
     shared_secrets = await _access_secret(project_id, "AIBot-shared-config")
-    if shared_secrets and secret_key in shared_secrets:
-        return shared_secrets[secret_key]
+    if shared_secrets:
+        if secret_key in shared_secrets:
+            logger.info(f"Secret key '{secret_key}' found in AIBot-shared-config")
+            return shared_secrets[secret_key]
+        else:
+            logger.debug(f"Secret key '{secret_key}' not in AIBot-shared-config")
+    else:
+        logger.warning("Could not access AIBot-shared-config")
 
     # 3. Fallback to Service-Specific config
     service_name = os.environ.get("K_SERVICE")
     if service_name:
         secret_name = f"{service_name}-config"
         service_secrets = await _access_secret(project_id, secret_name)
-        if service_secrets and secret_key in service_secrets:
-            return service_secrets[secret_key]
+        if service_secrets:
+            if secret_key in service_secrets:
+                logger.info(f"Secret key '{secret_key}' found in {secret_name}")
+                return service_secrets[secret_key]
+            else:
+                logger.debug(f"Secret key '{secret_key}' not in {secret_name}")
+        else:
+            logger.warning(f"Could not access {secret_name}")
 
     logger.warning(f"Secret key '{secret_key}' not found in any known secret store.")
     return None

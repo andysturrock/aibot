@@ -72,6 +72,8 @@ async def put_google_token(slack_user_id: str, token_data: dict[str, Any]):
     """Saves or overwrites a user's Google token data in Firestore."""
     db = firestore.AsyncClient()
     doc_ref = db.collection(GOOGLE_TOKENS_COLLECTION).document(slack_user_id)
+    # Ensure ID token is NOT stored as per security requirements
+    token_data.pop("id_token", None)
     token_data["slack_id"] = slack_user_id
     token_data["updated_at"] = datetime.now(UTC).isoformat()
     await doc_ref.set(token_data)
