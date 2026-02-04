@@ -120,6 +120,10 @@ async def test_refresh_user_tokens_rotation_no_new_refresh():
         id_token_val = await manager.refresh_user_tokens("U123")
         assert id_token_val == "new-id"
         mock_put.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_verify_iap_jwt_success():
     with patch("google.oauth2.id_token.verify_token") as mock_verify:
         mock_verify.return_value = {"email": "test@example.com"}
         payload = await verify_iap_jwt("jwt-assertion", "expected-aud")
