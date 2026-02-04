@@ -138,6 +138,7 @@ jobs:
 
   build-and-deploy-services:
     needs: [build-base, terraform]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
     runs-on: ubuntu-latest
     environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'beta' }}
     strategy:
