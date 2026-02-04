@@ -6,14 +6,18 @@ from google.cloud import firestore
 
 HISTORY_COLLECTION = "AIBot_History"
 GOOGLE_TOKENS_COLLECTION = "AIBot_Google_Tokens"
+AIBOT_DB = "aibot_db"
 TTL_IN_DAYS = 30
 
 
 async def get_history(
-    channel_id: str, thread_ts: str, agent_name: str
+    channel_id: str,
+    thread_ts: str,
+    agent_name: str,
+    database: str = AIBOT_DB,
 ) -> list[dict[str, Any]] | None:
     """Gets the history for the given channel and thread id from Firestore."""
-    db = firestore.AsyncClient()
+    db = firestore.AsyncClient(database=database)
     doc_id = f"{channel_id}_{thread_ts}_{agent_name}"
     doc_ref = db.collection(HISTORY_COLLECTION).document(doc_id)
     doc = await doc_ref.get()
@@ -28,10 +32,14 @@ async def get_history(
 
 
 async def put_history(
-    channel_id: str, thread_ts: str, history: list[dict[str, Any]], agent_name: str
+    channel_id: str,
+    thread_ts: str,
+    history: list[dict[str, Any]],
+    agent_name: str,
+    database: str = AIBOT_DB,
 ):
     """Saves or overwrites conversation history in Firestore."""
-    db = firestore.AsyncClient()
+    db = firestore.AsyncClient(database=database)
     doc_id = f"{channel_id}_{thread_ts}_{agent_name}"
 
     expiry_date = datetime.now(UTC) + timedelta(days=TTL_IN_DAYS)
@@ -49,16 +57,23 @@ async def put_history(
     )
 
 
-async def delete_history(channel_id: str, thread_ts: str, agent_name: str):
+async def delete_history(
+    channel_id: str,
+    thread_ts: str,
+    agent_name: str,
+    database: str = AIBOT_DB,
+):
     """Deletes conversation history from Firestore."""
-    db = firestore.AsyncClient()
+    db = firestore.AsyncClient(database=database)
     doc_id = f"{channel_id}_{thread_ts}_{agent_name}"
     await db.collection(HISTORY_COLLECTION).document(doc_id).delete()
 
 
-async def get_google_token(slack_user_id: str) -> dict[str, Any] | None:
+async def get_google_token(
+    slack_user_id: str, database: str = AIBOT_DB
+) -> dict[str, Any] | None:
     """Gets the Google token data for the given Slack user ID from Firestore."""
-    db = firestore.AsyncClient()
+    db = firestore.AsyncClient(database=database)
     doc_ref = db.collection(GOOGLE_TOKENS_COLLECTION).document(slack_user_id)
     doc = await doc_ref.get()
 
@@ -68,9 +83,13 @@ async def get_google_token(slack_user_id: str) -> dict[str, Any] | None:
     return doc.to_dict()
 
 
-async def put_google_token(slack_user_id: str, token_data: dict[str, Any]):
+async def put_google_token(
+    slack_user_id: str,
+    token_data: dict[str, Any],
+    database: str = AIBOT_DB,
+):
     """Saves or overwrites a user's Google token data in Firestore."""
-    db = firestore.AsyncClient()
+    db = firestore.AsyncClient(database=database)
     doc_ref = db.collection(GOOGLE_TOKENS_COLLECTION).document(slack_user_id)
     # Ensure ID token is NOT stored as per security requirements
     token_data.pop("id_token", None)
@@ -79,18 +98,18 @@ async def put_google_token(slack_user_id: str, token_data: dict[str, Any]):
     await doc_ref.set(token_data)
 
 
-async def delete_google_token(slack_user_id: str):
+async def delete_google_token(slack_user_id: str, database: str = AIBOT_DB):
     """Deletes the Google token for a given Slack user from Firestore."""
-    db = firestore.AsyncClient()
+    db = firestore.AsyncClient(database=database)
     await db.collection(GOOGLE_TOKENS_COLLECTION).document(slack_user_id).delete()
 
 
-async def get_slack_id_by_email(email: str) -> str | None:
+async def get_slack_id_by_email(email: str, database: str = AIBOT_DB) -> str | None:
     """Looks up a Slack ID by user email using the Google tokens collection."""
     if not email:
         return None
 
-    db = firestore.AsyncClient()
+    db = firestore.AsyncClient(database=database)
     docs = db.collection(GOOGLE_TOKENS_COLLECTION).where("email", "==", email).stream()
     async for doc in docs:
         return doc.id  # The doc ID is the Slack user ID

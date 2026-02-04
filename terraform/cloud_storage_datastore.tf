@@ -44,3 +44,14 @@ resource "google_storage_bucket" "aibot_documents" {
   uniform_bucket_level_access = true
   storage_class               = "STANDARD"
 }
+# Create a dedicated Firestore database for AIBot
+resource "google_firestore_database" "aibot_db" {
+  project                     = var.gcp_gemini_project_id
+  name                        = "aibot_db"
+  location_id                 = var.gcp_region
+  type                        = "FIRESTORE_NATIVE"
+  concurrency_mode            = "OPTIMISTIC"
+  app_engine_integration_mode = "DISABLED"
+  delete_protection_state     = "DELETE_PROTECTION_DISABLED"
+  deletion_policy             = "DELETE"
+}

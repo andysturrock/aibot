@@ -112,18 +112,9 @@ resource "google_bigquery_dataset_iam_member" "aibot_slack_messages_bq_user" {
   member     = "serviceAccount:${google_service_account.collect_slack_messages.email}"
 }
 
-# Give the service account read-write access to the slack_content table
-resource "google_bigquery_table_iam_member" "aibot_slack_messages_slack_content_dataeditor" {
+# Give the service account read-write access to the dataset
+resource "google_bigquery_dataset_iam_member" "aibot_slack_messages_dataeditor" {
   dataset_id = google_bigquery_dataset.aibot_slack_messages.dataset_id
-  table_id   = google_bigquery_table.slack_content.table_id
-  role       = "roles/bigquery.dataEditor"
-  member     = "serviceAccount:${google_service_account.collect_slack_messages.email}"
-}
-
-# Give the service account read-write access to the slack_content_metadata table
-resource "google_bigquery_table_iam_member" "aibot_slack_messages_slack_content_metadata_dataeditor" {
-  dataset_id = google_bigquery_dataset.aibot_slack_messages.dataset_id
-  table_id   = google_bigquery_table.slack_content_metadata.table_id
   role       = "roles/bigquery.dataEditor"
   member     = "serviceAccount:${google_service_account.collect_slack_messages.email}"
 }
