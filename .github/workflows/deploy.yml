@@ -55,12 +55,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-asyncio httpx google-cloud-firestore google-cloud-bigquery slack-sdk google-cloud-aiplatform vertexai "mcp[fastapi]" pydantic python-dotenv fastapi starlette google-genai google-cloud-pubsub google-adk pytz pyjwt
+          pip install pytest pytest-asyncio respx cachecontrol pytest-cov httpx google-cloud-firestore google-cloud-bigquery slack-sdk google-cloud-aiplatform vertexai "mcp[fastapi]" pydantic python-dotenv fastapi starlette google-genai google-cloud-pubsub google-adk pytz pyjwt
           pip install -e ./python/libs/shared
       - name: Run tests
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)/python/libs/shared:$(pwd)/python/services/aibot_logic:$(pwd)/python/services/slack_collector:$(pwd)/python/services/slack_search_mcp
-          pytest --ignore=python/tests/integration_test.py
+          pytest --ignore=python/tests/integration_test.py --cov=python/services/slack_search_mcp --cov=python/services/aibot_logic --cov=python/libs/shared --cov-report=term-missing --cov-fail-under=75
 
   terraform:
     needs: [lint, test]
@@ -138,6 +138,7 @@ jobs:
 
   build-and-deploy-services:
     needs: [build-base, terraform]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
     runs-on: ubuntu-latest
     environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'beta' }}
     strategy:

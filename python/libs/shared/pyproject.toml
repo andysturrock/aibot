@@ -10,7 +10,12 @@ dependencies = [
     "aiohttp>=3.11.0",
     "google-cloud-logging>=3.11.0",
     "httpx>=0.28.1",
-    "pyjwt>=2.10.1"
+    "pyjwt>=2.10.1",
+    "google-cloud-kms>=3.0.0",
+    "google-auth>=2.0.0",
+    "google-cloud-firestore>=2.0.0",
+    "cachecontrol>=0.14.0",
+    "requests>=2.32.0"
 ]
 
 [tool.setuptools]
