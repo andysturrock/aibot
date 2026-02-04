@@ -15,7 +15,7 @@ The bridge runs as a local MCP server (using `stdio`) and proxies requests to a 
 1. **Clone the repository** (if not already done).
 2. **Install dependencies**:
    ```bash
-   pip install mcp httpx aiohttp google-auth google-oauth2-id-token python-dotenv
+   pip install mcp httpx aiohttp google-auth google-oauth2-id-token python-dotenv keyring
    ```
 3. **Configure Permissions**:
    Ensure your local identity has the `Secret Manager Secret Accessor` role for the secrets used by the bridge.

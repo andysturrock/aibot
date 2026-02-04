@@ -13,6 +13,7 @@ import webbrowser
 from urllib.parse import urlencode
 
 import httpx
+import keyring
 from aiohttp import web
 from dotenv import load_dotenv
 from mcp import ClientSession
@@ -191,40 +192,28 @@ async def proxy(url, token):
                 )
 
 
-def get_cache_path():
-    """Return the path to the token cache file."""
-    # Use explicit home if available
-    home = os.environ.get("HOME", os.path.expanduser("~"))
-    base_dir = os.path.join(home, ".config/gcloud")
-    os.makedirs(base_dir, exist_ok=True)
-    path = os.path.join(base_dir, "mcp_bridge_tokens.json")
-    logger.debug(f"Using cache path: {path}")
-    return path
+SERVICE_NAME = "MyMCPDesktopClient"
 
 
-def load_cached_tokens():
-    """Load cached tokens from disk."""
-    path = get_cache_path()
-    if os.path.exists(path):
-        try:
-            with open(path) as f:
-                return json.load(f)
-        except Exception as e:
-            logger.warning(f"Failed to load cached tokens: {e}")
+def load_cached_tokens(audience: str):
+    """Load cached tokens from the OS keyring."""
+    try:
+        data = keyring.get_password(SERVICE_NAME, audience)
+        if data:
+            return json.loads(data)
+    except Exception as e:
+        logger.warning(f"Failed to load tokens from keyring: {e}")
     return {}
 
 
 def save_tokens(tokens, audience):
-    """Save tokens to disk securely."""
-    path = get_cache_path()
+    """Save tokens to the OS keyring securely."""
     try:
-        tokens["audience"] = audience
-        # Use os.open to ensure the file is created with 0o600 from the start
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            json.dump(tokens, f)
+        # We store the entire JSON blob as the 'password' for the audience key
+        keyring.set_password(SERVICE_NAME, audience, json.dumps(tokens))
+        logger.info(f"Tokens saved to keyring for audience: {audience}")
     except Exception as e:
-        logger.warning(f"Failed to save tokens securely: {e}")
+        logger.warning(f"Failed to save tokens to keyring: {e}")
 
 
 def check_token_expiry(token):
@@ -296,8 +285,8 @@ async def fetch_iap_token(
 ):
     """Fetch an IAP identity token, with browser fallback and caching."""
     # Method 1: Browser Flow with Caching (Fastest)
-    cached = load_cached_tokens()
-    if cached.get("audience") == audience:
+    cached = load_cached_tokens(audience)
+    if cached:
         token = cached.get("id_token")
         if not check_token_expiry(token):
             logger.info("Using valid cached IAP token.")
@@ -465,16 +454,17 @@ async def main():
     # 2. Acquire IAP Identity Token
     logger.debug("Acquiring IAP identity token...")
 
-    # Fast path: check cache first before doing any gcloud calls
-    cached = load_cached_tokens()
     token = None
+    if audience:
+        # Fast path: check cache first before doing any gcloud calls
+        cached = load_cached_tokens(audience)
 
-    if audience and cached.get("audience") == audience:
-        token = cached.get("id_token")
-        if not check_token_expiry(token):
-            logger.info("Using valid cached IAP token (fast path).")
-        else:
-            token = None  # Needs refresh, fall through to fetch_iap_token
+        if cached:
+            token = cached.get("id_token")
+            if not check_token_expiry(token):
+                logger.info("Using valid cached IAP token (fast path).")
+            else:
+                token = None  # Needs refresh, fall through to fetch_iap_token
 
     if not token:
         # Slow path: Need to discover or do full auth
