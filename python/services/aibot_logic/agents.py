@@ -1,6 +1,5 @@
 import logging
 import os
-import time
 from functools import cached_property
 
 import vertexai
@@ -11,9 +10,7 @@ from google.adk.tools.google_search_tool import google_search
 from google.genai import Client, types
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
-from shared.firestore_api import get_google_token, put_google_token
 from shared.gcp_api import get_secret_value
-from shared.google_auth import refresh_google_id_token
 
 gcp_location = os.environ.get("GCP_LOCATION")
 if not gcp_location:
@@ -74,68 +71,59 @@ async def get_gemini_model(model_name: str) -> Gemini:
 
 
 async def get_valid_google_id_token(
-    slack_user_id: str
+    slack_user_id: str,
 ) -> tuple[str | None, str | None]:
     """
     Retrieves a valid Google ID token for the given Slack user.
-    Refreshes the token if it's expired.
+    Refreshes the token if it's expired (using KMS-encrypted refresh token).
     Returns (id_token, None) on success, or (None, error_message) on failure.
     """
-    token_data = await get_google_token(slack_user_id)
-    if not token_data:
+    from shared.google_auth import AIBotIdentityManager
+
+    identity_manager = AIBotIdentityManager()
+    id_token_val = await identity_manager.refresh_user_tokens(slack_user_id)
+
+    if not id_token_val:
         return (
             None,
-            "I cannot search Slack because you are not signed in with Google. Please go to my Home tab and click 'Sign in with Google'.",
+            "I cannot search Slack because your session has expired. Please go to my Home tab and click 'Sign in with Google'.",
         )
 
-    id_token = token_data.get("id_token")
-    refresh_token = token_data.get("refresh_token")
-    expires_at = token_data.get("expires_at", 0)
-
-    # Refresh if expired (or close to it)
-    if time.time() > expires_at - 300:  # 5 minute buffer
-        if refresh_token:
-            logger.info(f"Refreshing Google ID token for user {slack_user_id}")
-            new_id_token = await refresh_google_id_token(refresh_token)
-            if new_id_token:
-                id_token = new_id_token
-                # Update Firestore with new expiration
-                token_data["id_token"] = id_token
-                token_data["expires_at"] = time.time() + 3600
-                await put_google_token(slack_user_id, token_data)
-            else:
-                return (
-                    None,
-                    "Your Google session has expired and I couldn't refresh it. Please sign in again on my Home tab.",
-                )
-        else:
-            return (
-                None,
-                "Your Google session has expired. Please sign in again on my Home tab.",
-            )
-
-    return id_token, None
+    return id_token_val, None
 
 
 async def search_slack(query: str, slack_user_id: str) -> str:
     """
-    Searches through Slack messages using the user's Google ID token for IAP.
+    Searches through Slack messages using the service account's token for IAP
+    and the user's ID token in a custom header.
     """
     try:
         if not slack_user_id or slack_user_id == "unknown":
             return "I cannot search Slack because I don't know who you are. Please interact with me from a Slack workspace."
 
-        # 1. Get a valid Google ID Token
-        id_token, error_msg = await get_valid_google_id_token(slack_user_id)
+        # 1. Get a valid User ID Token
+        user_id_token, error_msg = await get_valid_google_id_token(slack_user_id)
         if error_msg:
             return error_msg
 
-        # 3. Connect to MCP
+        # 2. Get Logic Server's own ID token for IAP
+        from google.auth.transport import requests as auth_requests
+        from google.oauth2 import id_token as google_id_token
+
+        target_client_id = await get_secret_value("iapTargetClientId")
         mcp_server_url = await get_secret_value("mcpSlackSearchUrl")
-        headers = {"Authorization": f"Bearer {id_token}"}
+
+        auth_req = auth_requests.Request()
+        service_id_token = google_id_token.fetch_id_token(auth_req, target_client_id)
+
+        # 3. Connect to MCP
+        headers = {
+            "Authorization": f"Bearer {service_id_token}",
+            "X-User-ID-Token": user_id_token,
+        }
 
         logger.info(
-            f"Connecting to MCP URL: {mcp_server_url}/sse for user {slack_user_id}"
+            f"Connecting to MCP URL: {mcp_server_url}/sse (redacted_token_len={len(service_id_token)})"
         )
 
         async with sse_client(f"{mcp_server_url}/sse", headers=headers) as (

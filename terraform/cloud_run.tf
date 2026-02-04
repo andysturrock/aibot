@@ -147,6 +147,16 @@ resource "google_project_iam_member" "logic_vertex" {
   member  = "serviceAccount:${google_service_account.aibot_logic.email}"
 }
 
+resource "google_project_iam_member" "kms_access" {
+  for_each = toset([
+    "serviceAccount:${google_service_account.aibot_logic.email}",
+    "serviceAccount:${google_service_account.aibot_webhook.email}"
+  ])
+  project = var.gcp_gemini_project_id
+  role    = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member  = each.value
+}
+
 # Allow Pub/Sub to invoke the Logic service
 resource "google_cloud_run_v2_service_iam_member" "pubsub_logic_invoker" {
   location = google_cloud_run_v2_service.aibot_logic.location

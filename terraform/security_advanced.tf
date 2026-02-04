@@ -297,6 +297,8 @@ resource "google_compute_backend_service" "mcp_backend" {
 }
 
 # Allow aibot-logic to access this IAP-protected backend
+# Note: This is required because IAP requires explicit roles/iap.httpsResourceAccessor
+# to authorize service-to-service calls even with a valid OIDC token.
 resource "google_iap_web_backend_service_iam_member" "mcp_iap_access" {
   project             = var.gcp_gemini_project_id
   web_backend_service = google_compute_backend_service.mcp_backend.name
@@ -304,12 +306,6 @@ resource "google_iap_web_backend_service_iam_member" "mcp_iap_access" {
   member              = "serviceAccount:${google_service_account.aibot_logic.email}"
 }
 
-resource "google_iap_web_backend_service_iam_member" "mcp_iap_access_user" {
-  project             = var.gcp_gemini_project_id
-  web_backend_service = google_compute_backend_service.mcp_backend.name
-  role                = "roles/iap.httpsResourceAccessor"
-  member              = "user:andy.sturrock@atombank.co.uk"
-}
 
 # Ensure the IAP Service Agent exists
 resource "google_project_service_identity" "iap_sa" {
@@ -513,7 +509,7 @@ resource "google_secret_manager_secret_version" "mcp_config" {
     enterpriseIdsForSearch = "REPLACE_ME"
     iapClientId            = var.iap_client_id
     iapClientSecret        = var.iap_client_secret
-    iapAudience            = "/projects/${data.google_project.project.number}/global/backendServices/${google_compute_backend_service.mcp_backend.generated_id}"
+    iapTargetClientId      = "/projects/${data.google_project.project.number}/global/backendServices/${google_compute_backend_service.mcp_backend.generated_id}"
   })
 
   lifecycle {
