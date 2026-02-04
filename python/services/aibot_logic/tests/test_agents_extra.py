@@ -38,7 +38,7 @@ async def test_search_slack_mcp_failure():
     with patch(
         "services.aibot_logic.agents.get_valid_google_id_token"
     ) as mock_user_token, patch(
-        "shared.gcp_api.get_secret_value"
+        "services.aibot_logic.agents.get_secret_value"
     ) as mock_secret, patch(
         "google.oauth2.id_token.fetch_id_token"
     ) as mock_fetch, patch("services.aibot_logic.agents.sse_client") as mock_sse:
@@ -58,7 +58,7 @@ async def test_search_slack_success():
     with patch(
         "services.aibot_logic.agents.get_valid_google_id_token"
     ) as mock_user_token, patch(
-        "shared.gcp_api.get_secret_value"
+        "services.aibot_logic.agents.get_secret_value"
     ) as mock_secret, patch(
         "google.oauth2.id_token.fetch_id_token"
     ) as mock_fetch, patch("services.aibot_logic.agents.sse_client") as mock_sse, patch(
