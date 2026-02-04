@@ -23,6 +23,7 @@ usage() {
   echo "  --no-secrets     Skip secret synchronization."
   echo "  --secrets-only   Only synchronize secrets, skip build and infra."
   echo "  --encrypt        Re-encrypt the .env.[env] file to .env.[env].enc and exit."
+  echo "  --decrypt        Decrypt the .env.[env].enc file to .env.[env] and exit."
   echo "  --service NAME   Only build/deploy a specific service."
   echo "  --help           Show this help message."
   exit 0
@@ -31,6 +32,7 @@ usage() {
 # 2. Environment Loading
 ENV=""
 ENCRYPT_ONLY=false
+DECRYPT_ONLY=false
 while [[ "$#" -gt 0 ]]; do
   case $1 in
     --env=*) ENV="${1#*=}" ;;
@@ -40,6 +42,7 @@ while [[ "$#" -gt 0 ]]; do
     --no-secrets) NO_SECRETS=true ;;
     --secrets-only) SECRETS_ONLY=true ;;
     --encrypt) ENCRYPT_ONLY=true ;;
+    --decrypt) DECRYPT_ONLY=true ;;
     --service) TARGET_SERVICE="$2"; shift ;;
     --help|-h) usage ;;
     *) echo "Unknown option: $1"; usage ;;
@@ -64,6 +67,22 @@ if [ "$ENCRYPT_ONLY" = true ]; then
   # Use sops to encrypt the file directly
   sops -e "$ENV_FILE" > "$ENC_FILE"
   echo "Done. Please delete $ENV_FILE if you no longer need it in plaintext."
+  exit 0
+fi
+
+if [ "$DECRYPT_ONLY" = true ]; then
+  if [ ! -f "$ENC_FILE" ]; then
+    echo "Error: $ENC_FILE not found."
+    exit 1
+  fi
+  echo "--- Decrypting $ENC_FILE to $ENV_FILE ---"
+  # Match logic from environment loading for consistent decryption
+  if sops -d "$ENC_FILE" | grep -q '"data":'; then
+    sops -d --extract '["data"]' "$ENC_FILE" | python3 -c "import sys; content=sys.stdin.read().strip(); print(content[1:-1].replace('\\\\n', '\\n').replace('\\\\\"', '\"'))" > "$ENV_FILE"
+  else
+    sops -d "$ENC_FILE" > "$ENV_FILE"
+  fi
+  echo "Done. Plaintext $ENV_FILE created."
   exit 0
 fi
 

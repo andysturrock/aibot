@@ -6,6 +6,11 @@
 
 set -eo pipefail
 
+# Get the directory where the script is located and change to it
+# This ensures relative paths (like gcs-lifecycle.json) work correctly
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 # 1. Environment Loading
 ENV=""
 while [[ "$#" -gt 0 ]]; do
@@ -22,18 +27,44 @@ if [[ "$ENV" != "prod" && "$ENV" != "beta" ]]; then
 fi
 
 ENV_FILE=".env.$ENV"
-# Check if symlink/file exists in current or parent
-if [ -f "$ENV_FILE" ]; then
-  FULL_ENV_PATH="$ENV_FILE"
-elif [ -f "../$ENV_FILE" ]; then
-  FULL_ENV_PATH="../$ENV_FILE"
-else
-  echo "Error: $ENV_FILE not found."
-  exit 1
+ENC_FILE=".env.$ENV.enc"
+
+# Look for files in current or parent directory
+if [ -f "$ENC_FILE" ]; then
+    FULL_ENC_PATH="$ENC_FILE"
+elif [ -f "../$ENC_FILE" ]; then
+    FULL_ENC_PATH="../$ENC_FILE"
 fi
 
-echo "Loading env vars from $FULL_ENV_PATH"
-source "$FULL_ENV_PATH"
+if [ -f "$ENV_FILE" ]; then
+    FULL_ENV_PATH="$ENV_FILE"
+elif [ -f "../$ENV_FILE" ]; then
+    FULL_ENV_PATH="../$ENV_FILE"
+fi
+
+if [ -n "$FULL_ENC_PATH" ]; then
+    echo "Decrypting $FULL_ENC_PATH with SOPS..."
+    TEMP_ENV=$(mktemp)
+    chmod 600 "$TEMP_ENV"
+    trap 'rm -f "$TEMP_ENV"' EXIT
+
+    # Consistent decryption logic: handle possible JSON/raw format
+    if sops -d "$FULL_ENC_PATH" | grep -q '"data":'; then
+        sops -d --extract '["data"]' "$FULL_ENC_PATH" | python3 -c "import sys; content=sys.stdin.read().strip(); print(content[1:-1].replace('\\\\n', '\\n').replace('\\\\\"', '\"'))" > "$TEMP_ENV"
+    else
+        sops -d "$FULL_ENC_PATH" > "$TEMP_ENV"
+    fi
+
+    source "$TEMP_ENV"
+    rm "$TEMP_ENV"
+    trap - EXIT
+elif [ -n "$FULL_ENV_PATH" ]; then
+    echo "Loading plaintext $FULL_ENV_PATH"
+    source "$FULL_ENV_PATH"
+else
+    echo "Error: Neither $ENV_FILE nor $ENC_FILE found."
+    exit 1
+fi
 
 # Provide fallbacks/defaults
 PROJECT_ID=${PROJECT_ID:-$(gcloud config get-value project)}
