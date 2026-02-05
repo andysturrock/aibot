@@ -47,7 +47,7 @@ resource "google_storage_bucket" "aibot_documents" {
 # Create a dedicated Firestore database for AIBot
 resource "google_firestore_database" "aibot_db" {
   project                     = var.gcp_gemini_project_id
-  name                        = "aibot_db"
+  name                        = "aibot-db"
   location_id                 = var.gcp_region
   type                        = "FIRESTORE_NATIVE"
   concurrency_mode            = "OPTIMISTIC"

@@ -6,7 +6,7 @@ from google.cloud import firestore
 
 HISTORY_COLLECTION = "AIBot_History"
 GOOGLE_TOKENS_COLLECTION = "AIBot_Google_Tokens"
-AIBOT_DB = "aibot_db"
+AIBOT_DB = "aibot-db"
 TTL_IN_DAYS = 30
 
 
