@@ -429,6 +429,12 @@ resource "google_secret_manager_secret" "logic_config" {
     auto {}
   }
 }
+
+resource "google_secret_manager_secret_iam_member" "logic_config_access" {
+  secret_id = google_secret_manager_secret.logic_config.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.aibot_logic.email}"
+}
 resource "google_secret_manager_secret_version" "logic_config" {
   secret = google_secret_manager_secret.logic_config.id
   secret_data = jsonencode({
@@ -452,6 +458,12 @@ resource "google_secret_manager_secret" "webhook_config" {
   replication {
     auto {}
   }
+}
+
+resource "google_secret_manager_secret_iam_member" "webhook_config_access" {
+  secret_id = google_secret_manager_secret.webhook_config.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.aibot_webhook.email}"
 }
 resource "google_secret_manager_secret_version" "webhook_config" {
   secret = google_secret_manager_secret.webhook_config.id
@@ -502,6 +514,12 @@ resource "google_secret_manager_secret" "mcp_config" {
     auto {}
   }
 }
+
+resource "google_secret_manager_secret_iam_member" "mcp_config_access" {
+  secret_id = google_secret_manager_secret.mcp_config.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.slack_search_mcp.email}"
+}
 resource "google_secret_manager_secret_version" "mcp_config" {
   secret = google_secret_manager_secret.mcp_config.id
   secret_data = jsonencode({
@@ -523,6 +541,12 @@ resource "google_secret_manager_secret" "collector_config" {
   replication {
     auto {}
   }
+}
+
+resource "google_secret_manager_secret_iam_member" "collector_config_access" {
+  secret_id = google_secret_manager_secret.collector_config.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.collect_slack_messages.email}"
 }
 resource "google_secret_manager_secret_version" "collector_config" {
   secret = google_secret_manager_secret.collector_config.id

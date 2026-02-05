@@ -7,12 +7,6 @@ resource "google_service_account" "collect_slack_messages" {
   display_name = "Service Account for running collect_slack_messages function"
 }
 
-# Give the service account permission to get the AIBot secret
-resource "google_secret_manager_secret_iam_member" "collect_slack_messages_secrets" {
-  secret_id = google_secret_manager_secret.shared_config.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.collect_slack_messages.email}"
-}
 
 
 # IAM for slack-collector Cloud Run service is handled in cloud_run.tf
@@ -42,26 +36,6 @@ resource "google_bigquery_dataset_iam_member" "mcp_bq_viewer" {
   member     = "serviceAccount:${google_service_account.slack_search_mcp.email}"
 }
 
-# 3. Access Secrets (allowed team IDs, signing secret etc)
-resource "google_secret_manager_secret_iam_member" "mcp_secrets" {
-  secret_id = google_secret_manager_secret.shared_config.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.slack_search_mcp.email}"
-}
-
-# 2. Access Secrets (user tokens)
-resource "google_secret_manager_secret_iam_member" "logic_secrets" {
-  secret_id = google_secret_manager_secret.shared_config.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.aibot_logic.email}"
-}
-
-# Webhook Access to Secrets
-resource "google_secret_manager_secret_iam_member" "webhook_secrets" {
-  secret_id = google_secret_manager_secret.shared_config.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.aibot_webhook.email}"
-}
 
 # 2. Use AI Platform for the main LLM interaction
 resource "google_project_iam_member" "logic_aiplatform_user" {
@@ -71,11 +45,6 @@ resource "google_project_iam_member" "logic_aiplatform_user" {
 }
 
 # 3. Use Firestore for token storage
-resource "google_project_iam_member" "logic_firestore_user" {
-  project = var.gcp_gemini_project_id
-  role    = "roles/datastore.user"
-  member  = "serviceAccount:${google_service_account.aibot_logic.email}"
-}
 
 resource "google_cloud_scheduler_job" "collect_slack_messages" {
   name        = "invoke-collect-slack-messages"

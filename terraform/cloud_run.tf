@@ -47,16 +47,16 @@ resource "google_service_account" "aibot_webhook" {
   display_name = "Service Account for Slack Webhook"
 }
 
-resource "google_project_iam_member" "webhook_secrets" {
-  project = var.gcp_gemini_project_id
-  role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${google_service_account.aibot_webhook.email}"
-}
-
 resource "google_project_iam_member" "webhook_firestore" {
   project = var.gcp_gemini_project_id
   role    = "roles/datastore.user"
   member  = "serviceAccount:${google_service_account.aibot_webhook.email}"
+
+  condition {
+    title       = "ScopedToAIBotDB"
+    description = "Only allow access to aibot-db"
+    expression  = "resource.type == 'firestore.googleapis.com/Database' && resource.name == 'projects/${var.gcp_gemini_project_id}/databases/${google_firestore_database.aibot_db.name}'"
+  }
 }
 
 # Allow Webhook to publish to the Topic
@@ -129,16 +129,16 @@ resource "google_service_account" "aibot_logic" {
   display_name = "Service Account for Bot Logic"
 }
 
-resource "google_project_iam_member" "logic_secrets" {
-  project = var.gcp_gemini_project_id
-  role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${google_service_account.aibot_logic.email}"
-}
-
 resource "google_project_iam_member" "logic_firestore" {
   project = var.gcp_gemini_project_id
   role    = "roles/datastore.user"
   member  = "serviceAccount:${google_service_account.aibot_logic.email}"
+
+  condition {
+    title       = "ScopedToAIBotDB"
+    description = "Only allow access to aibot-db"
+    expression  = "resource.type == 'firestore.googleapis.com/Database' && resource.name == 'projects/${var.gcp_gemini_project_id}/databases/${google_firestore_database.aibot_db.name}'"
+  }
 }
 
 resource "google_project_iam_member" "logic_vertex" {
@@ -204,10 +204,17 @@ resource "google_service_account" "slack_search_mcp" {
   display_name = "Service Account for Slack Search MCP"
 }
 
-resource "google_project_iam_member" "mcp_secrets" {
+
+resource "google_project_iam_member" "mcp_firestore_user" {
   project = var.gcp_gemini_project_id
-  role    = "roles/secretmanager.secretAccessor"
+  role    = "roles/datastore.user"
   member  = "serviceAccount:${google_service_account.slack_search_mcp.email}"
+
+  condition {
+    title       = "ScopedToAIBotDB"
+    description = "Only allow access to aibot-db"
+    expression  = "resource.type == 'firestore.googleapis.com/Database' && resource.name == 'projects/${var.gcp_gemini_project_id}/databases/${google_firestore_database.aibot_db.name}'"
+  }
 }
 
 # Allow aibot-logic to invoke slack-search-mcp
