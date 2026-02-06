@@ -56,21 +56,17 @@ def run_gcloud(args):
 def get_secret_payload(project_id, secret_name):
     """Fetch the payload of a secret from environment or Secret Manager."""
     # 1. Check for environment-injected secret data (stateless mode)
-    # Use Base64 to ensure shell-safe passing of JSON data
     env_data_b64 = os.environ.get("IAP_SECRET_DATA")
     if env_data_b64:
         try:
             decoded = base64.b64decode(env_data_b64).decode("utf-8")
             data = json.loads(decoded)
-            logger.info(
-                "Successfully loaded IAP secrets from Base64 environment variable."
-            )
+            logger.info("Successfully loaded IAP secrets from environment variable.")
             return data
         except Exception as e:
-            logger.warning(f"Failed to decode IAP_SECRET_DATA from environment: {e}")
+            logger.warning(f"Failed to decode IAP_SECRET_DATA: {e}")
 
     # 2. Fallback to gcloud Secret Manager access
-    # Use format=json to get the metadata which includes the base64 encoded data
     args = [
         "secrets",
         "versions",
@@ -82,23 +78,29 @@ def get_secret_payload(project_id, secret_name):
     res = run_gcloud(args)
     if not res:
         logger.error(
-            f"Failed to access secret '{secret_name}' (latest version) in project '{project_id}'. Check permissions or gcloud auth."
+            f"Failed to access secret '{secret_name}' in project '{project_id}'."
         )
         return None
+
     if res and "payload" in res and "data" in res["payload"]:
         encoded_data = res["payload"]["data"]
-        # Standard base64 padding check
         missing_padding = len(encoded_data) % 4
         if missing_padding:
             encoded_data += "=" * (4 - missing_padding)
         decoded_bytes = base64.b64decode(encoded_data)
         payload = json.loads(decoded_bytes.decode("utf-8"))
-        logger.info(
-            f"Successfully retrieved secret '{secret_name}' from Secret Manager."
-        )
-        return payload
+
+        # Robustness: Check for both camelCase and underscore keys
+        client_id = payload.get("iapClientId") or payload.get("client_id")
+        client_secret = payload.get("iapClientSecret") or payload.get("client_secret")
+
+        # Normalize into a predictable format for the rest of the script
+        normalized = {"iapClientId": client_id, "iapClientSecret": client_secret}
+        logger.info(f"Successfully retrieved and normalized secret '{secret_name}'.")
+        return normalized
+
     logger.warning(
-        f"Secret '{secret_name}' retrieved but payload format was unexpected: {res}"
+        f"Secret '{secret_name}' retrieved but payload format was unexpected."
     )
     return None
 
@@ -258,23 +260,25 @@ def load_cached_tokens(audience: str):
 
 
 def save_tokens(tokens, audience):
-    """Save tokens after stripping non-essential fields like access_token."""
-    # access_token is typically for Google APIs and isn't needed for IAP
-    # Just keep refresh_token (to get more tokens) and id_token (for IAP)
+    """Save tokens with Keyring priority and File Cache fallback."""
     safe_tokens = {
         k: v
         for k, v in tokens.items()
         if k in ("id_token", "refresh_token", "expires_in", "token_type")
     }
 
+    # 1. Try Keyring
     try:
-        # We store the entire JSON blob as the 'password' for the audience key
         keyring.set_password(SERVICE_NAME, audience, json.dumps(safe_tokens))
         logger.info(f"Tokens saved to keyring for audience: {audience}")
+        return  # Success, skip file cache
     except Exception as e:
-        logger.warning(f"Failed to save tokens to keyring: {e}")
-        # Fallback to file system
-        save_tokens_to_file(safe_tokens, audience)
+        logger.warning(
+            f"Failed to save tokens to keyring: {e}. Falling back to file cache."
+        )
+
+    # 2. Fallback to file cache
+    save_tokens_to_file(safe_tokens, audience)
 
 
 def get_token_cache_path(audience: str) -> Path:
@@ -298,21 +302,21 @@ def get_token_cache_path(audience: str) -> Path:
 
 def load_cached_tokens_from_file(audience: str):
     """Load tokens from a local JSON file as a fallback."""
-    path = get_token_cache_path(audience)
-    if path.exists():
-        try:
+    try:
+        path = get_token_cache_path(audience)
+        if path.exists():
             logger.info(f"Loading cached tokens from file: {path}")
             with open(path) as f:
                 return json.load(f)
-        except Exception as e:
-            logger.warning(f"Failed to load tokens from file {path}: {e}")
+    except (PermissionError, Exception) as e:
+        logger.warning(f"Failed to load tokens from file: {e}")
     return {}
 
 
 def save_tokens_to_file(tokens, audience):
     """Save tokens to a local JSON file with restricted (0600) permissions."""
-    path = get_token_cache_path(audience)
     try:
+        path = get_token_cache_path(audience)
         # Create/open with 0600 permissions
         with os.fdopen(
             os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w"
@@ -320,7 +324,7 @@ def save_tokens_to_file(tokens, audience):
             json.dump(tokens, f)
         logger.info(f"Tokens saved to file: {path} (permissions: 0600)")
     except Exception as e:
-        logger.error(f"Failed to save tokens to file {path}: {e}")
+        logger.warning(f"Failed to save tokens to file: {e}")
 
 
 def check_token_expiry(token):
@@ -330,20 +334,30 @@ def check_token_expiry(token):
     try:
         parts = token.split(".")
         if len(parts) != 3:
+            logger.debug("Token does not have 3 parts.")
             return True
         payload_b64 = parts[1]
         payload_b64 += "=" * (4 - len(payload_b64) % 4)
         payload_json = base64.b64decode(payload_b64).decode("utf-8")
         payload = json.loads(payload_json)
+
+        exp = payload.get("exp", 0)
+        now = time.time()
         # Buffer of 60 seconds
-        return payload.get("exp", 0) < (time.time() + 60)
-    except Exception:
+        if exp < (now + 60):
+            logger.warning(
+                f"Token is expired or expiring soon. Exp: {exp}, Now: {now}, Diff: {exp - now}"
+            )
+            return True
+        return False
+    except Exception as e:
+        logger.warning(f"Error checking token expiry: {e}")
         return True
 
 
 async def refresh_iap_token(refresh_token, client_id, client_secret, audience):
     """Use refresh token to get a new ID token."""
-    logger.info("Attempting to refresh IAP token...")
+    logger.info("Attempting to refresh IAP token via Google APIs...")
     data = {
         "client_id": client_id,
         "client_secret": client_secret,
@@ -358,10 +372,98 @@ async def refresh_iap_token(refresh_token, client_id, client_secret, audience):
             if "refresh_token" not in new_tokens:
                 new_tokens["refresh_token"] = refresh_token
             save_tokens(new_tokens, audience)
+            logger.info("Token refresh successful.")
             return new_tokens.get("id_token")
         else:
             logger.error(f"Failed to refresh token: {resp.text}")
             return None
+
+
+async def fetch_iap_token_via_browser(project_id, audience, secret_name):
+    """Run interactive host-side browser OAuth flow."""
+    client_id, client_secret = await get_iap_client_secrets(
+        project_id, secret_name=secret_name
+    )
+
+    if not client_id or not client_secret:
+        logger.error(
+            "Error: IAP Client ID or Secret missing. Cannot start browser flow."
+        )
+        return None
+
+    state = secrets.token_urlsafe(16)
+    redirect_uri = "http://localhost:8081/callback"
+    received_code = None
+
+    async def handle_callback(request):
+        nonlocal received_code
+        if request.query.get("state") != state:
+            return web.Response(text="Invalid state parameter", status=400)
+        received_code = request.query.get("code")
+        return web.Response(
+            text="Authentication successful! You can now close this tab."
+        )
+
+    logger.info("Starting local callback server on port 8081...")
+    app = web.Application()
+    app.router.add_get("/callback", handle_callback)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 8081)
+    await site.start()
+
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email",
+        "state": state,
+        "nonce": secrets.token_urlsafe(16),
+        "access_type": "offline",
+        "prompt": "consent",
+    }
+    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+
+    print(
+        f"\n! ACTION REQUIRED: Please log in via your browser:\n{auth_url}\n",
+        file=sys.stderr,
+    )
+    try:
+        webbrowser.open(auth_url)
+    except Exception:
+        pass
+
+    logger.info("Waiting for authentication callback...")
+    for _ in range(300):  # 5 minute timeout
+        if received_code:
+            break
+        await asyncio.sleep(1)
+
+    await runner.cleanup()
+
+    if not received_code:
+        logger.error("Timeout waiting for browser authentication.")
+        return None
+
+    logger.info("Exchanging authorization code for tokens...")
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": received_code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
+        if resp.status_code != 200:
+            logger.error(f"Token exchange failed: {resp.text}")
+            return None
+
+        tokens = resp.json()
+        save_tokens(tokens, audience)
+        return tokens.get("id_token")
 
 
 async def get_iap_client_secrets(
@@ -391,15 +493,15 @@ async def fetch_iap_token(
     secret_name=None,
 ):
     """Fetch an IAP identity token, with browser fallback and caching."""
-    # Method 1: Browser Flow with Caching (Fastest)
+    # 1. Load cached tokens (Keyring -> File)
     cached = load_cached_tokens(audience)
     if cached:
         token = cached.get("id_token")
         if not check_token_expiry(token):
-            logger.info("Using valid identity token (Environment/Keyring/File).")
+            logger.info("Using valid identity token from cache.")
             return token
 
-        # Token expired, try refresh
+        # Token expired, try refresh if we have a refresh token
         refresh_token = cached.get("refresh_token")
         if refresh_token:
             client_id, client_secret = await get_iap_client_secrets(
@@ -412,209 +514,113 @@ async def fetch_iap_token(
                 if new_token:
                     return new_token
 
-    # If we are in a headless environment (pumping variables),
-    # we should NOT try to fall back to Metadata or Browser.
-    if os.environ.get("IAP_TOKEN_DATA") or os.environ.get("IAP_SECRET_DATA"):
-        logger.error(
-            "Headless Mode: Injected credentials were invalid or expired, and no refresh token exists. Cannot proceed with browser flow."
-        )
-        return None
-
-    # Method 2: Try standard google-auth/metadata server (deferred imports)
-    try:
-        import google.auth.transport.requests
-        from google.oauth2 import id_token
-
-        auth_req = google.auth.transport.requests.Request()
-        return id_token.fetch_id_token(auth_req, audience)
-    except Exception:
-        pass
-
-    logger.info("Falling back to browser-based OAuth flow...")
-
-    # Get Client Secrets for browser flow
-    client_id, client_secret = await get_iap_client_secrets(
-        project_id, override_client_id, override_client_secret, secret_name
-    )
-
-    if not client_id or not client_secret:
-        logger.error(
-            "IAP Client ID or Secret missing. Ensure you have 'gcloud auth login' and Secret Manager access."
-        )
-        return None
-
-    # 2. Start local server to receive callback
-    state = secrets.token_urlsafe(16)
-    redirect_uri = "http://localhost:8081/callback"
-    received_code = None
-
-    async def handle_callback(request):
-        nonlocal received_code
-        if request.query.get("state") != state:
-            return web.Response(text="Invalid state parameter", status=400)
-        received_code = request.query.get("code")
-        return web.Response(
-            text="Authentication successful! You can close this window."
-        )
-
-    try:
-        app = web.Application()
-        app.router.add_get("/callback", handle_callback)
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", 8081)
-        await site.start()
-        logger.info("Local listener started on http://localhost:8081")
-    except Exception as e:
-        logger.warning(
-            f"Could not start local listener: {e}. You will need to manually paste the callback URL."
-        )
-        runner = None
-
-    # 3. Form Auth URL
-    params = {
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": "openid email",
-        "state": state,
-        "nonce": secrets.token_urlsafe(16),
-        "access_type": "offline",
-        "prompt": "consent",
-    }
-    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
-    logger.info(f"Please log in at: {auth_url}")
-
-    try:
-        webbrowser.open(auth_url)
-    except Exception:
-        pass
-
-    # 4. Wait for code (with manual fallback)
-    if runner:
-        logger.info(
-            "Waiting for authentication callback (or paste the full callback URL below)..."
-        )
-    else:
-        logger.info(
-            "Please paste the full callback URL (the one starting with http://localhost:8081/callback) here: "
-        )
-
-    # We use a loop to allow for both async callback and a timeout
-    for _ in range(300):  # 5 minute timeout
-        if received_code:
-            break
-        # Check if user provided manual input via stdin if we were in a mode that allowed it
-        # But since we are likely in a non-interactive pipe, we stick to the callback.
-        # However, for manual CLI usage, this is helpful.
-        await asyncio.sleep(1)
-
-    if runner:
-        await runner.cleanup()
-
-    if not received_code:
-        logger.error("Timed out waiting for authentication.")
-        return None
-
-    # 5. Exchange code for token
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "code": received_code,
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uri": redirect_uri,
-                "grant_type": "authorization_code",
-            },
-        )
-        if resp.status_code != 200:
-            logger.error(f"Token exchange failed: {resp.text}")
-            return None
-
-        tokens = resp.json()
-        save_tokens(tokens, audience)
-        return tokens.get("id_token")
+    # 2. Last Resort: Interactive Browser Flow (Host side only)
+    logger.info("Falling back to interactive browser-based OAuth flow...")
+    return await fetch_iap_token_via_browser(project_id, audience, secret_name)
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="MCP Bridge for IAP-protected servers")
-    parser.add_argument("--url", required=True, help="SSE URL of the remote MCP server")
+    parser = argparse.ArgumentParser(description="Native MCP Bridge for IAP")
+    parser.add_argument("--url", help="SSE URL of the remote MCP server")
     parser.add_argument(
-        "--project", help="GCP Project ID (optional, defaults to gcloud config)"
+        "--env", choices=["beta", "prod"], help="Environment preset (beta or prod)"
     )
-    parser.add_argument("--backend", help="Backend service name for audience discovery")
-    parser.add_argument("--audience", help="Explicit IAP audience (optional)")
+    parser.add_argument("--project", help="GCP Project ID")
     parser.add_argument(
-        "--secret-name", help="Secret Manager name for IAP client configuration"
+        "--backend", default="slack-search-mcp", help="Backend service name"
+    )
+    parser.add_argument("--audience", help="Explicit IAP audience")
+    parser.add_argument(
+        "--secret-name", default="slack-search-mcp-config", help="Secret Manager name"
     )
     parser.add_argument("--client-id", help="Override OAuth Client ID")
     parser.add_argument("--client-secret", help="Override OAuth Client Secret")
-    parser.add_argument("--env", help="Path to a .env file to load")
-    parser.add_argument(
-        "--skip-alignment",
-        action="store_true",
-        help="Skip FQDN-Project alignment check",
-    )
+    parser.add_argument("--skip-alignment", action="store_true")
     args = parser.parse_args()
 
+    # 1. Environment Loading
     if args.env:
-        load_dotenv(args.env)
+        # Detect project root (parent of python/ directory)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+
+        # Load dotenv for the specific environment if it exists
+        env_file = os.path.join(project_root, f".env.{args.env}")
+        if os.path.exists(env_file):
+            logger.info(f"Loading environment from {env_file}")
+            load_dotenv(env_file)
+        else:
+            logger.warning(f"Warning: Environment file {env_file} not found.")
+
+    # 2. URL Derivation (CLI first, then Env, then construct from FQDN)
+    url = args.url or os.environ.get("IAP_URL") or os.environ.get("SSE_URL")
+
+    if not url and os.environ.get("CUSTOM_FQDN"):
+        url = f"https://{os.environ.get('CUSTOM_FQDN')}/mcp/sse"
+        logger.info(f"Constructed IAP URL from CUSTOM_FQDN: {url}")
+
+    if not url:
+        logger.error(
+            "Error: --url is required (or set IAP_URL/CUSTOM_FQDN in your .env file)."
+        )
+        sys.exit(1)
 
     # 1. Project and Audience Setup
     project_id = args.project
     project_number = None
     audience = args.audience
 
-    # 2. Acquire IAP Identity Token
-    logger.debug("Acquiring IAP identity token...")
+    if not project_id:
+        project_id, project_number = get_project_info()
 
-    token = None
-    if not token:
-        # Slow path: Need to discover or do full auth
-        if not project_id:
-            project_id, project_number = get_project_info()
+    if not project_id:
+        logger.error("Error: Could not determine GCP project. Use --project.")
+        sys.exit(1)
 
-        if not project_id:
-            logger.error("Error: Could not determine GCP project ID. Use --project.")
-            sys.exit(1)
-
-        # IAP Audience Discovery
-        if not audience:
-            logger.info(
-                f"Discovering IAP audience for backend '{args.backend}' in project '{project_id}'..."
-            )
+    # IAP Audience Discovery
+    if not audience:
+        if args.backend:
+            logger.info(f"Discovering IAP audience for backend '{args.backend}'...")
             if not project_number:
                 proj_desc = run_gcloud(["projects", "describe", project_id])
                 project_number = proj_desc.get("projectNumber") if proj_desc else None
 
             backend_id = get_backend_id(project_id, args.backend)
-            if not backend_id or not project_number:
-                logger.error(
-                    f"Error: Could not discover audience for '{args.backend}'."
+            if backend_id and project_number:
+                audience = (
+                    f"/projects/{project_number}/global/backendServices/{backend_id}"
                 )
-                sys.exit(1)
-            audience = f"/projects/{project_number}/global/backendServices/{backend_id}"
-            logger.info(f"Discovered audience: {audience}")
+                logger.info(f"Discovered audience: {audience}")
 
-        # Acquire token with full logic
-        token = await fetch_iap_token(
-            project_id, audience, args.client_id, args.client_secret, args.secret_name
+        # Final fallback to client ID as audience if provided
+        if not audience:
+            audience = (
+                args.client_id
+                or os.environ.get("IAP_AUDIENCE")
+                or os.environ.get("IAP_CLIENT_ID")
+            )
+
+    if not audience:
+        logger.error(
+            "Error: Could not determine IAP audience. Use --audience or --backend."
         )
+        sys.exit(1)
+
+    # 2. Acquire IAP Identity Token
+    token = await fetch_iap_token(
+        project_id, audience, args.client_id, args.client_secret, args.secret_name
+    )
 
     if not token:
         logger.error("Error: Failed to acquire IAP token.")
         sys.exit(1)
 
-    # 5. Execute Proxy
+    # 3. Execute Proxy
     try:
-        logger.info(f"Starting proxy to {args.url}")
-        await proxy(args.url, token)
+        logger.info(f"Starting native bridge to {url}")
+        await proxy(url, token)
     except Exception as e:
         logger.error(f"Proxy execution failed: {e}")
-        import traceback
-
-        logger.error(traceback.format_exc())
         sys.exit(1)
     finally:
         logger.info("Bridge execution finished.")
