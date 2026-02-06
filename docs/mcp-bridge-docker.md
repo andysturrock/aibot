@@ -12,8 +12,11 @@ From the root of the repository, run:
 docker build -t mcp-proxy-bridge -f python/tools/mcp_proxy.Dockerfile .
 ```
 
-### Custom UID/GID
-If your local user ID is not 1000, you should build the image with your specific UID/GID to avoid permission issues when mounting volumes (e.g., your `.cache` or `.config` folders):
+### Generic Image & Environment Injection
+Starting with the latest version, the bridge can also receive tokens via the `IAP_TOKEN_DATA` environment variable. The `scripts/mcp_search.py` script automatically fetches tokens from your host's keyring and "pumps" them into the container.
+
+This makes the image much more portable and allows the same image to be used by different developers without rebuild-time UID/GID configuration.
+
 ```bash
 docker build -t mcp-proxy-bridge \
   --build-arg USER_ID=$(id -u) \

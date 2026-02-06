@@ -10,10 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && apt-get update && apt-get install -y google-cloud-cli \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user with configurable UID/GID (default to 1000)
-ARG USER_ID=1000
-ARG GROUP_ID=1000
-RUN groupadd -g ${GROUP_ID} mcp && useradd -m -u ${USER_ID} -g ${GROUP_ID} mcp
+# Create a non-root user for security
+RUN groupadd -g 9999 mcp && useradd -m -u 9999 -g 9999 mcp
 USER mcp
 WORKDIR /home/mcp
 

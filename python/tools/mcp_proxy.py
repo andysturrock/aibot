@@ -54,7 +54,22 @@ def run_gcloud(args):
 
 
 def get_secret_payload(project_id, secret_name):
-    """Fetch the payload of a secret from Secret Manager."""
+    """Fetch the payload of a secret from environment or Secret Manager."""
+    # 1. Check for environment-injected secret data (stateless mode)
+    # Use Base64 to ensure shell-safe passing of JSON data
+    env_data_b64 = os.environ.get("IAP_SECRET_DATA")
+    if env_data_b64:
+        try:
+            decoded = base64.b64decode(env_data_b64).decode("utf-8")
+            data = json.loads(decoded)
+            logger.info(
+                "Successfully loaded IAP secrets from Base64 environment variable."
+            )
+            return data
+        except Exception as e:
+            logger.warning(f"Failed to decode IAP_SECRET_DATA from environment: {e}")
+
+    # 2. Fallback to gcloud Secret Manager access
     # Use format=json to get the metadata which includes the base64 encoded data
     args = [
         "secrets",
@@ -215,14 +230,30 @@ SERVICE_NAME = "MyMCPDesktopClient"
 
 
 def load_cached_tokens(audience: str):
-    """Load cached tokens from the OS keyring."""
+    """Load cached tokens from environment, keyring, or file."""
+    # 1. Check for environment-injected token data (highest priority for Docker/CI)
+    # Use Base64 to ensure shell-safe passing of JSON data
+    env_data_b64 = os.environ.get("IAP_TOKEN_DATA")
+    if env_data_b64:
+        try:
+            decoded = base64.b64decode(env_data_b64).decode("utf-8")
+            data = json.loads(decoded)
+            logger.info(
+                "Successfully loaded IAP tokens from Base64 environment variable."
+            )
+            return data
+        except Exception as e:
+            logger.warning(f"Failed to decode IAP_TOKEN_DATA from environment: {e}")
+
+    # 2. Check OS keyring
     try:
         data = keyring.get_password(SERVICE_NAME, audience)
         if data:
             return json.loads(data)
     except Exception as e:
         logger.warning(f"Failed to load tokens from keyring: {e}")
-    # Fallback to file system
+
+    # 3. Fallback to file system
     return load_cached_tokens_from_file(audience)
 
 
@@ -365,7 +396,7 @@ async def fetch_iap_token(
     if cached:
         token = cached.get("id_token")
         if not check_token_expiry(token):
-            logger.info("Using valid cached IAP token.")
+            logger.info("Using valid identity token (Environment/Keyring/File).")
             return token
 
         # Token expired, try refresh
@@ -380,6 +411,14 @@ async def fetch_iap_token(
                 )
                 if new_token:
                     return new_token
+
+    # If we are in a headless environment (pumping variables),
+    # we should NOT try to fall back to Metadata or Browser.
+    if os.environ.get("IAP_TOKEN_DATA") or os.environ.get("IAP_SECRET_DATA"):
+        logger.error(
+            "Headless Mode: Injected credentials were invalid or expired, and no refresh token exists. Cannot proceed with browser flow."
+        )
+        return None
 
     # Method 2: Try standard google-auth/metadata server (deferred imports)
     try:
@@ -531,17 +570,6 @@ async def main():
     logger.debug("Acquiring IAP identity token...")
 
     token = None
-    if audience:
-        # Fast path: check cache first before doing any gcloud calls
-        cached = load_cached_tokens(audience)
-
-        if cached:
-            token = cached.get("id_token")
-            if not check_token_expiry(token):
-                logger.info("Using valid cached IAP token (fast path).")
-            else:
-                token = None  # Needs refresh, fall through to fetch_iap_token
-
     if not token:
         # Slow path: Need to discover or do full auth
         if not project_id:

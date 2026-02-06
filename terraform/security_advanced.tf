@@ -19,8 +19,11 @@ locals {
   # Slack User Agent
   slack_ua = "Slackbot 1.0"
 
-  # Infer domain from FQDN if not provided (e.g. aibot.example.com -> example.com)
-  iap_auth_domain = var.iap_domain != "" ? var.iap_domain : join(".", slice(split(".", var.custom_fqdn), length(split(".", var.custom_fqdn)) - 2, length(split(".", var.custom_fqdn))))
+  # Derive the IAP auth domain.
+  # Priority: 1. Explicit variable, 2. Derived from FQDN (handles .co.uk by taking last 3 parts if available)
+  iap_auth_domain = var.iap_domain != "" ? var.iap_domain : (
+    length(split(".", var.custom_fqdn)) >= 3 ? join(".", slice(split(".", var.custom_fqdn), length(split(".", var.custom_fqdn)) - 3, length(split(".", var.custom_fqdn)))) : var.custom_fqdn
+  )
 }
 
 resource "google_compute_security_policy" "aibot_policy" {
