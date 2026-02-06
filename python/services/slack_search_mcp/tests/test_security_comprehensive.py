@@ -124,7 +124,7 @@ async def test_unauthorized_team_returns_403():
                 return_value={"ok": True, "user": {"id": "U1", "team_id": "T_BAD"}}
             )
             with patch(
-                "services.slack_search_mcp.main.is_team_authorized", return_value=False
+                "services.slack_search_mcp.main.is_user_authorized", return_value=False
             ):
                 async with AsyncClient(
                     transport=ASGITransport(app=app), base_url="http://test"
@@ -133,7 +133,9 @@ async def test_unauthorized_team_returns_403():
                         "/mcp/sse", headers={"X-Goog-IAP-JWT-Assertion": "bad_team"}
                     )
                 assert response.status_code == 403
-                assert response.json() == {"error": "Workspace not authorized"}
+                assert response.json() == {
+                    "error": "Unauthorized access (Email Domain or Slack Workspace)"
+                }
 
 
 @pytest.mark.asyncio
@@ -165,7 +167,7 @@ async def test_successful_authentication_proceeds():
                 return_value={"ok": True, "user": {"id": "U1", "team_id": "T1"}}
             )
             with patch(
-                "services.slack_search_mcp.main.is_team_authorized", return_value=True
+                "services.slack_search_mcp.main.is_user_authorized", return_value=True
             ):
                 async with AsyncClient(
                     transport=ASGITransport(app=app, raise_app_exceptions=False),
@@ -177,6 +179,33 @@ async def test_successful_authentication_proceeds():
                     )
                 # Should get past security. FastMCP mount might return 404 or 405 for GET on messages.
                 assert response.status_code not in [401, 403, 500]
+
+
+@pytest.mark.asyncio
+async def test_domain_mismatch_returns_403():
+    with patch(
+        "services.slack_search_mcp.main.verify_iap_jwt",
+        return_value={"email": "wrongdomain@evil.com"},
+    ):
+        with patch("services.slack_search_mcp.main.WebClient") as mock_web_client:
+            mock_client = mock_web_client.return_value
+            mock_client.users_lookupByEmail = MagicMock(
+                return_value={"ok": True, "user": {"id": "U1", "team_id": "T1"}}
+            )
+            # Re-mocking _get_whitelists to return a specific domain
+            with patch(
+                "shared.security._get_whitelists", new_callable=AsyncMock
+            ) as mock_white:
+                mock_white.return_value = (["T1"], [], "example.com")
+
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as ac:
+                    response = await ac.get(
+                        "/mcp/sse", headers={"X-Goog-IAP-JWT-Assertion": "bad_domain"}
+                    )
+                assert response.status_code == 403
+                assert "Email Domain or Slack Workspace" in response.json()["error"]
 
 
 @pytest.mark.asyncio
@@ -230,7 +259,7 @@ async def test_header_scrubbing():
                         return_value={"ok": True, "user": {"id": "U1", "team_id": "T1"}}
                     )
                     with patch(
-                        "services.slack_search_mcp.main.is_team_authorized",
+                        "services.slack_search_mcp.main.is_user_authorized",
                         return_value=True,
                     ):
                         async with AsyncClient(
@@ -316,7 +345,7 @@ async def test_impersonation_rate_limiting():
                             }
                         )
                         with patch(
-                            "services.slack_search_mcp.main.is_team_authorized",
+                            "services.slack_search_mcp.main.is_user_authorized",
                             return_value=True,
                         ):
                             async with AsyncClient(
@@ -347,7 +376,7 @@ async def test_impersonation_rate_limiting():
                         }
                     )
                     with patch(
-                        "services.slack_search_mcp.main.is_team_authorized",
+                        "services.slack_search_mcp.main.is_user_authorized",
                         return_value=True,
                     ):
                         async with AsyncClient(

@@ -10,7 +10,7 @@ locals {
 
   # Simplification to stay within Cloud Armor's 5-atom limit per rule.
   # We use startsWith to reduce 4 equality checks into 2 prefix checks.
-  global_waf_exclusion_scope = "(request.path.startsWith('/slack/') || request.path.startsWith('/auth/'))"
+  global_waf_exclusion_scope = "(request.path.startsWith('/slack/') || request.path.startsWith('/auth/') || request.path.startsWith('/mcp/'))"
 
   # Slack infrastructure ASNs (AWS 16509, 14618)
   # Standard logical OR for platform compatibility.
@@ -18,6 +18,9 @@ locals {
 
   # Slack User Agent
   slack_ua = "Slackbot 1.0"
+
+  # Infer domain from FQDN if not provided (e.g. aibot.example.com -> example.com)
+  iap_auth_domain = var.iap_domain != "" ? var.iap_domain : join(".", slice(split(".", var.custom_fqdn), length(split(".", var.custom_fqdn)) - 2, length(split(".", var.custom_fqdn))))
 }
 
 resource "google_compute_security_policy" "aibot_policy" {
@@ -139,7 +142,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     preview  = false
     match {
       expr {
-        expression = "${local.slack_path_scope} && evaluatePreconfiguredWaf('rce-v33-stable', {'sensitivity': 1, 'opt_out_rule_ids': ['owasp-crs-v030301-id932100-rce', 'owasp-crs-v030301-id932110-rce', 'owasp-crs-v030301-id932200-rce']})"
+        expression = "(${local.slack_path_scope} || request.path.startsWith('/mcp/')) && evaluatePreconfiguredWaf('rce-v33-stable', {'sensitivity': 1, 'opt_out_rule_ids': ['owasp-crs-v030301-id932100-rce', 'owasp-crs-v030301-id932110-rce', 'owasp-crs-v030301-id932200-rce']})"
       }
     }
     description = "WAF: RCE for Slack (Surgical Map-based Exclusion in CEL)"
@@ -154,7 +157,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     preview  = false
     match {
       expr {
-        expression = "(${local.slack_path_scope} || request.path.startsWith('/mcp/')) && evaluatePreconfiguredWaf('sqli-v33-stable', {'sensitivity': 1, 'opt_out_rule_ids': ['owasp-crs-v030301-id942200-sqli', 'owasp-crs-v030301-id942260-sqli', 'owasp-crs-v030301-id942340-sqli', 'owasp-crs-v030301-id942220-sqli', 'owasp-crs-v030301-id942330-sqli', 'owasp-crs-v030301-id942210-sqli', 'owasp-crs-v030301-id942370-sqli', 'owasp-crs-v030301-id942430-sqli']})"
+        expression = "(${local.slack_path_scope} || request.path.startsWith('/mcp/')) && evaluatePreconfiguredWaf('sqli-v33-stable', {'sensitivity': 1, 'opt_out_rule_ids': ['owasp-crs-v030301-id942200-sqli', 'owasp-crs-v030301-id942260-sqli', 'owasp-crs-v030301-id942340-sqli', 'owasp-crs-v030301-id942220-sqli', 'owasp-crs-v030301-id942330-sqli', 'owasp-crs-v030301-id942210-sqli', 'owasp-crs-v030301-id942370-sqli', 'owasp-crs-v030301-id942430-sqli', 'owasp-crs-v030301-id942100-sqli', 'owasp-crs-v030301-id942110-sqli']})"
       }
     }
     description = "WAF: SQLi for Slack/MCP (Surgical Map-based Exclusion in CEL)"
@@ -304,6 +307,14 @@ resource "google_iap_web_backend_service_iam_member" "mcp_iap_access" {
   web_backend_service = google_compute_backend_service.mcp_backend.name
   role                = "roles/iap.httpsResourceAccessor"
   member              = "serviceAccount:${google_service_account.aibot_logic.email}"
+}
+
+# Grant access to anyone in the specified domain
+resource "google_iap_web_backend_service_iam_member" "domain_iap_access" {
+  project             = var.gcp_gemini_project_id
+  web_backend_service = google_compute_backend_service.mcp_backend.name
+  role                = "roles/iap.httpsResourceAccessor"
+  member              = "domain:${local.iap_auth_domain}"
 }
 
 
