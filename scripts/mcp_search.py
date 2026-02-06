@@ -19,8 +19,6 @@ async def run(query: str, env_file: str = None):
                 load_dotenv(f)
                 break
 
-    home = os.path.expanduser("~")
-
     # Configuration - Require environment variables matching project standards
     project_id = (
         os.environ.get("PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT", "")
@@ -48,21 +46,94 @@ async def run(query: str, env_file: str = None):
         sys.exit(1)
 
     url = f"https://{custom_fqdn}/mcp/sse"
-
     print(f"Connecting to MCP bridge for {url}...")
 
-    server_params = StdioServerParameters(
-        command="docker",
-        args=[
-            "run",
-            "-i",
-            "--rm",
-            "-p",
-            "8081:8081",
-            "-v",
-            f"{home}/.config/gcloud:/home/mcp/.config/gcloud",
-            "-v",
-            f"{home}/.cache/mcp-proxy:/home/mcp/.cache/mcp-proxy",
+    # Fetch IAP client secrets and tokens from host to pass into the Docker container.
+    iap_token_data_b64 = None
+    iap_secret_data_b64 = None
+    try:
+        import base64
+        import hashlib
+        import json
+        import subprocess
+        from pathlib import Path
+
+        import keyring
+
+        # 1. Fetch Tokens (Keyring or File Cache)
+        SERVICE_NAME = "MyMCPDesktopClient"
+        token_data = keyring.get_password(SERVICE_NAME, audience)
+
+        if not token_data:
+            # Fallback to host-side file cache
+            audience_hash = hashlib.sha256(audience.encode()).hexdigest()[:12]
+            cache_path = (
+                Path.home() / ".cache" / "mcp-proxy" / f"tokens_{audience_hash}.json"
+            )
+            if cache_path.exists():
+                print(f"Token not in keyring, but found in host cache: {cache_path}")
+                token_data = cache_path.read_text()
+
+        if token_data:
+            print("Found valid session on host. Syncing to Docker (Base64)...")
+            iap_token_data_b64 = base64.b64encode(token_data.encode("utf-8")).decode(
+                "utf-8"
+            )
+
+        # 2. Fetch Secrets from Secret Manager (Host-side)
+        secret_name = "AIBot-shared-config"
+        print(f"Fetching IAP client secrets from Secret Manager ('{secret_name}')...")
+        cmd = [
+            "gcloud",
+            "secrets",
+            "versions",
+            "access",
+            "latest",
+            f"--secret={secret_name}",
+            f"--project={project_id}",
+            "--format=json",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            res = json.loads(result.stdout)
+            if "payload" in res and "data" in res["payload"]:
+                # The data is already base64 encoded by gcloud in the JSON output,
+                # but we need the raw payload to encode it our way or just pass it if it's already a string.
+                # Actually, our proxy expects Base64 of the JSON string.
+                encoded_data = res["payload"]["data"]
+                missing_padding = len(encoded_data) % 4
+                if missing_padding:
+                    encoded_data += "=" * (4 - missing_padding)
+                raw_payload = base64.b64decode(encoded_data).decode("utf-8")
+                iap_secret_data_b64 = base64.b64encode(
+                    raw_payload.encode("utf-8")
+                ).decode("utf-8")
+                print(
+                    "Successfully fetched IAP secrets from host and encoded as Base64."
+                )
+        else:
+            print(f"Warning: Could not fetch secrets from host gcloud: {result.stderr}")
+
+    except Exception as e:
+        print(
+            f"Warning: Host-side prep failed (will fallback to container-side auth): {e}"
+        )
+
+    docker_args = [
+        "run",
+        "-i",
+        "--rm",
+        "-p",
+        "8081:8081",
+    ]
+
+    if iap_token_data_b64:
+        docker_args.extend(["-e", f"IAP_TOKEN_DATA={iap_token_data_b64}"])
+    if iap_secret_data_b64:
+        docker_args.extend(["-e", f"IAP_SECRET_DATA={iap_secret_data_b64}"])
+
+    docker_args.extend(
+        [
             "mcp-proxy-bridge",
             "--url",
             url,
@@ -73,7 +144,17 @@ async def run(query: str, env_file: str = None):
             "--secret-name",
             "AIBot-shared-config",
             "--skip-alignment",
-        ],
+        ]
+    )
+
+    print("\nExecuting Docker command:")
+    print(
+        f"docker {' '.join([arg if 'DATA=' not in arg else arg[:20]+'...' for arg in docker_args])}\n"
+    )
+
+    server_params = StdioServerParameters(
+        command="docker",
+        args=docker_args,
     )
 
     try:
