@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 import webbrowser
+from pathlib import Path
 from urllib.parse import urlencode
 
 import httpx
@@ -45,10 +46,10 @@ def run_gcloud(args):
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         return json.loads(result.stdout)
     except subprocess.CalledProcessError as e:
-        logger.error(f"gcloud command failed: {e.stderr}")
+        logger.error(f"gcloud command failed: {e.cmd}, stderr: {e.stderr}")
         return None
     except Exception as e:
-        logger.error(f"Error running gcloud: {e}")
+        logger.error(f"Error running gcloud {args}: {e}")
         return None
 
 
@@ -64,6 +65,11 @@ def get_secret_payload(project_id, secret_name):
         f"--project={project_id}",
     ]
     res = run_gcloud(args)
+    if not res:
+        logger.error(
+            f"Failed to access secret '{secret_name}' (latest version) in project '{project_id}'. Check permissions or gcloud auth."
+        )
+        return None
     if res and "payload" in res and "data" in res["payload"]:
         encoded_data = res["payload"]["data"]
         # Standard base64 padding check
@@ -71,7 +77,14 @@ def get_secret_payload(project_id, secret_name):
         if missing_padding:
             encoded_data += "=" * (4 - missing_padding)
         decoded_bytes = base64.b64decode(encoded_data)
-        return json.loads(decoded_bytes.decode("utf-8"))
+        payload = json.loads(decoded_bytes.decode("utf-8"))
+        logger.info(
+            f"Successfully retrieved secret '{secret_name}' from Secret Manager."
+        )
+        return payload
+    logger.warning(
+        f"Secret '{secret_name}' retrieved but payload format was unexpected: {res}"
+    )
     return None
 
 
@@ -127,69 +140,75 @@ def verify_alignment(fqdn, project_id):
 async def proxy(url, token):
     """Run the MCP proxy server."""
     logger.info(f"Connecting to remote MCP server at {url}...")
-    async with sse_client(url, headers={"Authorization": f"Bearer {token}"}) as (
-        read,
-        write,
-    ):
-        async with ClientSession(read, write) as remote_session:
-            await remote_session.initialize()
-            logger.info("Remote session initialized successfully.")
 
-            # Create the local server
-            server = Server("mcp-proxy")
+    headers = {"Authorization": f"Bearer {token}"}
 
-            @server.list_tools()
-            async def list_tools():
-                try:
-                    result = await remote_session.list_tools()
-                    return result.tools
-                except Exception as e:
-                    logger.error(f"Error in list_tools: {e}")
-                    return []
+    try:
+        async with sse_client(url, headers=headers) as (read, write):
+            async with ClientSession(read, write) as remote_session:
+                await remote_session.initialize()
+                logger.info("Remote session initialized successfully.")
 
-            @server.call_tool()
-            async def call_tool(name, arguments):
-                try:
-                    return await remote_session.call_tool(name, arguments)
-                except Exception as e:
-                    logger.error(f"Error in call_tool {name}: {e}")
-                    from mcp.types import CallToolResult, TextContent
+                # Create the local server
+                server = Server("mcp-proxy")
 
-                    return CallToolResult(
-                        content=[
-                            TextContent(type="text", text=f"Error calling tool: {e}")
-                        ],
-                        isError=True,
+                @server.list_tools()
+                async def list_tools():
+                    try:
+                        result = await remote_session.list_tools()
+                        return result.tools
+                    except Exception as e:
+                        logger.error(f"Error in list_tools: {e}")
+                        return []
+
+                @server.call_tool()
+                async def call_tool(name, arguments):
+                    try:
+                        return await remote_session.call_tool(name, arguments)
+                    except Exception as e:
+                        logger.error(f"Error in call_tool {name}: {e}")
+                        from mcp.types import CallToolResult, TextContent
+
+                        return CallToolResult(
+                            content=[
+                                TextContent(
+                                    type="text", text=f"Error calling tool: {e}"
+                                )
+                            ],
+                            isError=True,
+                        )
+
+                @server.list_resources()
+                async def list_resources():
+                    try:
+                        result = await remote_session.list_resources()
+                        return result.resources
+                    except Exception as e:
+                        logger.error(f"Error in list_resources: {e}")
+                        return []
+
+                @server.read_resource()
+                async def read_resource(uri):
+                    return await remote_session.read_resource(uri)
+
+                @server.list_prompts()
+                async def list_prompts():
+                    result = await remote_session.list_prompts()
+                    return result.prompts
+
+                @server.get_prompt()
+                async def get_prompt(name, arguments):
+                    return await remote_session.get_prompt(name, arguments)
+
+                # Start the local stdio server
+                async with stdio_server() as (read_in, write_out):
+                    logger.info("Local MCP server (stdio) is now running.")
+                    await server.run(
+                        read_in, write_out, server.create_initialization_options()
                     )
-
-            @server.list_resources()
-            async def list_resources():
-                try:
-                    result = await remote_session.list_resources()
-                    return result.resources
-                except Exception as e:
-                    logger.error(f"Error in list_resources: {e}")
-                    return []
-
-            @server.read_resource()
-            async def read_resource(uri):
-                return await remote_session.read_resource(uri)
-
-            @server.list_prompts()
-            async def list_prompts():
-                result = await remote_session.list_prompts()
-                return result.prompts
-
-            @server.get_prompt()
-            async def get_prompt(name, arguments):
-                return await remote_session.get_prompt(name, arguments)
-
-            # Start the local stdio server
-            async with stdio_server() as (read_in, write_out):
-                logger.info("Local MCP server (stdio) is now running.")
-                await server.run(
-                    read_in, write_out, server.create_initialization_options()
-                )
+    except Exception as e:
+        logger.error(f"Proxy bridge error: {e}")
+        raise
 
 
 SERVICE_NAME = "MyMCPDesktopClient"
@@ -203,17 +222,74 @@ def load_cached_tokens(audience: str):
             return json.loads(data)
     except Exception as e:
         logger.warning(f"Failed to load tokens from keyring: {e}")
-    return {}
+    # Fallback to file system
+    return load_cached_tokens_from_file(audience)
 
 
 def save_tokens(tokens, audience):
-    """Save tokens to the OS keyring securely."""
+    """Save tokens after stripping non-essential fields like access_token."""
+    # access_token is typically for Google APIs and isn't needed for IAP
+    # Just keep refresh_token (to get more tokens) and id_token (for IAP)
+    safe_tokens = {
+        k: v
+        for k, v in tokens.items()
+        if k in ("id_token", "refresh_token", "expires_in", "token_type")
+    }
+
     try:
         # We store the entire JSON blob as the 'password' for the audience key
-        keyring.set_password(SERVICE_NAME, audience, json.dumps(tokens))
+        keyring.set_password(SERVICE_NAME, audience, json.dumps(safe_tokens))
         logger.info(f"Tokens saved to keyring for audience: {audience}")
     except Exception as e:
         logger.warning(f"Failed to save tokens to keyring: {e}")
+        # Fallback to file system
+        save_tokens_to_file(safe_tokens, audience)
+
+
+def get_token_cache_path(audience: str) -> Path:
+    """Get the path to the token cache file for a specific audience."""
+    import hashlib
+
+    audience_hash = hashlib.sha256(audience.encode()).hexdigest()[:12]
+    cache_dir = Path.home() / ".cache" / "mcp-proxy"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    # Ensure cache directory has restricted permissions
+    try:
+        os.chmod(cache_dir, 0o700)
+    except PermissionError:
+        logger.warning(
+            f"Unable to change permissions on cache directory {cache_dir}. This is expected if the directory is mounted from a host with restricted permissions."
+        )
+    except Exception as e:
+        logger.warning(f"Unexpected error when chmod-ing {cache_dir}: {e}")
+    return cache_dir / f"tokens_{audience_hash}.json"
+
+
+def load_cached_tokens_from_file(audience: str):
+    """Load tokens from a local JSON file as a fallback."""
+    path = get_token_cache_path(audience)
+    if path.exists():
+        try:
+            logger.info(f"Loading cached tokens from file: {path}")
+            with open(path) as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load tokens from file {path}: {e}")
+    return {}
+
+
+def save_tokens_to_file(tokens, audience):
+    """Save tokens to a local JSON file with restricted (0600) permissions."""
+    path = get_token_cache_path(audience)
+    try:
+        # Create/open with 0600 permissions
+        with os.fdopen(
+            os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w"
+        ) as f:
+            json.dump(tokens, f)
+        logger.info(f"Tokens saved to file: {path} (permissions: 0600)")
+    except Exception as e:
+        logger.error(f"Failed to save tokens to file {path}: {e}")
 
 
 def check_token_expiry(token):
@@ -347,7 +423,7 @@ async def fetch_iap_token(
         app.router.add_get("/callback", handle_callback)
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, "localhost", 8081)
+        site = web.TCPSite(runner, "0.0.0.0", 8081)
         await site.start()
         logger.info("Local listener started on http://localhost:8081")
     except Exception as e:

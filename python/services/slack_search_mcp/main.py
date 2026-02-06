@@ -19,7 +19,7 @@ from shared.google_auth import verify_iap_jwt
 
 # Import from shared library submodules
 from shared.logging import setup_logging
-from shared.security import is_team_authorized
+from shared.security import is_user_authorized
 from shared.slack_api import create_client_for_token
 from slack_sdk import WebClient
 from starlette.requests import Request
@@ -262,12 +262,15 @@ class SecurityMiddleware:
                 f"Authorizing user {final_user_email}: slack_id={slack_user_id}, team={team_id}, enterprise={enterprise_id}"
             )
 
-            if not await is_team_authorized(team_id, enterprise_id=enterprise_id):
+            if not await is_user_authorized(
+                final_user_email, team_id, enterprise_id=enterprise_id
+            ):
                 logger.warning(
-                    f"User {final_user_email} belongs to unauthorized team {team_id} or enterprise {enterprise_id}"
+                    f"User {final_user_email} failed authorization check (Domain/Team: {team_id}/{enterprise_id})"
                 )
                 response = JSONResponse(
-                    {"error": "Workspace not authorized"}, status_code=403
+                    {"error": "Unauthorized access (Email Domain or Slack Workspace)"},
+                    status_code=403,
                 )
                 await response(scope, receive, send)
                 return

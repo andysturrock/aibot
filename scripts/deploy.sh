@@ -165,6 +165,7 @@ TF_VARS="-var=gcp_gemini_project_id=$PROJECT_ID \
          -var=custom_fqdn=$CUSTOM_FQDN \
          -var=iap_client_id=$IAP_CLIENT_ID \
          -var=iap_client_secret=$IAP_CLIENT_SECRET \
+         -var=iap_domain=$IAP_DOMAIN \
          -var=github_repo=$GITHUB_REPO"
 
 # Arguments already parsed above for environment loading
@@ -338,8 +339,8 @@ if [ "$NO_SECRETS" = false ]; then
 
     # AIBot-shared-config (Shared/Global)
     echo "Updating AIBot-shared-config..."
-    JSON_SHARED=$(printf '{"slackBotToken":"%s","slackSigningSecret":"%s","slackClientId":"%s","slackClientSecret":"%s","slackUserToken":"%s","teamIdsForSearch":"%s","enterpriseIdsForSearch":"%s","botName":"%s","supervisorModel":"%s","authUrl":"%s","customFqdn":"%s","iapClientId":"%s","iapClientSecret":"%s","iapTargetClientId":"%s","iapAudience":"%s","tokenEncryptionKeyPath":"%s"}' \
-      "$SLACK_BOT_TOKEN" "$SLACK_SIGNING_SECRET" "$SLACK_CLIENT_ID" "$SLACK_CLIENT_SECRET" "$SLACK_USER_TOKEN" "$ALLOWED_TEAM_IDS" "$ALLOWED_ENTERPRISE_IDS" "$BOT_NAME" "$SUPERVISOR_MODEL" "$AUTH_URL" "$CUSTOM_FQDN" "$IAP_CLIENT_ID" "$IAP_CLIENT_SECRET" "$IAP_TARGET_CLIENT_ID" "$IAP_AUDIENCE" "$TOKEN_ENCRYPTION_KEY_PATH")
+    JSON_SHARED=$(printf '{"slackBotToken":"%s","slackSigningSecret":"%s","slackClientId":"%s","slackClientSecret":"%s","slackUserToken":"%s","teamIdsForSearch":"%s","enterpriseIdsForSearch":"%s","botName":"%s","supervisorModel":"%s","authUrl":"%s","customFqdn":"%s","iapClientId":"%s","iapClientSecret":"%s","iapTargetClientId":"%s","iapAudience":"%s","tokenEncryptionKeyPath":"%s","iapDomain":"%s"}' \
+      "$SLACK_BOT_TOKEN" "$SLACK_SIGNING_SECRET" "$SLACK_CLIENT_ID" "$SLACK_CLIENT_SECRET" "$SLACK_USER_TOKEN" "$ALLOWED_TEAM_IDS" "$ALLOWED_ENTERPRISE_IDS" "$BOT_NAME" "$SUPERVISOR_MODEL" "$AUTH_URL" "$CUSTOM_FQDN" "$IAP_CLIENT_ID" "$IAP_CLIENT_SECRET" "$IAP_TARGET_CLIENT_ID" "$IAP_AUDIENCE" "$TOKEN_ENCRYPTION_KEY_PATH" "$IAP_DOMAIN")
     echo "$JSON_SHARED" | gcloud secrets versions add AIBot-shared-config --data-file=-
     disable_old_versions "AIBot-shared-config"
   else

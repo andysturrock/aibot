@@ -78,65 +78,60 @@ async def test_search_tool_logic():
             )
 
             with patch(
-                "services.slack_search_mcp.main.is_team_authorized", return_value=True
+                "services.slack_search_mcp.main.generate_embeddings",
+                return_value=[0.1],
             ):
+                # Mock BQ search to return messages from diverse channels
                 with patch(
-                    "services.slack_search_mcp.main.generate_embeddings",
-                    return_value=[0.1],
+                    "services.slack_search_mcp.main.perform_vector_search",
+                    return_value=[
+                        {"channel": "C_PUB", "ts": "1.1"},
+                        {"channel": "C_PRIV", "ts": "2.1"},
+                        {"channel": "C_HIDDEN", "ts": "3.1"},
+                    ],
                 ):
-                    # Mock BQ search to return messages from diverse channels
-                    with patch(
-                        "services.slack_search_mcp.main.perform_vector_search",
-                        return_value=[
-                            {"channel": "C_PUB", "ts": "1.1"},
-                            {"channel": "C_PRIV", "ts": "2.1"},
-                            {"channel": "C_HIDDEN", "ts": "3.1"},
-                        ],
-                    ):
-                        # Mock replies for all channels
-                        async def mock_replies(channel, ts, inclusive):
-                            return {
-                                "ok": True,
-                                "messages": [
-                                    {
-                                        "text": f"msg in {channel}",
-                                        "ts": ts,
-                                        "user": "U123",
-                                    }
-                                ],
-                            }
+                    # Mock replies for all channels
+                    async def mock_replies(channel, ts, inclusive):
+                        return {
+                            "ok": True,
+                            "messages": [
+                                {
+                                    "text": f"msg in {channel}",
+                                    "ts": ts,
+                                    "user": "U123",
+                                }
+                            ],
+                        }
 
-                        mock_client.conversations_replies = AsyncMock(
-                            side_effect=mock_replies
-                        )
-                        mock_client.users_info = AsyncMock(
-                            return_value={
-                                "ok": True,
-                                "user": {"real_name": "Test User", "id": "U123"},
-                            }
-                        )
+                    mock_client.conversations_replies = AsyncMock(
+                        side_effect=mock_replies
+                    )
+                    mock_client.users_info = AsyncMock(
+                        return_value={
+                            "ok": True,
+                            "user": {"real_name": "Test User", "id": "U123"},
+                        }
+                    )
 
-                        # Set contextvar for the test
-                        token = user_id_ctx.set("U123")
-                        try:
-                            result_json = await search_slack_messages("find something")
-                        finally:
-                            user_id_ctx.reset(token)
+                    # Set contextvar for the test
+                    token = user_id_ctx.set("U123")
+                    try:
+                        result_json = await search_slack_messages("find something")
+                    finally:
+                        user_id_ctx.reset(token)
 
-                        result = json.loads(result_json)
-                        # Should have 2 messages (C_PUB and C_PRIV, C_HIDDEN filtered out)
-                        assert len(result) == 2
+                    result = json.loads(result_json)
+                    # Should have 2 messages (C_PUB and C_PRIV, C_HIDDEN filtered out)
+                    assert len(result) == 2
 
-                        # Verify metadata
-                        pub_msg = next(m for m in result if m["channel_id"] == "C_PUB")
-                        assert pub_msg["channel_name"] == "public-gen"
-                        assert pub_msg["user_name"] == "Test User"
+                    # Verify metadata
+                    pub_msg = next(m for m in result if m["channel_id"] == "C_PUB")
+                    assert pub_msg["channel_name"] == "public-gen"
+                    assert pub_msg["user_name"] == "Test User"
 
-                        priv_msg = next(
-                            m for m in result if m["channel_id"] == "C_PRIV"
-                        )
-                        assert priv_msg["channel_name"] == "private-sec"
-                        assert priv_msg["user_name"] == "Test User"
+                    priv_msg = next(m for m in result if m["channel_id"] == "C_PRIV")
+                    assert priv_msg["channel_name"] == "private-sec"
+                    assert priv_msg["user_name"] == "Test User"
 
-                        # Verify C_HIDDEN is NOT in result
-                        assert not any(m["channel_id"] == "C_HIDDEN" for m in result)
+                    # Verify C_HIDDEN is NOT in result
+                    assert not any(m["channel_id"] == "C_HIDDEN" for m in result)
