@@ -271,14 +271,12 @@ def save_tokens(tokens, audience):
     try:
         keyring.set_password(SERVICE_NAME, audience, json.dumps(safe_tokens))
         logger.info(f"Tokens saved to keyring for audience: {audience}")
-        return  # Success, skip file cache
     except Exception as e:
         logger.warning(
             f"Failed to save tokens to keyring: {e}. Falling back to file cache."
         )
-
-    # 2. Fallback to file cache
-    save_tokens_to_file(safe_tokens, audience)
+        # 2. Fallback to file cache
+        save_tokens_to_file(safe_tokens, audience)
 
 
 def get_token_cache_path(audience: str) -> Path:
