@@ -192,8 +192,9 @@ def test_process_tool_result_model_extra():
         model_extra={"structuredContent": {"result": [{"ts": "1", "text": "msg"}]}},
     )
     processed = process_tool_result("slack_search", res)
-    assert processed["structuredContent"]["result"][0]["ts"] == "1"
-    assert "Raw Data" in processed["content"][1]["text"]
+    assert processed.isError is False
+    assert len(processed.content) == 1
+    assert "msg" in processed.content[0].text
 
 
 @pytest.mark.asyncio
