@@ -1,6 +1,6 @@
 import json
 
-from python.tools.mcp_proxy import format_slack_messages, process_tool_result
+from tools.mcp_proxy import format_slack_messages, process_tool_result
 
 
 class MockResult:

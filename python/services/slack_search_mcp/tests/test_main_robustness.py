@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from mcp.types import CallToolResult
 
-from python.services.slack_search_mcp.main import search_slack_messages
+from services.slack_search_mcp.main import search_slack_messages
 
 
 @pytest.mark.asyncio
