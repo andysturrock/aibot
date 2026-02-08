@@ -31,8 +31,8 @@ async def test_collect_slack_messages_success():
     with patch(
         "services.slack_collector.main.get_secret_value", new_callable=AsyncMock
     ) as mock_secrets:
-        mock_secrets.side_effect = (
-            lambda k: "T123" if k == "teamIdsForSearch" else "token_abc"
+        mock_secrets.side_effect = lambda k: (
+            "T123" if k == "teamIdsForSearch" else "token_abc"
         )
 
         # Mock Authorized check

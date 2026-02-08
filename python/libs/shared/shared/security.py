@@ -10,10 +10,11 @@ logger = logging.getLogger(__name__)
 # Cache for whitelists
 _allowed_team_ids: list[str] | None = None
 _allowed_enterprise_ids: list[str] | None = None
+_allowed_domain: str | None = None
 
 
 async def _get_whitelists():
-    global _allowed_team_ids, _allowed_enterprise_ids
+    global _allowed_team_ids, _allowed_enterprise_ids, _allowed_domain
     if _allowed_team_ids is None:
         try:
             team_ids_str = await get_secret_value("teamIdsForSearch")
@@ -25,11 +26,14 @@ async def _get_whitelists():
             _allowed_enterprise_ids = [
                 id.strip() for id in (enterprise_ids_str or "").split(",") if id.strip()
             ]
+            # Retrieve IAP domain from secret
+            _allowed_domain = await get_secret_value("iapDomain")
         except Exception as e:
             logger.error(f"Error loading whitelists: {e}")
             _allowed_team_ids = []
             _allowed_enterprise_ids = []
-    return _allowed_team_ids, _allowed_enterprise_ids
+            _allowed_domain = ""
+    return _allowed_team_ids, _allowed_enterprise_ids, _allowed_domain
 
 
 async def verify_slack_request(data: bytes, headers: dict[str, str]) -> bool:
@@ -50,7 +54,7 @@ async def is_team_authorized(
     team_id: str | None, enterprise_id: str | None = None
 ) -> bool:
     """Verifies if the given team or enterprise is whitelisted."""
-    allowed_teams, allowed_enterprises = await _get_whitelists()
+    allowed_teams, allowed_enterprises, _ = await _get_whitelists()
 
     if not allowed_teams and not allowed_enterprises:
         logger.error(
@@ -65,6 +69,41 @@ async def is_team_authorized(
 
     logger.warning(
         f"Unauthorized access attempt from Team: {team_id}, Enterprise: {enterprise_id}"
+    )
+    return False
+
+
+async def is_user_authorized(
+    email: str | None, team_id: str | None, enterprise_id: str | None = None
+) -> bool:
+    """
+    Verifies if a user is authorized based on both their email domain
+    AND their Slack workspace membership.
+    """
+    allowed_teams, allowed_enterprises, allowed_domain = await _get_whitelists()
+
+    # 1. Domain Check
+    if not email:
+        logger.warning("Authorization failed: Email missing")
+        return False
+
+    if allowed_domain:
+        if not email.endswith(f"@{allowed_domain}"):
+            logger.warning(
+                f"Authorization failed: Domain mismatch for {email}. Expected: {allowed_domain}"
+            )
+            return False
+    else:
+        logger.warning("Security Warning: No iapDomain configured for domain check.")
+
+    # 2. Team Check
+    if team_id in allowed_teams or (
+        enterprise_id and enterprise_id in allowed_enterprises
+    ):
+        return True
+
+    logger.warning(
+        f"Authorization failed: User {email} belongs to unauthorized team {team_id}"
     )
     return False
 

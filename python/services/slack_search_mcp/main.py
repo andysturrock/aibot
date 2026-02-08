@@ -1,7 +1,7 @@
 import asyncio
-import json
 import logging
 import os
+import sys
 import time
 import traceback
 import uuid
@@ -13,12 +13,14 @@ from google.cloud import bigquery
 from google.cloud.bigquery import ArrayQueryParameter, QueryJobConfig
 from google.genai import types
 from mcp.server.fastmcp import FastMCP
-from shared.gcp_api import get_secret_value
+from mcp.types import CallToolResult, TextContent
+from shared.firestore_api import AIBOT_DB
+from shared.gcp_api import get_secret_value, get_secret_value_sync
 from shared.google_auth import verify_iap_jwt
 
 # Import from shared library submodules
 from shared.logging import setup_logging
-from shared.security import is_team_authorized
+from shared.security import is_user_authorized
 from shared.slack_api import create_client_for_token
 from slack_sdk import WebClient
 from starlette.requests import Request
@@ -48,6 +50,14 @@ team_id_ctx: ContextVar[str] = ContextVar("team_id", default=None)
 # --- Middleware: Security Verification ---
 
 
+# Rate limiting constants for impersonation
+
+IMPERSONATION_WINDOW_SECONDS = 60
+MAX_UNIQUE_IMPERSONATIONS = 20
+IMPERSONATION_DB = AIBOT_DB
+IMPERSONATION_LOG_COLLECTION = "AIBot_Impersonation_Logs"
+
+
 class SecurityMiddleware:
     """
     ASGI middleware for MCP SSE backend to verify access.
@@ -56,6 +66,50 @@ class SecurityMiddleware:
 
     def __init__(self, app):
         self.app = app
+
+    async def _check_impersonation_rate_limit(self, user_email: str) -> bool:
+        """
+        Tracks unique users impersonated in the last 60 seconds across all instances.
+        Returns True if allowed, False if limit exceeded.
+        """
+        from google.cloud import firestore
+
+        db = firestore.AsyncClient(database=IMPERSONATION_DB)
+        now = time.time()
+        cutoff = now - IMPERSONATION_WINDOW_SECONDS
+
+        # 1. Log this impersonation attempt
+        # Use a unique ID to avoid collisions, but include user and timestamp
+        doc_id = f"{int(now * 1000)}_{user_email}"
+        await (
+            db.collection(IMPERSONATION_LOG_COLLECTION)
+            .document(doc_id)
+            .set(
+                {
+                    "user_email": user_email,
+                    "timestamp": now,
+                    "expiry": now + 3600,  # TTL for cleanup if needed
+                }
+            )
+        )
+
+        # 2. Query unique users in the window
+        # Firestore doesn't have a native "SELECT COUNT(DISTINCT ...)"
+        # For small limits (20), we can just fetch and count in memory.
+        query = (
+            db.collection(IMPERSONATION_LOG_COLLECTION)
+            .where("timestamp", ">=", cutoff)
+            .stream()
+        )
+
+        unique_users = set()
+        async for doc in query:
+            unique_users.add(doc.to_dict().get("user_email"))
+
+        logger.info(
+            f"Global Impersonation Check: {len(unique_users)}/{MAX_UNIQUE_IMPERSONATIONS} unique users in last {IMPERSONATION_WINDOW_SECONDS}s"
+        )
+        return len(unique_users) <= MAX_UNIQUE_IMPERSONATIONS
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -138,6 +192,27 @@ class SecurityMiddleware:
                     final_user_email = user_payload.get("email")
                     if not final_user_email:
                         raise ValueError("User ID Token missing email")
+
+                    # Rate Limit Impersonation
+                    if not await self._check_impersonation_rate_limit(final_user_email):
+                        logger.warning(
+                            f"Rate limit exceeded: Logic Server impersonating too many unique users ({final_user_email})"
+                        )
+                        response = JSONResponse(
+                            {"error": "Impersonation rate limit exceeded"},
+                            status_code=429,
+                        )
+                        await response(scope, receive, send)
+                        return
+
+                    # Scrub X-User-ID-Token from headers before passing to downstream logic
+                    # Headers in ASGI scope are a list of (name, value) byte tuples
+                    scope["headers"] = [
+                        (k, v)
+                        for k, v in scope["headers"]
+                        if k.lower() != b"x-user-id-token"
+                    ]
+
                 except Exception as e:
                     logger.error(f"User ID Token verification failed: {e}")
                     response = JSONResponse(
@@ -188,12 +263,15 @@ class SecurityMiddleware:
                 f"Authorizing user {final_user_email}: slack_id={slack_user_id}, team={team_id}, enterprise={enterprise_id}"
             )
 
-            if not await is_team_authorized(team_id, enterprise_id=enterprise_id):
+            if not await is_user_authorized(
+                final_user_email, team_id, enterprise_id=enterprise_id
+            ):
                 logger.warning(
-                    f"User {final_user_email} belongs to unauthorized team {team_id} or enterprise {enterprise_id}"
+                    f"User {final_user_email} failed authorization check (Domain/Team: {team_id}/{enterprise_id})"
                 )
                 response = JSONResponse(
-                    {"error": "Workspace not authorized"}, status_code=403
+                    {"error": "Unauthorized access (Email Domain or Slack Workspace)"},
+                    status_code=403,
                 )
                 await response(scope, receive, send)
                 return
@@ -219,7 +297,15 @@ class SecurityMiddleware:
 
 
 # --- Service Logic ---
-custom_fqdn = os.environ.get("CUSTOM_FQDN", "aibot.slackapps.atombank.co.uk")
+# Retrieve CUSTOM_FQDN from Secret Manager (checks env first)
+custom_fqdn = get_secret_value_sync("customFqdn")
+
+if not custom_fqdn:
+    logger.critical(
+        "FATAL: customFqdn secret or CUSTOM_FQDN environment variable is required."
+    )
+    sys.exit(1)
+
 logger.info(f"Initializing FastMCP with host: {custom_fqdn}")
 
 # Initialize FastMCP with explicit paths to match LB routing
@@ -267,13 +353,16 @@ cache = GlobalCache()
 
 
 @mcp.tool()
-async def search_slack_messages(query: str) -> str:
+async def search_slack_messages(query: str) -> CallToolResult:
     """Search Slack messages using vector search and return thread context."""
     logger.info(f"TOOL START: search_slack_messages for query: {query}")
     token = await get_secret_value("slackUserToken")
 
     if not token:
-        return "No Slack token found."
+        return CallToolResult(
+            content=[TextContent(type="text", text="No Slack token found.")],
+            isError=True,
+        )
 
     try:
         slack_client = await create_client_for_token(token)
@@ -284,7 +373,11 @@ async def search_slack_messages(query: str) -> str:
         # 2. Perform Vector Search in BigQuery
         results = await perform_vector_search(embeddings)
         if not results:
-            return "No messages found."
+            return CallToolResult(
+                content=[TextContent(type="text", text="No messages found.")],
+                isError=False,
+                structuredContent={"result": []},
+            )
 
         # 3. Reactive Permission Check & Metadata Fetching
         permitted_channels = {}  # channel_id -> channel_info (name, is_permitted)
@@ -324,7 +417,16 @@ async def search_slack_messages(query: str) -> str:
         ]
 
         if not filtered_results:
-            return "No messages found in your authorized channels."
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text="No messages found in your authorized channels.",
+                    )
+                ],
+                isError=False,
+                structuredContent={"result": []},
+            )
 
         # 5. Fetch Workspace Info for Deep Links
         team_resp = await slack_client.team_info()
@@ -411,16 +513,32 @@ async def search_slack_messages(query: str) -> str:
                     }
                 )
 
+        if not final_messages:
+            return CallToolResult(
+                content=[TextContent(type="text", text="No messages found.")],
+                isError=False,
+                structuredContent={"result": []},
+            )
+
         logger.info(f"Returning {len(final_messages)} messages to agent")
-        return json.dumps(final_messages, indent=2)
+        # Return structured content as requested by user
+        return CallToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text=f"Found {len(final_messages)} relevant Slack message(s).",
+                )
+            ],
+            isError=False,
+            structuredContent={"result": final_messages},
+        )
 
     except Exception as e:
         logger.exception("Error during search_slack_messages")
-        return f"Error during search: {str(e)}"
-
-    except Exception as e:
-        logger.exception(f"Error during search_slack_messages for query: {query}")
-        return f"Error during search: {str(e)}"
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Error during search: {str(e)}")],
+            isError=True,
+        )
 
 
 async def generate_embeddings(text: str) -> list[float]:

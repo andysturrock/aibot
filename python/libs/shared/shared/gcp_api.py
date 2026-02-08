@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 
 import google.auth
 import google.oauth2.id_token
@@ -29,7 +30,13 @@ async def get_secret_value(secret_key: str) -> str:
     Checks AIBot-shared-config first, then falls back to [service]-config.
     """
     # 1. Check local environment variables first
-    env_secret = os.environ.get(secret_key)
+    snake_key = re.sub(r"(?<!^)(?=[A-Z])", "_", secret_key).lower()
+    shouty_key = snake_key.upper()
+    env_secret = (
+        os.environ.get(secret_key)
+        or os.environ.get(snake_key)
+        or os.environ.get(shouty_key)
+    )
     if env_secret:
         return env_secret
 
@@ -65,6 +72,63 @@ async def get_secret_value(secret_key: str) -> str:
             logger.warning(f"Could not access {secret_name}")
 
     logger.warning(f"Secret key '{secret_key}' not found in any known secret store.")
+    return None
+
+
+def get_secret_value_sync(secret_key: str) -> str:
+    """Retrieves a secret from GCP Secret Manager (Sync).
+    Checks AIBot-shared-config first.
+    """
+    # 1. Check local environment variables first
+    snake_key = re.sub(r"(?<!^)(?=[A-Z])", "_", secret_key).lower()
+    shouty_key = snake_key.upper()
+    env_secret = (
+        os.environ.get(secret_key)
+        or os.environ.get(snake_key)
+        or os.environ.get(shouty_key)
+    )
+    if env_secret:
+        return env_secret
+
+    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    if not project_id:
+        import google.auth
+
+        _, project_id = google.auth.default()
+
+    # 2. Check AIBot-shared-config
+    client = secretmanager_v1.SecretManagerServiceClient()
+    name = f"projects/{project_id}/secrets/AIBot-shared-config/versions/latest"
+    try:
+        response = client.access_secret_version(request={"name": name})
+        payload = response.payload.data.decode("UTF-8")
+        shared_secrets = json.loads(payload)
+        if shared_secrets and secret_key in shared_secrets:
+            logger.info(
+                f"Secret key '{secret_key}' found in AIBot-shared-config (Sync)"
+            )
+            return shared_secrets[secret_key]
+    except Exception as e:
+        logger.debug(f"AIBot-shared-config check failed: {e}")
+
+    # 3. Fallback to Service-Specific config
+    service_name = os.environ.get("K_SERVICE")
+    if service_name:
+        secret_name = f"{service_name}-config"
+        name = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
+        try:
+            response = client.access_secret_version(request={"name": name})
+            payload = response.payload.data.decode("UTF-8")
+            service_secrets = json.loads(payload)
+            if service_secrets and secret_key in service_secrets:
+                logger.info(f"Secret key '{secret_key}' found in {secret_name} (Sync)")
+                return service_secrets[secret_key]
+        except Exception as e:
+            logger.debug(f"{secret_name} check failed: {e}")
+
+    logger.warning(
+        f"Secret key '{secret_key}' not found in any known secret store (Sync)."
+    )
     return None
 
 

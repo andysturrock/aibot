@@ -208,7 +208,7 @@ async def collect_slack_messages():
 
 
 async def create_message_embeddings(
-    messages: list[Message]
+    messages: list[Message],
 ) -> list[MessageWithEmbeddings]:
     model = TextEmbeddingModel.from_pretrained("text-embedding-004")
 
