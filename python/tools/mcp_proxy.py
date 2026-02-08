@@ -331,7 +331,10 @@ async def proxy(url, token):
                         processed = process_tool_result(name, result)
                         return processed
                     except BaseException as e:
-                        logger.error(f"Error in call_tool: {type(e).__name__}: {e}", exc_info=True)
+                        logger.error(
+                            f"Error in call_tool: {type(e).__name__}: {e}",
+                            exc_info=True,
+                        )
                         # CRITICAL: Do NOT let any exception escape call_tool as it will crash the stdio bridge
                         # We avoid logger.error here as it might trigger the Bad file descriptor OSError
                         return CallToolResult(
