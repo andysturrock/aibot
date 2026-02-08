@@ -46,11 +46,12 @@ async def test_encrypt_decrypt():
 
 @pytest.mark.asyncio
 async def test_refresh_user_tokens_success():
-    with patch("shared.google_auth.get_google_token") as mock_get, patch(
-        "shared.google_auth.get_secret_value"
-    ) as mock_secret, patch(
-        "shared.google_auth.Credentials"
-    ) as mock_creds_class, patch("shared.google_auth.put_google_token") as mock_put:
+    with (
+        patch("shared.google_auth.get_google_token") as mock_get,
+        patch("shared.google_auth.get_secret_value") as mock_secret,
+        patch("shared.google_auth.Credentials") as mock_creds_class,
+        patch("shared.google_auth.put_google_token") as mock_put,
+    ):
         manager = AIBotIdentityManager(kms_key_path="test-key")
         manager.decrypt = AsyncMock(return_value="raw-refresh-token")
         manager.encrypt = AsyncMock(return_value="new-encrypted-refresh")
@@ -101,11 +102,12 @@ async def test_refresh_user_tokens_no_refresh_token():
 
 @pytest.mark.asyncio
 async def test_refresh_user_tokens_rotation_no_new_refresh():
-    with patch("shared.google_auth.get_google_token") as mock_get, patch(
-        "shared.google_auth.get_secret_value"
-    ) as mock_secret, patch(
-        "shared.google_auth.Credentials"
-    ) as mock_creds_class, patch("shared.google_auth.put_google_token") as mock_put:
+    with (
+        patch("shared.google_auth.get_google_token") as mock_get,
+        patch("shared.google_auth.get_secret_value") as mock_secret,
+        patch("shared.google_auth.Credentials") as mock_creds_class,
+        patch("shared.google_auth.put_google_token") as mock_put,
+    ):
         manager = AIBotIdentityManager(kms_key_path="test-key")
         manager.decrypt = AsyncMock(return_value="raw-refresh")
 

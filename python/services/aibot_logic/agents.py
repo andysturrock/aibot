@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from functools import cached_property
@@ -136,6 +137,24 @@ async def search_slack(query: str, slack_user_id: str) -> str:
                     "search_slack_messages", arguments={"query": query}
                 )
 
+                # 4. Handle Result Extraction
+                # Prioritize structuredContent if available, so LLM gets full metadata
+                structured_data = getattr(result, "structuredContent", None)
+                if not structured_data and hasattr(result, "model_extra"):
+                    structured_data = result.model_extra.get("structuredContent")
+
+                if (
+                    structured_data
+                    and isinstance(structured_data, dict)
+                    and "result" in structured_data
+                ):
+                    raw_result = structured_data["result"]
+                    # If it's a list (as expected for slack search), stringify for LLM
+                    if isinstance(raw_result, list | dict):
+                        return json.dumps(raw_result, indent=2)
+                    return str(raw_result)
+
+                # Fallback to content block
                 if not result.content or result.content[0].type != "text":
                     return "No results found in Slack."
 
