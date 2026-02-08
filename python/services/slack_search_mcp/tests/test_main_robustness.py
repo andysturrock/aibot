@@ -10,14 +10,14 @@ from services.slack_search_mcp.main import search_slack_messages
 async def test_search_robustness_empty_results():
     """Test that the tool returns a valid CallToolResult even when no messages are found."""
     with patch(
-        "python.services.slack_search_mcp.main.get_secret_value", new_callable=AsyncMock
+        "services.slack_search_mcp.main.get_secret_value", new_callable=AsyncMock
     ) as mock_secret:
         with patch(
-            "python.services.slack_search_mcp.main.generate_embeddings",
+            "services.slack_search_mcp.main.generate_embeddings",
             new_callable=AsyncMock,
         ) as mock_embed:
             with patch(
-                "python.services.slack_search_mcp.main.perform_vector_search",
+                "services.slack_search_mcp.main.perform_vector_search",
                 new_callable=AsyncMock,
             ) as mock_search:
                 mock_secret.return_value = "dummy-token"
@@ -36,11 +36,11 @@ async def test_search_robustness_empty_results():
 async def test_search_robustness_exception_handling():
     """Test that exceptions result in an Error CallToolResult."""
     with patch(
-        "python.services.slack_search_mcp.main.get_secret_value", new_callable=AsyncMock
+        "services.slack_search_mcp.main.get_secret_value", new_callable=AsyncMock
     ) as mock_secret:
         mock_secret.return_value = "dummy-token"
         with patch(
-            "python.services.slack_search_mcp.main.generate_embeddings",
+            "services.slack_search_mcp.main.generate_embeddings",
             side_effect=Exception("API Down"),
         ):
             result = await search_slack_messages("test query")
@@ -54,11 +54,11 @@ async def test_search_robustness_exception_handling():
 async def test_search_robustness_malformed_input():
     """Test that the function stays alive even with unexpected input types."""
     with patch(
-        "python.services.slack_search_mcp.main.get_secret_value", new_callable=AsyncMock
+        "services.slack_search_mcp.main.get_secret_value", new_callable=AsyncMock
     ) as mock_secret:
         mock_secret.return_value = "dummy-token"
         with patch(
-            "python.services.slack_search_mcp.main.generate_embeddings",
+            "services.slack_search_mcp.main.generate_embeddings",
             side_effect=TypeError("Expected string"),
         ):
             result = await search_slack_messages(None)
