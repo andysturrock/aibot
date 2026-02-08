@@ -17,7 +17,7 @@ pip install keyring httpx aiohttp mcp python-dotenv
 
 ### 1. Connection Details
 To configure the bridge, you need several values from your GCP project. These are typically managed via your `.env.beta` or `.env.prod` files:
-- **IAP_URL**: The endpoint of your remote MCP server (e.g., `https://aibot.dev.slackapps.atombank.co.uk/mcp/sse`).
+- **IAP_URL**: The endpoint of your remote MCP server (e.g., `https://aibot.example.com/mcp/sse`).
 - **Project ID**: Your GCP Project ID.
 - **Backend Name**: The name of the backend service (e.g., `slack-search-mcp`).
 

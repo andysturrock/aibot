@@ -17,21 +17,19 @@ import httpx
 import keyring
 from aiohttp import web
 from dotenv import load_dotenv
-from mcp import ClientSession
+from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
+from mcp.types import CallToolResult, TextContent
 
-# Deferred imports for faster startup
-# import google.auth
-# import google.auth.transport.requests
-# from google.oauth2 import id_token
-
-# Setup logging to stderr to avoid breaking stdio MCP communication
+# Configure logging
 logging.basicConfig(
     level=logging.DEBUG,
-    stream=sys.stderr,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stderr),
+    ],
 )
 logger = logging.getLogger("mcp-proxy")
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -45,12 +43,57 @@ def run_gcloud(args):
         cmd = ["gcloud"] + list(args) + ["--format=json"]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         return json.loads(result.stdout)
-    except subprocess.CalledProcessError as e:
-        logger.error(f"gcloud command failed: {e.cmd}, stderr: {e.stderr}")
+    except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+        logger.error(f"Error running gcloud {' '.join(args)}: {e}")
         return None
     except Exception as e:
         logger.error(f"Error running gcloud {args}: {e}")
         return None
+
+
+def format_slack_messages(raw_json: str) -> str:
+    """Format stringified JSON Slack messages into a human-readable Markdown table."""
+    try:
+        if not raw_json or not isinstance(raw_json, str):
+            return str(raw_json)
+
+        messages = json.loads(raw_json)
+        if not isinstance(messages, list):
+            return raw_json
+
+        if not messages:
+            return "No Slack messages found."
+
+        md = "### Slack Search Results\n\n"
+        md += "| Date | User | Channel | Message |\n"
+        md += "| :--- | :--- | :--- | :--- |\n"
+
+        for msg in messages:
+            try:
+                ts_val = msg.get("ts", "0")
+                ts = float(ts_val)
+                date_str = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(ts))
+            except (ValueError, TypeError):
+                date_str = "Unknown Date"
+
+            user = msg.get("user_name", "Unknown")
+            channel = msg.get("channel_name", "Unknown")
+            text = msg.get("text", "").replace("\n", " ").replace("\r", " ")
+
+            # Escape pipe characters for markdown table
+            text = text.replace("|", "\\|")
+
+            # Truncate text for table readability
+            display_text = text[:120] + "..." if len(text) > 120 else text
+
+            url = msg.get("url", "#")
+
+            md += f"| {date_str} | {user} | #{channel} | [{display_text}]({url}) |\n"
+
+        return md
+    except Exception as e:
+        logger.error(f"Error formatting slack messages: {e}")
+        return str(raw_json)
 
 
 def get_secret_payload(project_id, secret_name):
@@ -154,6 +197,76 @@ def verify_alignment(fqdn, project_id):
         return False
 
 
+def process_tool_result(name, result):
+    """
+    Process result from remote MCP tool call and enhance for local display.
+    Ensures both a Markdown summary and raw JSON are returned in 'content'.
+    """
+    # Use direct dictionary mapping to ensure all fields (including structuredContent) are preserved
+    # We must convert content items to dicts because they might be Pydantic models (like TextContent)
+    # which are not directly JSON serializable by the stdio transport.
+    # Prepare final serializable dictionary
+    final_res = {
+        "content": [{"type": c.type, "text": c.text} for c in result.content],
+        "isError": result.isError,
+    }
+
+    # Ensure the output has 'structuredContent' and 'content' as requested
+    structured_data = getattr(result, "structuredContent", None)
+    if not structured_data and hasattr(result, "model_extra"):
+        structured_data = result.model_extra.get("structuredContent")
+
+    search_json = None
+    if (
+        structured_data
+        and isinstance(structured_data, dict)
+        and "result" in structured_data
+    ):
+        search_json = structured_data["result"]
+    elif hasattr(result, "model_extra") and "result" in result.model_extra:
+        search_json = result.model_extra["result"]
+
+    if search_json is not None:
+        # 1. Update structuredContent
+        final_res["structuredContent"] = {"result": search_json}
+        final_res["result"] = (
+            json.dumps(search_json)
+            if isinstance(search_json, list | dict)
+            else str(search_json)
+        )
+
+        # 2. Re-synthesize content block with DUAL output: Markdown + Raw JSON
+        formatted_markdown = search_json
+        if "search_slack" in name or "slack_search" in name:
+            # format_slack_messages handles list/dict to markdown table conversion
+            raw_str = (
+                json.dumps(search_json)
+                if isinstance(search_json, list | dict)
+                else str(search_json)
+            )
+            formatted_markdown = format_slack_messages(raw_str)
+
+        # Item 0: Human-friendly Markdown
+        new_content = [{"type": "text", "text": formatted_markdown}]
+
+        # Item 1: Raw JSON string (user requested enhancement)
+        raw_data_str = json.dumps(search_json, indent=2)
+        new_content.append(
+            {"type": "text", "text": f"#### 📄 Raw Data\n```json\n{raw_data_str}\n```"}
+        )
+
+        final_res["content"] = new_content
+    elif not result.isError:
+        # Fallback if no structured result
+        final_res["result"] = ""
+        final_res["structuredContent"] = {"result": ""}
+
+    logger.debug(
+        f"Returning serializable result (keys: {list(final_res.keys())}): {json.dumps(final_res)[:200]}..."
+    )
+    return final_res
+
+
 async def proxy(url, token):
     """Run the MCP proxy server."""
     logger.info(f"Connecting to remote MCP server at {url}...")
@@ -161,8 +274,8 @@ async def proxy(url, token):
     headers = {"Authorization": f"Bearer {token}"}
 
     try:
-        async with sse_client(url, headers=headers) as (read, write):
-            async with ClientSession(read, write) as remote_session:
+        async with sse_client(url, headers=headers) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as remote_session:
                 await remote_session.initialize()
                 logger.info("Remote session initialized successfully.")
 
@@ -172,7 +285,10 @@ async def proxy(url, token):
                 @server.list_tools()
                 async def list_tools():
                     try:
+                        # Use the remote_session directly within this scope
                         result = await remote_session.list_tools()
+                        tool_names = [t.name for t in result.tools]
+                        logger.info(f"Discovered tools: {tool_names}")
                         return result.tools
                     except Exception as e:
                         logger.error(f"Error in list_tools: {e}")
@@ -181,15 +297,18 @@ async def proxy(url, token):
                 @server.call_tool()
                 async def call_tool(name, arguments):
                     try:
-                        return await remote_session.call_tool(name, arguments)
-                    except Exception as e:
-                        logger.error(f"Error in call_tool {name}: {e}")
-                        from mcp.types import CallToolResult, TextContent
-
+                        logger.info(f"Calling tool: {name} with arguments: {arguments}")
+                        # Ensure the remote_session is still active
+                        result = await remote_session.call_tool(name, arguments)
+                        logger.debug(f"Remote call_tool result: {result}")
+                        return process_tool_result(name, result)
+                    except Exception:
+                        logger.exception(f"Error calling tool {name}")
                         return CallToolResult(
                             content=[
                                 TextContent(
-                                    type="text", text=f"Error calling tool: {e}"
+                                    type="text",
+                                    text=f"Error calling tool {name}: See mcp_proxy_debug.log for details",
                                 )
                             ],
                             isError=True,
@@ -625,6 +744,8 @@ async def main():
 
 
 if __name__ == "__main__":
+    with open("/home/andy/git_repos/aibot_beta/mcp_proxy_debug.log", "a") as f:
+        f.write(f"\n--- SCRIPT START: {time.ctime()} ---\n")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

@@ -35,13 +35,14 @@ async def test_search_slack_no_user():
 
 @pytest.mark.asyncio
 async def test_search_slack_mcp_failure():
-    with patch(
-        "services.aibot_logic.agents.get_valid_google_id_token"
-    ) as mock_user_token, patch(
-        "services.aibot_logic.agents.get_secret_value"
-    ) as mock_secret, patch(
-        "google.oauth2.id_token.fetch_id_token"
-    ) as mock_fetch, patch("services.aibot_logic.agents.sse_client") as mock_sse:
+    with (
+        patch(
+            "services.aibot_logic.agents.get_valid_google_id_token"
+        ) as mock_user_token,
+        patch("services.aibot_logic.agents.get_secret_value") as mock_secret,
+        patch("google.oauth2.id_token.fetch_id_token") as mock_fetch,
+        patch("services.aibot_logic.agents.sse_client") as mock_sse,
+    ):
         mock_user_token.return_value = ("user-token", None)
         mock_secret.side_effect = ["iap-client", "http://mcp-url"]
         mock_fetch.return_value = "service-token"
@@ -55,15 +56,15 @@ async def test_search_slack_mcp_failure():
 
 @pytest.mark.asyncio
 async def test_search_slack_success():
-    with patch(
-        "services.aibot_logic.agents.get_valid_google_id_token"
-    ) as mock_user_token, patch(
-        "services.aibot_logic.agents.get_secret_value"
-    ) as mock_secret, patch(
-        "google.oauth2.id_token.fetch_id_token"
-    ) as mock_fetch, patch("services.aibot_logic.agents.sse_client") as mock_sse, patch(
-        "services.aibot_logic.agents.ClientSession"
-    ) as mock_session_class:
+    with (
+        patch(
+            "services.aibot_logic.agents.get_valid_google_id_token"
+        ) as mock_user_token,
+        patch("services.aibot_logic.agents.get_secret_value") as mock_secret,
+        patch("google.oauth2.id_token.fetch_id_token") as mock_fetch,
+        patch("services.aibot_logic.agents.sse_client") as mock_sse,
+        patch("services.aibot_logic.agents.ClientSession") as mock_session_class,
+    ):
         mock_user_token.return_value = ("user-token", None)
         mock_secret.side_effect = ["iap-client", "http://mcp-url"]
         mock_fetch.return_value = "service-token"

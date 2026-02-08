@@ -149,7 +149,7 @@ async def run(query: str, env_file: str = None):
 
     print("\nExecuting Docker command:")
     print(
-        f"docker {' '.join([arg if 'DATA=' not in arg else arg[:20]+'...' for arg in docker_args])}\n"
+        f"docker {' '.join([arg if 'DATA=' not in arg else arg[:20] + '...' for arg in docker_args])}\n"
     )
 
     server_params = StdioServerParameters(
@@ -204,7 +204,7 @@ if __name__ == "__main__":
 Environment Variables Required:
   PROJECT_ID           GCP Project ID (e.g., ab-ai-test-392416)
   IAP_CLIENT_ID        IAP OAuth Client ID (audience) for the backend service
-  CUSTOM_FQDN          The custom domain for the AIBot (e.g., aibot.dev.slackapps.atombank.co.uk)
+  CUSTOM_FQDN          The custom domain for the AIBot (e.g., aibot.example.com)
 
 Note: Sourcing a .env file (e.g., 'source .env.beta') is the easiest way to set these.
         """,

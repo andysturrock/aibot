@@ -1,4 +1,3 @@
-import json
 import os
 from unittest.mock import AsyncMock, patch
 
@@ -116,11 +115,12 @@ async def test_search_tool_logic():
                     # Set contextvar for the test
                     token = user_id_ctx.set("U123")
                     try:
-                        result_json = await search_slack_messages("find something")
+                        result_obj = await search_slack_messages("find something")
                     finally:
                         user_id_ctx.reset(token)
 
-                    result = json.loads(result_json)
+                    assert isinstance(result_obj, dict)
+                    result = result_obj["structuredContent"]["result"]
                     # Should have 2 messages (C_PUB and C_PRIV, C_HIDDEN filtered out)
                     assert len(result) == 2
 

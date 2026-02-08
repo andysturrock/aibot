@@ -647,7 +647,7 @@ async def pubsub_worker(request: Request):
                         event=Event(
                             author=author,
                             content=content,
-                            invocation_id=f"hist_{i//2}",  # Group pairs into virtual invocations
+                            invocation_id=f"hist_{i // 2}",  # Group pairs into virtual invocations
                         ),
                     )
 

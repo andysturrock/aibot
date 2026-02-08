@@ -196,7 +196,7 @@ async def test_domain_mismatch_returns_403():
             with patch(
                 "shared.security._get_whitelists", new_callable=AsyncMock
             ) as mock_white:
-                mock_white.return_value = (["T1"], [], "atombank.co.uk")
+                mock_white.return_value = (["T1"], [], "example.com")
 
                 async with AsyncClient(
                     transport=ASGITransport(app=app), base_url="http://test"

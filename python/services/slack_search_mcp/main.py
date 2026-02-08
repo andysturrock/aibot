@@ -1,7 +1,7 @@
 import asyncio
-import json
 import logging
 import os
+import sys
 import time
 import traceback
 import uuid
@@ -13,6 +13,7 @@ from google.cloud import bigquery
 from google.cloud.bigquery import ArrayQueryParameter, QueryJobConfig
 from google.genai import types
 from mcp.server.fastmcp import FastMCP
+from mcp.types import CallToolResult, TextContent
 from shared.firestore_api import AIBOT_DB
 from shared.gcp_api import get_secret_value
 from shared.google_auth import verify_iap_jwt
@@ -296,7 +297,13 @@ class SecurityMiddleware:
 
 
 # --- Service Logic ---
-custom_fqdn = os.environ.get("CUSTOM_FQDN", "aibot.slackapps.atombank.co.uk")
+custom_fqdn = os.environ.get("CUSTOM_FQDN")
+if not custom_fqdn:
+    logger.critical(
+        "FATAL: CUSTOM_FQDN environment variable is required for secure operation."
+    )
+    sys.exit(1)
+
 logger.info(f"Initializing FastMCP with host: {custom_fqdn}")
 
 # Initialize FastMCP with explicit paths to match LB routing
@@ -350,7 +357,10 @@ async def search_slack_messages(query: str) -> str:
     token = await get_secret_value("slackUserToken")
 
     if not token:
-        return "No Slack token found."
+        return CallToolResult(
+            content=[TextContent(type="text", text="No Slack token found.")],
+            isError=True,
+        )
 
     try:
         slack_client = await create_client_for_token(token)
@@ -361,7 +371,11 @@ async def search_slack_messages(query: str) -> str:
         # 2. Perform Vector Search in BigQuery
         results = await perform_vector_search(embeddings)
         if not results:
-            return "No messages found."
+            return CallToolResult(
+                content=[TextContent(type="text", text="No messages found.")],
+                isError=False,
+                structuredContent={"result": []},
+            )
 
         # 3. Reactive Permission Check & Metadata Fetching
         permitted_channels = {}  # channel_id -> channel_info (name, is_permitted)
@@ -401,7 +415,16 @@ async def search_slack_messages(query: str) -> str:
         ]
 
         if not filtered_results:
-            return "No messages found in your authorized channels."
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text="No messages found in your authorized channels.",
+                    )
+                ],
+                isError=False,
+                structuredContent={"result": []},
+            )
 
         # 5. Fetch Workspace Info for Deep Links
         team_resp = await slack_client.team_info()
@@ -488,16 +511,32 @@ async def search_slack_messages(query: str) -> str:
                     }
                 )
 
+        if not final_messages:
+            return CallToolResult(
+                content=[TextContent(type="text", text="No messages found.")],
+                isError=False,
+                structuredContent={"result": []},
+            )
+
         logger.info(f"Returning {len(final_messages)} messages to agent")
-        return json.dumps(final_messages, indent=2)
+        # Return structured content as requested by user
+        return CallToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text=f"Found {len(final_messages)} relevant Slack message(s).",
+                )
+            ],
+            isError=False,
+            structuredContent={"result": final_messages},
+        )
 
     except Exception as e:
         logger.exception("Error during search_slack_messages")
-        return f"Error during search: {str(e)}"
-
-    except Exception as e:
-        logger.exception(f"Error during search_slack_messages for query: {query}")
-        return f"Error during search: {str(e)}"
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Error during search: {str(e)}")],
+            isError=True,
+        )
 
 
 async def generate_embeddings(text: str) -> list[float]:
