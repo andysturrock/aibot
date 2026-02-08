@@ -53,3 +53,8 @@ variable "log_level" {
   description = "Log level for all services (DEBUG, INFO, WARNING, ERROR)"
   default     = "INFO"
 }
+variable "iap_domain" {
+  type        = string
+  description = "The allowed email domain for IAP users (e.g. example.com)"
+  default     = ""
+}

@@ -37,6 +37,12 @@ resource "google_project_iam_member" "github_actions_run_developer" {
   member  = "serviceAccount:${google_service_account.github_actions.email}"
 }
 
+resource "google_project_iam_member" "github_actions_datastore_owner" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/datastore.owner"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
+
 # Allows the GitHub Actions SA to act as the individual service accounts of the Cloud Run services
 resource "google_project_iam_member" "github_actions_sa_user" {
   project = var.gcp_gemini_project_id

@@ -60,3 +60,4 @@ _override.tf.json
 *.tfvars
 *.tfvars.json
 *.tfplan
+mcp_proxy_debug.log
