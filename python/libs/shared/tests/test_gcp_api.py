@@ -17,9 +17,9 @@ async def test_get_secret_value_from_manager():
     # Mock environment to force secret manager path
     with patch(
         "os.environ.get",
-        side_effect=lambda k, d=None: "proj-123"
-        if k == "GOOGLE_CLOUD_PROJECT"
-        else None,
+        side_effect=lambda k, d=None: (
+            "proj-123" if k == "GOOGLE_CLOUD_PROJECT" else None
+        ),
     ):
         with patch(
             "shared.gcp_api.secretmanager_v1.SecretManagerServiceAsyncClient"

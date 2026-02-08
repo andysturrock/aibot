@@ -10,7 +10,7 @@ locals {
 
   # Simplification to stay within Cloud Armor's 5-atom limit per rule.
   # We use startsWith to reduce 4 equality checks into 2 prefix checks.
-  global_waf_exclusion_scope = "(request.path.startsWith('/slack/') || request.path.startsWith('/auth/'))"
+  global_waf_exclusion_scope = "(request.path.startsWith('/slack/') || request.path.startsWith('/auth/') || request.path.startsWith('/mcp/'))"
 
   # Slack infrastructure ASNs (AWS 16509, 14618)
   # Standard logical OR for platform compatibility.
@@ -18,6 +18,12 @@ locals {
 
   # Slack User Agent
   slack_ua = "Slackbot 1.0"
+
+  # Derive the IAP auth domain.
+  # Priority: 1. Explicit variable, 2. Derived from FQDN (handles .co.uk by taking last 3 parts if available)
+  iap_auth_domain = var.iap_domain != "" ? var.iap_domain : (
+    length(split(".", var.custom_fqdn)) >= 3 ? join(".", slice(split(".", var.custom_fqdn), length(split(".", var.custom_fqdn)) - 3, length(split(".", var.custom_fqdn)))) : var.custom_fqdn
+  )
 }
 
 resource "google_compute_security_policy" "aibot_policy" {
@@ -139,7 +145,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     preview  = false
     match {
       expr {
-        expression = "${local.slack_path_scope} && evaluatePreconfiguredWaf('rce-v33-stable', {'sensitivity': 1, 'opt_out_rule_ids': ['owasp-crs-v030301-id932100-rce', 'owasp-crs-v030301-id932110-rce', 'owasp-crs-v030301-id932200-rce']})"
+        expression = "(${local.slack_path_scope} || request.path.startsWith('/mcp/')) && evaluatePreconfiguredWaf('rce-v33-stable', {'sensitivity': 1, 'opt_out_rule_ids': ['owasp-crs-v030301-id932100-rce', 'owasp-crs-v030301-id932110-rce', 'owasp-crs-v030301-id932200-rce']})"
       }
     }
     description = "WAF: RCE for Slack (Surgical Map-based Exclusion in CEL)"
@@ -154,7 +160,7 @@ resource "google_compute_security_policy" "aibot_policy" {
     preview  = false
     match {
       expr {
-        expression = "(${local.slack_path_scope} || request.path.startsWith('/mcp/')) && evaluatePreconfiguredWaf('sqli-v33-stable', {'sensitivity': 1, 'opt_out_rule_ids': ['owasp-crs-v030301-id942200-sqli', 'owasp-crs-v030301-id942260-sqli', 'owasp-crs-v030301-id942340-sqli', 'owasp-crs-v030301-id942220-sqli', 'owasp-crs-v030301-id942330-sqli', 'owasp-crs-v030301-id942210-sqli', 'owasp-crs-v030301-id942370-sqli', 'owasp-crs-v030301-id942430-sqli']})"
+        expression = "(${local.slack_path_scope} || request.path.startsWith('/mcp/')) && evaluatePreconfiguredWaf('sqli-v33-stable', {'sensitivity': 1, 'opt_out_rule_ids': ['owasp-crs-v030301-id942200-sqli', 'owasp-crs-v030301-id942260-sqli', 'owasp-crs-v030301-id942340-sqli', 'owasp-crs-v030301-id942220-sqli', 'owasp-crs-v030301-id942330-sqli', 'owasp-crs-v030301-id942210-sqli', 'owasp-crs-v030301-id942370-sqli', 'owasp-crs-v030301-id942430-sqli', 'owasp-crs-v030301-id942100-sqli', 'owasp-crs-v030301-id942110-sqli']})"
       }
     }
     description = "WAF: SQLi for Slack/MCP (Surgical Map-based Exclusion in CEL)"
@@ -306,6 +312,14 @@ resource "google_iap_web_backend_service_iam_member" "mcp_iap_access" {
   member              = "serviceAccount:${google_service_account.aibot_logic.email}"
 }
 
+# Grant access to anyone in the specified domain
+resource "google_iap_web_backend_service_iam_member" "domain_iap_access" {
+  project             = var.gcp_gemini_project_id
+  web_backend_service = google_compute_backend_service.mcp_backend.name
+  role                = "roles/iap.httpsResourceAccessor"
+  member              = "domain:${local.iap_auth_domain}"
+}
+
 
 # Ensure the IAP Service Agent exists
 resource "google_project_service_identity" "iap_sa" {
@@ -429,6 +443,12 @@ resource "google_secret_manager_secret" "logic_config" {
     auto {}
   }
 }
+
+resource "google_secret_manager_secret_iam_member" "logic_config_access" {
+  secret_id = google_secret_manager_secret.logic_config.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.aibot_logic.email}"
+}
 resource "google_secret_manager_secret_version" "logic_config" {
   secret = google_secret_manager_secret.logic_config.id
   secret_data = jsonencode({
@@ -452,6 +472,12 @@ resource "google_secret_manager_secret" "webhook_config" {
   replication {
     auto {}
   }
+}
+
+resource "google_secret_manager_secret_iam_member" "webhook_config_access" {
+  secret_id = google_secret_manager_secret.webhook_config.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.aibot_webhook.email}"
 }
 resource "google_secret_manager_secret_version" "webhook_config" {
   secret = google_secret_manager_secret.webhook_config.id
@@ -502,6 +528,12 @@ resource "google_secret_manager_secret" "mcp_config" {
     auto {}
   }
 }
+
+resource "google_secret_manager_secret_iam_member" "mcp_config_access" {
+  secret_id = google_secret_manager_secret.mcp_config.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.slack_search_mcp.email}"
+}
 resource "google_secret_manager_secret_version" "mcp_config" {
   secret = google_secret_manager_secret.mcp_config.id
   secret_data = jsonencode({
@@ -523,6 +555,12 @@ resource "google_secret_manager_secret" "collector_config" {
   replication {
     auto {}
   }
+}
+
+resource "google_secret_manager_secret_iam_member" "collector_config_access" {
+  secret_id = google_secret_manager_secret.collector_config.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.collect_slack_messages.email}"
 }
 resource "google_secret_manager_secret_version" "collector_config" {
   secret = google_secret_manager_secret.collector_config.id
