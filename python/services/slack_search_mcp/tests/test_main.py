@@ -6,6 +6,7 @@ os.environ["GCP_LOCATION"] = "europe-west2"
 os.environ["GOOGLE_CLOUD_PROJECT"] = "test-project"
 
 import pytest  # noqa: E402
+from mcp.types import CallToolResult  # noqa: E402
 
 from services.slack_search_mcp.main import user_id_ctx  # noqa: E402
 
@@ -119,8 +120,8 @@ async def test_search_tool_logic():
                     finally:
                         user_id_ctx.reset(token)
 
-                    assert isinstance(result_obj, dict)
-                    result = result_obj["structuredContent"]["result"]
+                    assert isinstance(result_obj, CallToolResult)
+                    result = result_obj.structuredContent["result"]
                     # Should have 2 messages (C_PUB and C_PRIV, C_HIDDEN filtered out)
                     assert len(result) == 2
 
