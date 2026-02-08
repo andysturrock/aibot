@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 # Ensure environment variables are set BEFORE any imports from services
 os.environ["GCP_LOCATION"] = "europe-west2"
 os.environ["GOOGLE_CLOUD_PROJECT"] = "test-project"
+os.environ["CUSTOM_FQDN"] = "https://test-fqdn.com"
 
 import pytest  # noqa: E402
 from mcp.types import CallToolResult  # noqa: E402

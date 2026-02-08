@@ -353,7 +353,7 @@ cache = GlobalCache()
 
 
 @mcp.tool()
-async def search_slack_messages(query: str) -> str:
+async def search_slack_messages(query: str) -> CallToolResult:
     """Search Slack messages using vector search and return thread context."""
     logger.info(f"TOOL START: search_slack_messages for query: {query}")
     token = await get_secret_value("slackUserToken")
