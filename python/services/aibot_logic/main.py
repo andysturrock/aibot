@@ -400,6 +400,25 @@ async def slack_events(request: Request):
         return Response(content=f"Error: {str(e)}", status_code=500)
 
 
+@app.post("/slack/interactivity")
+async def slack_interactivity(request: Request):
+    # Already verified by Middleware
+    body = await request.body()
+    from urllib.parse import parse_qs
+
+    form_data = parse_qs(body.decode("utf-8"))
+    payload = json.loads(form_data["payload"][0])
+
+    if payload.get("type") == "block_actions":
+        for action in payload.get("actions", []):
+            if action.get("action_id") == "authorize_google":
+                # The button is a link, so Slack handles the redirect.
+                # We just acknowledge the interaction.
+                return Response(status_code=200)
+
+    return Response(content="OK", status_code=200)
+
+
 @app.get("/auth/login")
 async def login(slack_user_id: str):
     # 1. Check if user already has a valid refresh token
