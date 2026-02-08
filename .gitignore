@@ -52,6 +52,9 @@ _override.tf.json
 .idea/
 .DS_Store
 
+# Claude Code
+.claude/settings.local.json
+
 # Infrastructure
 .terraform/
 .terraform.lock.hcl
