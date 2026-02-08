@@ -1,8 +1,16 @@
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.aibot_logic.agents import get_valid_google_id_token, search_slack
+# Set env vars BEFORE importing services
+os.environ["GCP_LOCATION"] = "europe-west2"
+os.environ["GOOGLE_CLOUD_PROJECT"] = "test-project"
+
+from services.aibot_logic.agents import (  # noqa: E402
+    get_valid_google_id_token,
+    search_slack,
+)
 
 
 @pytest.mark.asyncio
@@ -79,9 +87,15 @@ async def test_search_slack_success():
         mock_session_class.return_value.__aenter__.return_value = mock_session
 
         mock_result = MagicMock()
+        mock_result.isError = False
         mock_result.content = [MagicMock(type="text", text="Found it!")]
+        # Mock structured content to verify the new priority path
+        mock_result.structuredContent = {"result": ["msg1", "msg2"]}
         mock_session.call_tool.return_value = mock_result
 
         result = await search_slack("query", "U123")
-        assert result == "Found it!"
+        # Expect JSON string of the result list
+        import json
+
+        assert result == json.dumps(["msg1", "msg2"], indent=2)
         mock_session.call_tool.assert_called_once()

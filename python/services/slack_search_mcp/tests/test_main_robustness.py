@@ -1,9 +1,15 @@
+import os
 from unittest.mock import AsyncMock, patch
 
-import pytest
-from mcp.types import CallToolResult
+# Ensure environment variables are set BEFORE any imports from services
+os.environ["GCP_LOCATION"] = "europe-west2"
+os.environ["GOOGLE_CLOUD_PROJECT"] = "test-project"
+os.environ["CUSTOM_FQDN"] = "https://test-fqdn.com"
 
-from services.slack_search_mcp.main import search_slack_messages
+import pytest  # noqa: E402
+from mcp.types import CallToolResult  # noqa: E402
+
+from services.slack_search_mcp.main import search_slack_messages  # noqa: E402
 
 
 @pytest.mark.asyncio

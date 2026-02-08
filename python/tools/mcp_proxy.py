@@ -20,7 +20,6 @@ from dotenv import load_dotenv
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.server import Server
-from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent
 
 # Configure logging
@@ -28,7 +27,7 @@ logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.StreamHandler(sys.stderr),
+        logging.FileHandler("mcp_proxy_debug.log", mode="a"),
     ],
 )
 logger = logging.getLogger("mcp-proxy")
@@ -261,9 +260,6 @@ def process_tool_result(name, result):
         final_res["result"] = ""
         final_res["structuredContent"] = {"result": ""}
 
-    logger.debug(
-        f"Returning serializable result (keys: {list(final_res.keys())}): {json.dumps(final_res)[:200]}..."
-    )
     return final_res
 
 
@@ -300,15 +296,16 @@ async def proxy(url, token):
                         logger.info(f"Calling tool: {name} with arguments: {arguments}")
                         # Ensure the remote_session is still active
                         result = await remote_session.call_tool(name, arguments)
-                        logger.debug(f"Remote call_tool result: {result}")
-                        return process_tool_result(name, result)
-                    except Exception:
-                        logger.exception(f"Error calling tool {name}")
+                        processed = process_tool_result(name, result)
+                        return processed
+                    except BaseException:
+                        # CRITICAL: Do NOT let any exception escape call_tool as it will crash the stdio bridge
+                        # We avoid logger.error here as it might trigger the Bad file descriptor OSError
                         return CallToolResult(
                             content=[
                                 TextContent(
                                     type="text",
-                                    text=f"Error calling tool {name}: See mcp_proxy_debug.log for details",
+                                    text="Bridge Error: Internal exception during tool execution. See stderr if available.",
                                 )
                             ],
                             isError=True,
@@ -337,13 +334,19 @@ async def proxy(url, token):
                     return await remote_session.get_prompt(name, arguments)
 
                 # Start the local stdio server
+                # We use the standard stdio_server from mcp.server.stdio
+                from mcp.server.stdio import stdio_server
+
                 async with stdio_server() as (read_in, write_out):
                     logger.info("Local MCP server (stdio) is now running.")
-                    await server.run(
-                        read_in, write_out, server.create_initialization_options()
-                    )
-    except Exception as e:
-        logger.error(f"Proxy bridge error: {e}")
+                    # initialization_options is required for the server to run correctly
+                    init_options = server.create_initialization_options()
+                    await server.run(read_in, write_out, init_options)
+    except BaseException as e:
+        logger.exception(f"CRITICAL: Proxy bridge error: {type(e).__name__}: {e}")
+        if hasattr(e, "exceptions"):
+            for sub_e in e.exceptions:
+                logger.error(f"Sub-exception: {type(sub_e).__name__}: {sub_e}")
         raise
 
 
