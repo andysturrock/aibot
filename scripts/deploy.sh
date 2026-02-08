@@ -315,7 +315,7 @@ if [ "$NO_SECRETS" = false ]; then
 
     # aibot-logic-config (Service-specific only)
     echo "Updating aibot-logic-config..."
-    JSON_LOGIC=$(printf '{"mcpSlackSearchUrl":"%s"}' "https://${CUSTOM_FQDN}/mcp")
+    JSON_LOGIC=$(printf '{"mcpSlackSearchUrl":"%s","customFqdn":"%s"}' "https://${CUSTOM_FQDN}/mcp" "$CUSTOM_FQDN")
     echo "$JSON_LOGIC" | gcloud secrets versions add aibot-logic-config --data-file=-
     disable_old_versions "aibot-logic-config"
 
@@ -327,7 +327,7 @@ if [ "$NO_SECRETS" = false ]; then
 
     # slack-search-mcp-config (Service-specific only)
     echo "Updating slack-search-mcp-config..."
-    JSON_MCP=$(printf '{"placeholder":"none"}')
+    JSON_MCP=$(printf '{"customFqdn":"%s"}' "$CUSTOM_FQDN")
     echo "$JSON_MCP" | gcloud secrets versions add slack-search-mcp-config --data-file=-
     disable_old_versions "slack-search-mcp-config"
 

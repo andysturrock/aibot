@@ -15,7 +15,7 @@ from google.genai import types
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
 from shared.firestore_api import AIBOT_DB
-from shared.gcp_api import get_secret_value
+from shared.gcp_api import get_secret_value, get_secret_value_sync
 from shared.google_auth import verify_iap_jwt
 
 # Import from shared library submodules
@@ -297,10 +297,12 @@ class SecurityMiddleware:
 
 
 # --- Service Logic ---
-custom_fqdn = os.environ.get("CUSTOM_FQDN")
+# Retrieve CUSTOM_FQDN from Secret Manager (checks env first)
+custom_fqdn = get_secret_value_sync("customFqdn")
+
 if not custom_fqdn:
     logger.critical(
-        "FATAL: CUSTOM_FQDN environment variable is required for secure operation."
+        "FATAL: customFqdn secret or CUSTOM_FQDN environment variable is required."
     )
     sys.exit(1)
 
