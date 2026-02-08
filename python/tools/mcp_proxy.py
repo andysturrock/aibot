@@ -9,6 +9,23 @@ import socket
 import subprocess
 import sys
 import time
+
+# errors when anyio/asyncio tries to log to stderr after it's been closed by stdio_server.
+# We use os.dup2 to ensure C-level writes to fd 2 also go to the file.
+try:
+    stderr_fd = os.open(
+        "/tmp/mcp_proxy_stderr.log", os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    )
+    os.dup2(stderr_fd, 2)
+    sys.stderr = os.fdopen(stderr_fd, "w", buffering=1)
+    print(
+        "DEBUG: stderr redirected to /tmp/mcp_proxy_stderr.log via os.dup2",
+        file=sys.stderr,
+    )
+except Exception:
+    # If this fails, we can't do much, but at least we can try to proceed
+    pass
+
 import webbrowser
 from pathlib import Path
 from urllib.parse import urlencode
@@ -27,7 +44,7 @@ logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("mcp_proxy_debug.log", mode="a"),
+        logging.FileHandler("/tmp/mcp_proxy_debug.log", mode="a"),
     ],
 )
 logger = logging.getLogger("mcp-proxy")
@@ -296,9 +313,15 @@ async def proxy(url, token):
                         logger.info(f"Calling tool: {name} with arguments: {arguments}")
                         # Ensure the remote_session is still active
                         result = await remote_session.call_tool(name, arguments)
-                        processed = process_tool_result(name, result)
-                        return processed
-                    except BaseException:
+                        logger.info(f"Got result from remote tool: {name}")
+
+                        # TEMPORARY: Bypass processing to isolate crash
+                        return result
+
+                        # processed = process_tool_result(name, result)
+                        # return processed
+                    except BaseException as e:
+                        logger.error(f"Error in call_tool: {e}")
                         # CRITICAL: Do NOT let any exception escape call_tool as it will crash the stdio bridge
                         # We avoid logger.error here as it might trigger the Bad file descriptor OSError
                         return CallToolResult(
@@ -747,7 +770,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    with open("/home/andy/git_repos/aibot_beta/mcp_proxy_debug.log", "a") as f:
+    with open("/tmp/mcp_proxy_debug.log", "a") as f:
         f.write(f"\n--- SCRIPT START: {time.ctime()} ---\n")
     try:
         asyncio.run(main())
