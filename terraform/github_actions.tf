@@ -57,6 +57,27 @@ resource "google_storage_bucket_iam_member" "github_actions_state_access" {
   member = "serviceAccount:${google_service_account.github_actions.email}"
 }
 
+# --- 2026-02-08 Fix: CI/CD needs Project IAM Admin to manage IAM bindings via Terraform ---
+resource "google_project_iam_member" "github_actions_iam_admin" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/resourcemanager.projectIamAdmin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
+
+# --- 2026-02-08 Fix: CI/CD needs Secret Manager Admin to manage secret IAM policies ---
+resource "google_project_iam_member" "github_actions_secret_admin" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/secretmanager.admin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
+
+# --- 2026-02-08 Fix: CI/CD needs BigQuery Admin to manage table IAM policies ---
+resource "google_project_iam_member" "github_actions_bigquery_admin" {
+  project = var.gcp_gemini_project_id
+  role    = "roles/bigquery.admin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
+
 # --- Workload Identity Federation ---
 
 resource "google_iam_workload_identity_pool" "github_pool" {
