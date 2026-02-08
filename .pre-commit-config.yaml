@@ -27,7 +27,7 @@ repos:
     hooks:
       - id: pytest
         name: pytest
-        entry: bash -c "export PYTHONUNBUFFERED=1 && export PYTHONPATH=$PYTHONPATH:$(pwd)/python/libs/shared:$(pwd)/python/services/aibot_logic:$(pwd)/python/services/slack_collector:$(pwd)/python/services/slack_search_mcp && pytest -v --color=yes --log-cli-level=INFO --ignore=python/tests/integration_test.py"
+        entry: uv run pytest -v --color=yes --log-cli-level=INFO --ignore=python/tests/integration_test.py
         language: system
         pass_filenames: false
         verbose: true
