@@ -4,13 +4,13 @@ The MCP bridge allows Antigravity (or any other MCP-compatible client) to secure
 
 ## Prerequisites
 - **Python 3.10+**
-- **pip** (Python package manager)
+- **[uv](https://docs.astral.sh/uv/)** (Python package manager)
 - **Google Cloud SDK (`gcloud`)** installed and authenticated (`gcloud auth login`).
 
 ### Install Dependencies
-Run the following command on your host machine:
+From the repository root, install all workspace dependencies:
 ```bash
-pip install keyring httpx aiohttp mcp python-dotenv
+uv sync --dev
 ```
 
 ## Setup & Configuration
@@ -40,9 +40,10 @@ Add the bridge to your MCP configuration file.
 {
   "mcpServers": {
     "slack-search-mcp-server": {
-      "command": "python3",
+      "command": "uv",
       "args": [
-        "<PATH_TO_AIBOT_REPO>/python/tools/mcp_proxy.py",
+        "run", "--dev", "--project", "<PATH_TO_AIBOT_REPO>",
+        "python", "<PATH_TO_AIBOT_REPO>/python/tools/mcp_proxy.py",
         "--backend", "slack-search-mcp",
         "--project", "<YOUR_PROJECT_ID>"
       ]
@@ -57,9 +58,10 @@ Use this if you don't have Secret Manager access.
 {
   "mcpServers": {
     "slack-search-mcp-server": {
-      "command": "python3",
+      "command": "uv",
       "args": [
-        "<PATH_TO_AIBOT_REPO>/python/tools/mcp_proxy.py",
+        "run", "--dev", "--project", "<PATH_TO_AIBOT_REPO>",
+        "python", "<PATH_TO_AIBOT_REPO>/python/tools/mcp_proxy.py",
         "--backend", "slack-search-mcp",
         "--project", "<YOUR_PROJECT_ID>",
         "--client-id", "123456789012-abc123def456.apps.googleusercontent.com",
@@ -69,6 +71,9 @@ Use this if you don't have Secret Manager access.
   }
 }
 ```
+
+> [!IMPORTANT]
+> The proxy must be launched via `uv run` rather than bare `python3`, so that all workspace dependencies (`httpx`, `mcp`, `keyring`, etc.) are available. Using `python3` directly will fail with `ModuleNotFoundError`.
 
 ## Security & Authentication
 
