@@ -8,21 +8,23 @@ import secrets
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 # errors when anyio/asyncio tries to log to stderr after it's been closed by stdio_server.
 # We use os.dup2 to ensure C-level writes to fd 2 also go to the file.
 try:
-    stderr_fd = os.open(
-        "/tmp/mcp_proxy_stderr.log", os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    stderr_fd, _stderr_path = tempfile.mkstemp(
+        prefix="mcp_proxy_stderr_", suffix=".log", dir="/tmp"
     )
     os.dup2(stderr_fd, 2)
     sys.stderr = os.fdopen(stderr_fd, "w", buffering=1)
     print(
-        "DEBUG: stderr redirected to /tmp/mcp_proxy_stderr.log via os.dup2",
+        f"DEBUG: stderr redirected to {_stderr_path} via os.dup2",
         file=sys.stderr,
     )
 except Exception:
+    _stderr_path = None
     # If this fails, we can't do much, but at least we can try to proceed
     pass
 
@@ -39,12 +41,16 @@ from mcp.client.sse import sse_client
 from mcp.server import Server
 from mcp.types import CallToolResult, TextContent
 
-# Configure logging
+# Configure logging with unique temp file per process
+_debug_log_fd, _debug_log_path = tempfile.mkstemp(
+    prefix="mcp_proxy_debug_", suffix=".log", dir="/tmp"
+)
+os.close(_debug_log_fd)  # FileHandler will reopen by name
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("/tmp/mcp_proxy_debug.log", mode="a"),
+        logging.FileHandler(_debug_log_path, mode="a"),
     ],
 )
 logger = logging.getLogger("mcp-proxy")
@@ -262,22 +268,23 @@ def process_tool_result(name, result):
             )
             formatted_markdown = format_slack_messages(raw_str)
 
-        # Item 0: Human-friendly Markdown
-        new_content = [{"type": "text", "text": formatted_markdown}]
-
-        # Item 1: Raw JSON string (user requested enhancement)
-        raw_data_str = json.dumps(search_json, indent=2)
-        new_content.append(
-            {"type": "text", "text": f"#### 📄 Raw Data\n```json\n{raw_data_str}\n```"}
-        )
-
-        final_res["content"] = new_content
+        # Human-friendly Markdown only (raw JSON removed to avoid output size issues)
+        final_res["content"] = [
+            {
+                "type": "text",
+                "text": "Display the following search results table to the user:\n\n"
+                + formatted_markdown,
+            }
+        ]
     elif not result.isError:
         # Fallback if no structured result
         final_res["result"] = ""
         final_res["structuredContent"] = {"result": ""}
 
-    return final_res
+    return CallToolResult(
+        content=[TextContent(**c) for c in final_res["content"]],
+        isError=final_res.get("isError", False),
+    )
 
 
 async def proxy(url, token):
@@ -300,6 +307,12 @@ async def proxy(url, token):
                     try:
                         # Use the remote_session directly within this scope
                         result = await remote_session.list_tools()
+                        for tool in result.tools:
+                            tool.description = (
+                                (tool.description or "")
+                                + " Results are returned as a Markdown table."
+                                " Always display the full table to the user."
+                            )
                         tool_names = [t.name for t in result.tools]
                         logger.info(f"Discovered tools: {tool_names}")
                         return result.tools
@@ -315,13 +328,10 @@ async def proxy(url, token):
                         result = await remote_session.call_tool(name, arguments)
                         logger.info(f"Got result from remote tool: {name}")
 
-                        # TEMPORARY: Bypass processing to isolate crash
-                        return result
-
-                        # processed = process_tool_result(name, result)
-                        # return processed
+                        processed = process_tool_result(name, result)
+                        return processed
                     except BaseException as e:
-                        logger.error(f"Error in call_tool: {e}")
+                        logger.error(f"Error in call_tool: {type(e).__name__}: {e}", exc_info=True)
                         # CRITICAL: Do NOT let any exception escape call_tool as it will crash the stdio bridge
                         # We avoid logger.error here as it might trigger the Bad file descriptor OSError
                         return CallToolResult(
@@ -770,7 +780,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    with open("/tmp/mcp_proxy_debug.log", "a") as f:
+    with open(_debug_log_path, "a") as f:
         f.write(f"\n--- SCRIPT START: {time.ctime()} ---\n")
     try:
         asyncio.run(main())

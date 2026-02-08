@@ -20,7 +20,7 @@ class MockContent:
 
 
 def test_process_tool_result_slack_search_transformation():
-    """Test that slack search results are correctly transformed into Markdown + JSON."""
+    """Test that slack search results are correctly transformed into Markdown table."""
     name = "search_slack"
     raw_data = [
         {
@@ -37,19 +37,15 @@ def test_process_tool_result_slack_search_transformation():
 
     final_res = process_tool_result(name, result)
 
-    assert final_res["isError"] is False
-    assert len(final_res["content"]) == 2
-    # Item 0 should be the Markdown table
-    assert "| Date | User | Channel | Message |" in final_res["content"][0]["text"]
-    # Item 1 should be the raw JSON
-    assert "#### 📄 Raw Data" in final_res["content"][1]["text"]
-    assert "Andy" in final_res["content"][0]["text"]
-    assert "Hello world" in final_res["content"][1]["text"]
-    assert final_res["structuredContent"]["result"] == raw_data
+    assert final_res.isError is False
+    assert len(final_res.content) == 1
+    # Should be the Markdown table
+    assert "| Date | User | Channel | Message |" in final_res.content[0].text
+    assert "Andy" in final_res.content[0].text
 
 
 def test_process_tool_result_empty_structured_content():
-    """Test resiliency against empty structured content. Now should return 2 items."""
+    """Test resiliency against empty structured content."""
     name = "search_slack"
     result = MockResult(
         content=[MockContent(type="text", text="No messages found.")],
@@ -58,10 +54,9 @@ def test_process_tool_result_empty_structured_content():
 
     final_res = process_tool_result(name, result)
 
-    assert final_res["isError"] is False
-    assert len(final_res["content"]) == 2
-    assert "No Slack messages found." in final_res["content"][0]["text"]
-    assert "[]" in final_res["content"][1]["text"]
+    assert final_res.isError is False
+    assert len(final_res.content) == 1
+    assert "No Slack messages found." in final_res.content[0].text
 
 
 def test_format_slack_messages_table():
@@ -85,6 +80,6 @@ def test_process_tool_result_error_pass_through():
 
     final_res = process_tool_result(name, result)
 
-    assert final_res["isError"] is True
-    assert len(final_res["content"]) == 1
-    assert final_res["content"][0]["text"] == "Remote error message."
+    assert final_res.isError is True
+    assert len(final_res.content) == 1
+    assert final_res.content[0].text == "Remote error message."
