@@ -51,7 +51,7 @@ def test_get_secret_payload_env():
 def test_get_secret_payload_env_malformed():
     with patch.dict(os.environ, {"IAP_SECRET_DATA": "not-base64"}):
         # Should fallback to gcloud, so we mock run_gcloud to return None
-        with patch("python.tools.mcp_proxy.run_gcloud", return_value=None):
+        with patch("tools.mcp_proxy.run_gcloud", return_value=None):
             result = get_secret_payload("any", "any")
             assert result is None
 
@@ -61,7 +61,7 @@ def test_get_secret_payload_gcloud_normalization():
     encoded = base64.b64encode(json.dumps(secret_payload).encode()).decode()
     mock_res = {"payload": {"data": encoded}}
 
-    with patch("python.tools.mcp_proxy.run_gcloud", return_value=mock_res):
+    with patch("tools.mcp_proxy.run_gcloud", return_value=mock_res):
         with patch.dict(os.environ, {}, clear=True):
             result = get_secret_payload("sec", "proj")
             assert result["iapClientId"] == "cid"
@@ -73,7 +73,7 @@ def test_run_gcloud_success():
     mock_run.returncode = 0
     mock_run.stdout = json.dumps({"payload": {"data": "SGVsbG8="}})
 
-    with patch("python.tools.mcp_proxy.subprocess.run", return_value=mock_run):
+    with patch("tools.mcp_proxy.subprocess.run", return_value=mock_run):
         result = run_gcloud(["test"])
         assert result["payload"]["data"] == "SGVsbG8="
 
@@ -83,13 +83,13 @@ def test_run_gcloud_error_returncode():
     mock_run.returncode = 1
     mock_run.stderr = "Error message"
 
-    with patch("python.tools.mcp_proxy.subprocess.run", return_value=mock_run):
+    with patch("tools.mcp_proxy.subprocess.run", return_value=mock_run):
         result = run_gcloud(["test"])
         assert result is None
 
 
 def test_run_gcloud_exception():
-    with patch("python.tools.mcp_proxy.subprocess.run", side_effect=Exception("Crash")):
+    with patch("tools.mcp_proxy.subprocess.run", side_effect=Exception("Crash")):
         result = run_gcloud(["test"])
         assert result is None
 
@@ -128,7 +128,7 @@ def test_token_expiry():
 
 
 def test_token_cache_ops(tmp_path):
-    with patch("python.tools.mcp_proxy.Path.home", return_value=tmp_path):
+    with patch("tools.mcp_proxy.Path.home", return_value=tmp_path):
         audience = "test-aud"
         tokens = {"id_token": "abc", "expires_in": 3600}
 
@@ -148,13 +148,13 @@ def test_load_cached_tokens_env():
 
 
 def test_save_tokens_keyring():
-    with patch("python.tools.mcp_proxy.keyring.set_password") as mock_set:
+    with patch("tools.mcp_proxy.keyring.set_password") as mock_set:
         save_tokens({"id_token": "abc"}, "aud")
         mock_set.assert_called_once()
 
 
 def test_get_project_info():
-    with patch("python.tools.mcp_proxy.run_gcloud") as mock_run:
+    with patch("tools.mcp_proxy.run_gcloud") as mock_run:
         mock_run.side_effect = [
             {"core": {"project": "p1"}},  # config list
             {"projectNumber": "123"},  # projects describe
@@ -165,23 +165,23 @@ def test_get_project_info():
 
 
 def test_get_backend_id():
-    with patch("python.tools.mcp_proxy.run_gcloud") as mock_run:
+    with patch("tools.mcp_proxy.run_gcloud") as mock_run:
         mock_run.return_value = {"id": "b1"}
         assert get_backend_id("p", "bn") == "b1"
 
 
 def test_verify_alignment_success():
-    with patch("python.tools.mcp_proxy.socket.gethostbyname", return_value="1.1.1.1"):
+    with patch("tools.mcp_proxy.socket.gethostbyname", return_value="1.1.1.1"):
         with patch(
-            "python.tools.mcp_proxy.run_gcloud", return_value=[{"IPAddress": "1.1.1.1"}]
+            "tools.mcp_proxy.run_gcloud", return_value=[{"IPAddress": "1.1.1.1"}]
         ):
             assert verify_alignment("fqdn", "proj") is True
 
 
 def test_verify_alignment_fail():
-    with patch("python.tools.mcp_proxy.socket.gethostbyname", return_value="1.1.1.1"):
+    with patch("tools.mcp_proxy.socket.gethostbyname", return_value="1.1.1.1"):
         with patch(
-            "python.tools.mcp_proxy.run_gcloud", return_value=[{"IPAddress": "2.2.2.2"}]
+            "tools.mcp_proxy.run_gcloud", return_value=[{"IPAddress": "2.2.2.2"}]
         ):
             assert verify_alignment("fqdn", "proj") is False
 
@@ -199,22 +199,20 @@ def test_process_tool_result_model_extra():
 @pytest.mark.asyncio
 async def test_fetch_iap_token_cached():
     with patch(
-        "python.tools.mcp_proxy.load_cached_tokens", return_value={"id_token": "valid"}
+        "tools.mcp_proxy.load_cached_tokens", return_value={"id_token": "valid"}
     ):
-        with patch("python.tools.mcp_proxy.check_token_expiry", return_value=False):
+        with patch("tools.mcp_proxy.check_token_expiry", return_value=False):
             token = await fetch_iap_token("p", "a")
             assert token == "valid"
 
 
 @pytest.mark.asyncio
 async def test_fetch_iap_token_expired_no_refresh():
-    with patch(
-        "python.tools.mcp_proxy.load_cached_tokens", return_value={"id_token": "old"}
-    ):
-        with patch("python.tools.mcp_proxy.check_token_expiry", return_value=True):
+    with patch("tools.mcp_proxy.load_cached_tokens", return_value={"id_token": "old"}):
+        with patch("tools.mcp_proxy.check_token_expiry", return_value=True):
             # No refresh_token, should go to browser fallback
             with patch(
-                "python.tools.mcp_proxy.fetch_iap_token_via_browser",
+                "tools.mcp_proxy.fetch_iap_token_via_browser",
                 new_callable=AsyncMock,
             ) as mock_browser:
                 mock_browser.return_value = "new"
@@ -224,7 +222,7 @@ async def test_fetch_iap_token_expired_no_refresh():
 
 @pytest.mark.asyncio
 async def test_get_iap_client_secrets():
-    from python.tools.mcp_proxy import get_iap_client_secrets
+    from tools.mcp_proxy import get_iap_client_secrets
 
     with patch.dict(os.environ, {"IAP_CLIENT_ID": "cid", "IAP_CLIENT_SECRET": "csec"}):
         cid, csec = await get_iap_client_secrets("p")
@@ -233,7 +231,7 @@ async def test_get_iap_client_secrets():
 
     with patch.dict(os.environ, {}, clear=True):
         with patch(
-            "python.tools.mcp_proxy.get_secret_payload",
+            "tools.mcp_proxy.get_secret_payload",
             return_value={"iapClientId": "sm_cid", "iapClientSecret": "sm_csec"},
         ):
             cid, csec = await get_iap_client_secrets("p", secret_name="mysec")
@@ -244,18 +242,18 @@ async def test_get_iap_client_secrets():
 @pytest.mark.asyncio
 async def test_fetch_iap_token_via_browser_success():
     with patch(
-        "python.tools.mcp_proxy.get_iap_client_secrets", new_callable=AsyncMock
+        "tools.mcp_proxy.get_iap_client_secrets", new_callable=AsyncMock
     ) as mock_secrets:
         mock_secrets.return_value = ("cid", "csec")
-        with patch("python.tools.mcp_proxy.web.AppRunner") as mock_runner_cls:
+        with patch("tools.mcp_proxy.web.AppRunner") as mock_runner_cls:
             mock_runner = mock_runner_cls.return_value
             mock_runner.setup = AsyncMock()
             mock_runner.cleanup = AsyncMock()
-            with patch("python.tools.mcp_proxy.web.TCPSite") as mock_site_cls:
+            with patch("tools.mcp_proxy.web.TCPSite") as mock_site_cls:
                 mock_site = mock_site_cls.return_value
                 mock_site.start = AsyncMock()
 
-                with patch("python.tools.mcp_proxy.webbrowser.open"):
+                with patch("tools.mcp_proxy.webbrowser.open"):
                     # We need to simulate the received_code being set.
                     # This is tricky because it's a nonlocal.
                     # But we can mock the loop in fetch_iap_token_via_browser or just mock the whole function and test the callback logic separately?
@@ -264,19 +262,13 @@ async def test_fetch_iap_token_via_browser_success():
 
     # Better: just test the pieces if we can.
     # But since it's one big function, let's mock the exchange part.
-    with patch("python.tools.mcp_proxy.httpx.AsyncClient") as mock_client_cls:
+    with patch("tools.mcp_proxy.httpx.AsyncClient") as mock_client_cls:
         mock_client = mock_client_cls.return_value.__aenter__.return_value
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"id_token": "browser_token"}
         mock_client.post = AsyncMock(return_value=mock_resp)
-
-        # We also need to mock the wait loop so it finishes
-        with patch("python.tools.mcp_proxy.asyncio.sleep", new_callable=AsyncMock):
-            # We can't easily set 'received_code' from outside because it's a local variable in the function.
-            # This is a sign the function should be refactored for testability.
-            # But I will try to reach it by mocking the callback's effect if possible.
-            pass
+        pass
 
 
 def test_format_slack_messages_non_list():
@@ -284,12 +276,12 @@ def test_format_slack_messages_non_list():
 
 
 def test_check_token_expiry_no_jwt():
-    with patch("python.tools.mcp_proxy.jwt.decode", side_effect=Exception("Invalid")):
-        assert check_token_expiry("invalid") is True
+    # Invalid token (not enough parts)
+    assert check_token_expiry("invalid") is True
 
 
 def test_get_project_info_missing():
-    with patch("python.tools.mcp_proxy.run_gcloud", return_value={}):
+    with patch("tools.mcp_proxy.run_gcloud", return_value={}):
         pid, pnum = get_project_info()
         assert pid is None
         assert pnum is None
@@ -298,13 +290,16 @@ def test_get_project_info_missing():
 def test_check_token_expiry_cases():
     # Expired token (no exp claim or old exp)
     assert check_token_expiry("") is True
-    # Valid token mock
-    with patch(
-        "python.tools.mcp_proxy.jwt.decode", return_value={"exp": time.time() + 600}
-    ):
-        assert check_token_expiry("valid.jwt.token") is False
-    # Expired token mock
-    with patch(
-        "python.tools.mcp_proxy.jwt.decode", return_value={"exp": time.time() - 600}
-    ):
-        assert check_token_expiry("expired.jwt.token") is True
+
+    def make_token(payload_dict):
+        payload_json = json.dumps(payload_dict)
+        payload_b64 = base64.b64encode(payload_json.encode()).decode().rstrip("=")
+        return f"header.{payload_b64}.signature"
+
+    # Valid token
+    valid_token = make_token({"exp": time.time() + 600})
+    assert check_token_expiry(valid_token) is False
+
+    # Expired token
+    expired_token = make_token({"exp": time.time() - 600})
+    assert check_token_expiry(expired_token) is True
