@@ -5,8 +5,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from python.tools.mcp_proxy import (
+from tools.mcp_proxy import (
     check_token_expiry,
     fetch_iap_token,
     format_slack_messages,
