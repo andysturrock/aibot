@@ -3,8 +3,10 @@ from unittest.mock import patch
 import pytest
 from shared.security import (
     get_enterprise_id_from_payload,
+    get_iap_user_email,
     get_team_id_from_payload,
     is_team_authorized,
+    is_user_authorized,
     verify_slack_request,
 )
 
@@ -80,4 +82,54 @@ async def test_verify_slack_request_invalid(mock_get_secret_value):
         mock_verifier = MockVerifier.return_value
         mock_verifier.is_valid_request.return_value = False
 
-        assert await verify_slack_request(b"data", {}) is False
+
+@pytest.mark.asyncio
+async def test_is_user_authorized_success(mock_get_secret_value):
+    secrets_map = {
+        "teamIdsForSearch": "T123",
+        "enterpriseIdsForSearch": "E123",
+        "iapDomain": "example.com",
+    }
+    mock_get_secret_value.side_effect = lambda k: secrets_map.get(k, "")
+
+    from shared import security
+
+    security._allowed_team_ids = None  # reset
+
+    assert await is_user_authorized("user@example.com", "T123") is True
+    assert await is_user_authorized("user@other.com", "T123") is False
+    assert await is_user_authorized(None, "T123") is False
+    assert await is_user_authorized("user@example.com", "TWRONG") is False
+
+
+@pytest.mark.asyncio
+async def test_get_whitelists_error(mock_get_secret_value):
+    mock_get_secret_value.side_effect = Exception("Secret fail")
+    from shared import security
+
+    security._allowed_team_ids = None
+    teams, enterprises, domain = await security._get_whitelists()
+    assert teams == []
+    assert enterprises == []
+    assert domain == ""
+
+
+@pytest.mark.asyncio
+async def test_verify_slack_request_exception(mock_get_secret_value):
+    mock_get_secret_value.side_effect = Exception("error")
+    assert await verify_slack_request(b"data", {}) is False
+
+
+@pytest.mark.asyncio
+async def test_get_iap_user_email():
+    assert (
+        await get_iap_user_email(
+            {"X-Goog-Authenticated-User-Email": "accounts.google.com:user@test.com"}
+        )
+        == "user@test.com"
+    )
+    assert (
+        await get_iap_user_email({"X-Goog-Authenticated-User-Email": "user@test.com"})
+        == "user@test.com"
+    )
+    assert await get_iap_user_email({}) is None

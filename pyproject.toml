@@ -1,3 +1,39 @@
+[project]
+name = "aibot-beta"
+version = "0.1.0"
+description = "AIBot Monorepo"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv]
+workspace = { members = [
+    "python/libs/shared",
+    "python/services/aibot_logic",
+    "python/services/slack_collector",
+    "python/services/slack_search_mcp",
+] }
+
+[tool.uv.sources]
+shared = { workspace = true }
+aibot-logic = { workspace = true }
+slack-collector = { workspace = true }
+slack-search-mcp = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "shared",
+    "aibot-logic",
+    "slack-collector",
+    "slack-search-mcp",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "respx>=0.21.0",
+    "ruff>=0.3.0",
+    "httpx>=0.27.0",
+    "keyring>=24.0.0",
+]
+
 [tool.ruff]
 # Target version for Python
 target-version = "py311"
@@ -22,3 +58,9 @@ unfixable = []
 quote-style = "double"
 indent-style = "space"
 line-ending = "auto"
+
+[tool.pytest.ini_options]
+pythonpath = ["python"]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["python"]

@@ -160,3 +160,57 @@ async def test_refresh_google_id_token_failure(respx_mock):
         )
         token = await refresh_google_id_token("refresh")
         assert token is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_user_tokens_refresh_failure():
+    with (
+        patch("shared.google_auth.get_google_token") as mock_get,
+        patch("shared.google_auth.get_secret_value") as mock_secret,
+        patch("shared.google_auth.Credentials") as mock_creds_class,
+    ):
+        manager = AIBotIdentityManager(kms_key_path="test-key")
+        manager.decrypt = AsyncMock(return_value="raw-refresh")
+
+        mock_get.return_value = {"refresh_token": "enc-refresh"}
+        mock_secret.side_effect = ["client-id", "client-secret"]
+
+        mock_creds = MagicMock()
+        mock_creds.refresh.side_effect = Exception("Refresh API Error")
+        mock_creds_class.return_value = mock_creds
+
+        res = await manager.refresh_user_tokens("U123")
+        assert res is None
+
+
+@pytest.mark.asyncio
+async def test_verify_iap_jwt_log_cases():
+    with patch("google.oauth2.id_token.verify_token") as mock_verify:
+        # Case 1: Audience mismatch
+        mock_verify.side_effect = Exception("Audience mismatch")
+        await verify_iap_jwt("jwt", "expected")
+
+        # Case 2: Email claim issue
+        mock_verify.side_effect = Exception("Email claim issue")
+        await verify_iap_jwt("jwt", "expected")
+
+
+@pytest.mark.asyncio
+async def test_refresh_google_id_token_success(respx_mock):
+    with patch("shared.google_auth.get_secret_value") as mock_secret:
+        mock_secret.side_effect = ["client-id", "client-secret"]
+        respx_mock.post("https://oauth2.googleapis.com/token").respond(
+            json={"id_token": "fresh-id-token"}
+        )
+        token = await refresh_google_id_token("refresh")
+        assert token == "fresh-id-token"
+
+
+def test_get_google_auth_url():
+    from shared.google_auth import get_google_auth_url
+
+    url = get_google_auth_url("cid", "ruri", "state123")
+    assert "cid" in url
+    assert "ruri" in url
+    assert "state123" in url
+    assert "scope=openid+email+profile" in url
