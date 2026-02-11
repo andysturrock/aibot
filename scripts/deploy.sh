@@ -146,6 +146,7 @@ gcloud services enable \
   iap.googleapis.com \
   serviceusage.googleapis.com \
   sts.googleapis.com \
+  cloudkms.googleapis.com \
   --project="$PROJECT_ID" --quiet
 
 # Foundation: Ensure IAP Service Identity is provisioned (required for Cloud Run IAP)
@@ -281,6 +282,12 @@ fi
 if [ "$NO_TF" = false ]; then
   echo "--- Finalizing Deployment ---"
   ( cd terraform && terraform apply -auto-approve $TF_VARS )
+fi
+
+# 4b. Extract KMS key path from Terraform output (overrides .env value when TF is active)
+if [ "$NO_TF" = false ]; then
+  TOKEN_ENCRYPTION_KEY_PATH=$(cd terraform && terraform output -raw token_encryption_key_path)
+  echo "Using KMS key: $TOKEN_ENCRYPTION_KEY_PATH"
 fi
 
 # 5. Secret Synchronization
