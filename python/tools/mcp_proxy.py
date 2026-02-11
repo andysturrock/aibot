@@ -28,7 +28,7 @@ except Exception:
 
 import webbrowser
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 import keyring
@@ -37,7 +37,7 @@ from dotenv import load_dotenv
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.server import Server
-from mcp.types import CallToolResult, TextContent
+from mcp.types import CallToolResult, TextContent, Tool
 
 # Configure logging
 logging.basicConfig(
@@ -65,6 +65,112 @@ def run_gcloud(args):
     except Exception as e:
         logger.error(f"Error running gcloud {args}: {e}")
         return None
+
+
+def get_gcloud_access_token(project_id):
+    """Get an access token from gcloud for API calls.
+
+    Returns (token, None) on success or (None, error_message) on failure.
+    """
+    try:
+        cmd = ["gcloud", "auth", "print-access-token", f"--project={project_id}"]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        token = result.stdout.strip()
+        if not token:
+            return None, "gcloud auth print-access-token returned empty output."
+        return token, None
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.strip() if e.stderr else "unknown error"
+        return None, (
+            f"Failed to get GCP access token: {stderr}. "
+            f"Run 'gcloud auth application-default login --project={project_id}' and try again."
+        )
+    except FileNotFoundError:
+        return None, "gcloud CLI not found. Install the Google Cloud SDK first."
+
+
+def get_gcloud_identity_token(project_id):
+    """Get the user's identity token from gcloud for X-User-ID-Token header.
+
+    This token identifies the real user. It is NOT audience-scoped — the backend
+    verifies signature and issuer only for mcp-client-accessor callers.
+
+    Returns (token, None) on success or (None, error_message) on failure.
+    """
+    try:
+        cmd = ["gcloud", "auth", "print-identity-token", f"--project={project_id}"]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        token = result.stdout.strip()
+        if not token:
+            return None, "gcloud auth print-identity-token returned empty output."
+        return token, None
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.strip() if e.stderr else "unknown error"
+        return None, (
+            f"Failed to get user identity token: {stderr}. "
+            "Run 'gcloud auth login' and try again."
+        )
+    except FileNotFoundError:
+        return None, "gcloud CLI not found. Install the Google Cloud SDK first."
+
+
+async def sign_jwt_for_iap(sa_email, resource_url, project_id):
+    """Sign a JWT using the IAM Credentials signJwt API for IAP authentication.
+
+    Uses the user's ADC (via gcloud) to call signJwt on the given service account.
+    The JWT audience (aud) should be the URL of the IAP-secured resource, either
+    as an exact URL or with a path wildcard (e.g. https://host/*) per Google's
+    IAP SA JWT specification.
+
+    See: https://cloud.google.com/iap/docs/authentication-howto#authenticate_with_a_service_account_jwt
+
+    Returns (signed_jwt, None) on success or (None, error_message) on failure.
+    """
+    access_token, err = get_gcloud_access_token(project_id)
+    if not access_token:
+        return None, err
+
+    now = int(time.time())
+    payload = {
+        "iss": sa_email,
+        "sub": sa_email,
+        "aud": resource_url,
+        "iat": now,
+        "exp": now + 3600,
+    }
+
+    url = (
+        f"https://iamcredentials.googleapis.com/v1/"
+        f"projects/-/serviceAccounts/{sa_email}:signJwt"
+    )
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json",
+                },
+                json={"payload": json.dumps(payload)},
+            )
+        except Exception as e:
+            return None, f"Network error calling signJwt API: {e}"
+
+        if resp.status_code == 403:
+            return None, (
+                f"Permission denied signing JWT for {sa_email}. "
+                f"Ensure your account has 'Service Account Token Creator' role on {sa_email}."
+            )
+        elif resp.status_code != 200:
+            return None, f"signJwt API error ({resp.status_code}): {resp.text}"
+
+        signed_jwt = resp.json().get("signedJwt")
+        if not signed_jwt:
+            return None, "signJwt response missing 'signedJwt' field."
+
+        logger.info("Successfully obtained signed JWT from IAM Credentials API.")
+        return signed_jwt, None
 
 
 def format_slack_messages(raw_json: str) -> str:
@@ -280,11 +386,51 @@ def process_tool_result(name, result):
     return final_res
 
 
-async def proxy(url, token):
+async def run_error_server(error_message):
+    """Start a minimal MCP server that reports an auth/connection error to the client.
+
+    Instead of crashing, this gives MCP clients (Claude Code, Antigravity, etc.)
+    a running server with a descriptive error that users can act on.
+    """
+    logger.error(f"Starting error server: {error_message}")
+    server = Server("mcp-proxy")
+
+    @server.list_tools()
+    async def list_tools():
+        return [
+            Tool(
+                name="authentication_error",
+                description=f"MCP proxy failed: {error_message}",
+                inputSchema={"type": "object", "properties": {}},
+            )
+        ]
+
+    @server.call_tool()
+    async def call_tool(name, arguments):
+        return CallToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text=f"MCP proxy authentication error: {error_message}",
+                )
+            ],
+            isError=True,
+        )
+
+    from mcp.server.stdio import stdio_server
+
+    async with stdio_server() as (read_in, write_out):
+        init_options = server.create_initialization_options()
+        await server.run(read_in, write_out, init_options)
+
+
+async def proxy(url, token, user_identity_token=None):
     """Run the MCP proxy server."""
     logger.info(f"Connecting to remote MCP server at {url}...")
 
     headers = {"Authorization": f"Bearer {token}"}
+    if user_identity_token:
+        headers["X-User-ID-Token"] = user_identity_token
 
     try:
         async with sse_client(url, headers=headers) as (read_stream, write_stream):
@@ -679,6 +825,11 @@ async def main():
     parser.add_argument("--client-id", help="Override OAuth Client ID")
     parser.add_argument("--client-secret", help="Override OAuth Client Secret")
     parser.add_argument("--skip-alignment", action="store_true")
+    parser.add_argument(
+        "--service-account",
+        help="Service account email for JWT-based IAP auth (no OAuth secrets needed). "
+        "E.g. mcp-client-accessor@PROJECT.iam.gserviceaccount.com",
+    )
     args = parser.parse_args()
 
     # 1. Environment Loading
@@ -743,25 +894,71 @@ async def main():
                 or os.environ.get("IAP_CLIENT_ID")
             )
 
-    if not audience:
-        logger.error(
-            "Error: Could not determine IAP audience. Use --audience or --backend."
+    # Note: audience may be None here — that's OK for --service-account path
+    # which uses the resource URL as the JWT audience instead.
+
+    # 2. Acquire IAP Token
+    user_identity_token = None
+
+    if args.service_account:
+        # --- SA JWT Auth Path ---
+        # No OAuth client_id/client_secret needed. Uses gcloud ADC to call
+        # signJwt on a dedicated service account.
+        logger.info(
+            f"Using Service Account JWT auth with SA: {args.service_account}"
         )
-        sys.exit(1)
 
-    # 2. Acquire IAP Identity Token
-    token = await fetch_iap_token(
-        project_id, audience, args.client_id, args.client_secret, args.secret_name
-    )
+        # Derive the resource URL for the JWT audience.
+        # Per Google IAP docs, the aud claim must be the exact URL or a wildcard
+        # (e.g. https://host/*). We use a wildcard so the JWT covers all paths
+        # (SSE endpoint + message POST endpoint). If --audience was explicitly
+        # provided or discovered from backend service, prefer that.
+        parsed = urlparse(url)
+        resource_url = audience or f"{parsed.scheme}://{parsed.netloc}/*"
 
-    if not token:
-        logger.error("Error: Failed to acquire IAP token.")
-        sys.exit(1)
+        # Sign JWT for IAP
+        token, err = await sign_jwt_for_iap(
+            args.service_account, resource_url, project_id
+        )
+        if not token:
+            await run_error_server(err)
+            return
+
+        # Get user identity token for X-User-ID-Token header
+        user_identity_token, err = get_gcloud_identity_token(project_id)
+        if not user_identity_token:
+            await run_error_server(err)
+            return
+
+        logger.info("SA JWT and user identity token acquired successfully.")
+    else:
+        # --- Existing OAuth Path (unchanged) ---
+        if not audience:
+            await run_error_server(
+                "Could not determine IAP audience. Use --audience, --backend, "
+                "or --service-account for JWT auth."
+            )
+            return
+
+        token = await fetch_iap_token(
+            project_id,
+            audience,
+            args.client_id,
+            args.client_secret,
+            args.secret_name,
+        )
+
+        if not token:
+            await run_error_server(
+                "Failed to acquire IAP token. Check your OAuth client credentials "
+                "or use --service-account for JWT auth."
+            )
+            return
 
     # 3. Execute Proxy
     try:
         logger.info(f"Starting native bridge to {url}")
-        await proxy(url, token)
+        await proxy(url, token, user_identity_token=user_identity_token)
     except Exception as e:
         logger.error(f"Proxy execution failed: {e}")
         sys.exit(1)
