@@ -11,7 +11,6 @@ Covers:
 
 import json
 import subprocess
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,7 +20,6 @@ from tools.mcp_proxy import (
     run_error_server,
     sign_jwt_for_iap,
 )
-
 
 # ---------------------------------------------------------------------------
 # get_gcloud_access_token
@@ -72,9 +70,7 @@ class TestGetGcloudAccessToken:
             assert "unknown error" in err
 
     def test_gcloud_not_found(self):
-        with patch(
-            "tools.mcp_proxy.subprocess.run", side_effect=FileNotFoundError()
-        ):
+        with patch("tools.mcp_proxy.subprocess.run", side_effect=FileNotFoundError()):
             token, err = get_gcloud_access_token("my-project")
             assert token is None
             assert "gcloud CLI not found" in err
@@ -82,7 +78,9 @@ class TestGetGcloudAccessToken:
     def test_includes_project_flag(self):
         mock_result = MagicMock()
         mock_result.stdout = "token\n"
-        with patch("tools.mcp_proxy.subprocess.run", return_value=mock_result) as mock_run:
+        with patch(
+            "tools.mcp_proxy.subprocess.run", return_value=mock_result
+        ) as mock_run:
             get_gcloud_access_token("my-proj-123")
             args = mock_run.call_args[0][0]
             assert "--project=my-proj-123" in args
@@ -120,9 +118,7 @@ class TestGetGcloudIdentityToken:
             assert "gcloud auth login" in err
 
     def test_gcloud_not_found(self):
-        with patch(
-            "tools.mcp_proxy.subprocess.run", side_effect=FileNotFoundError()
-        ):
+        with patch("tools.mcp_proxy.subprocess.run", side_effect=FileNotFoundError()):
             token, err = get_gcloud_identity_token("my-project")
             assert token is None
             assert "gcloud CLI not found" in err
@@ -130,7 +126,9 @@ class TestGetGcloudIdentityToken:
     def test_includes_project_flag(self):
         mock_result = MagicMock()
         mock_result.stdout = "token\n"
-        with patch("tools.mcp_proxy.subprocess.run", return_value=mock_result) as mock_run:
+        with patch(
+            "tools.mcp_proxy.subprocess.run", return_value=mock_result
+        ) as mock_run:
             get_gcloud_identity_token("other-proj")
             args = mock_run.call_args[0][0]
             assert "--project=other-proj" in args
@@ -373,8 +371,6 @@ class TestRunErrorServer:
         """Verify the error server registers an authentication_error tool."""
         from mcp.server import Server
 
-        captured_tools = []
-
         original_init = Server.__init__
 
         def patched_init(self, name, *args, **kwargs):
@@ -417,9 +413,7 @@ class TestRunErrorServer:
                 # Mock the import inside run_error_server
                 mock_stdio = MagicMock()
                 mock_cm = AsyncMock()
-                mock_cm.__aenter__ = AsyncMock(
-                    side_effect=RuntimeError("test exit")
-                )
+                mock_cm.__aenter__ = AsyncMock(side_effect=RuntimeError("test exit"))
                 mock_cm.__aexit__ = AsyncMock(return_value=False)
                 mock_stdio.return_value = mock_cm
 
@@ -556,8 +550,7 @@ class TestMainSaJwtBranching:
                         assert call_args[0][0] == "https://aibot.example.com/mcp/sse"
                         assert call_args[0][1] == "signed.jwt"
                         assert (
-                            call_args[1]["user_identity_token"]
-                            == "user.identity.token"
+                            call_args[1]["user_identity_token"] == "user.identity.token"
                         )
 
     @pytest.mark.asyncio

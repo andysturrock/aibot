@@ -128,13 +128,9 @@ async def test_mcp_client_accessor_verifies_without_audience():
     with patch("google.cloud.firestore.AsyncClient", return_value=mock_db):
         with patch(
             "services.slack_search_mcp.main.verify_iap_jwt",
-            return_value={
-                "email": "mcp-client-accessor@proj.iam.gserviceaccount.com"
-            },
+            return_value={"email": "mcp-client-accessor@proj.iam.gserviceaccount.com"},
         ):
-            with patch(
-                "google.oauth2.id_token.verify_oauth2_token"
-            ) as mock_verify:
+            with patch("google.oauth2.id_token.verify_oauth2_token") as mock_verify:
                 mock_verify.return_value = {"email": "user@example.com"}
                 with patch(
                     "services.slack_search_mcp.main.WebClient"
@@ -156,7 +152,7 @@ async def test_mcp_client_accessor_verifies_without_audience():
                             ),
                             base_url="http://test",
                         ) as ac:
-                            response = await ac.get(
+                            await ac.get(
                                 "/mcp/messages",
                                 headers={
                                     "X-Goog-IAP-JWT-Assertion": "sa-jwt",
@@ -180,13 +176,9 @@ async def test_aibot_logic_verifies_with_audience():
     with patch("google.cloud.firestore.AsyncClient", return_value=mock_db):
         with patch(
             "services.slack_search_mcp.main.verify_iap_jwt",
-            return_value={
-                "email": "aibot-logic@proj.iam.gserviceaccount.com"
-            },
+            return_value={"email": "aibot-logic@proj.iam.gserviceaccount.com"},
         ):
-            with patch(
-                "google.oauth2.id_token.verify_oauth2_token"
-            ) as mock_verify:
+            with patch("google.oauth2.id_token.verify_oauth2_token") as mock_verify:
                 mock_verify.return_value = {"email": "user@example.com"}
                 with patch(
                     "services.slack_search_mcp.main.WebClient"
@@ -208,7 +200,7 @@ async def test_aibot_logic_verifies_with_audience():
                             ),
                             base_url="http://test",
                         ) as ac:
-                            response = await ac.get(
+                            await ac.get(
                                 "/mcp/messages",
                                 headers={
                                     "X-Goog-IAP-JWT-Assertion": "logic-jwt",
@@ -238,13 +230,9 @@ async def test_mcp_client_accessor_successful_auth():
     with patch("google.cloud.firestore.AsyncClient", return_value=mock_db):
         with patch(
             "services.slack_search_mcp.main.verify_iap_jwt",
-            return_value={
-                "email": "mcp-client-accessor@proj.iam.gserviceaccount.com"
-            },
+            return_value={"email": "mcp-client-accessor@proj.iam.gserviceaccount.com"},
         ):
-            with patch(
-                "google.oauth2.id_token.verify_oauth2_token"
-            ) as mock_verify:
+            with patch("google.oauth2.id_token.verify_oauth2_token") as mock_verify:
                 mock_verify.return_value = {"email": "authorized@example.com"}
                 with patch(
                     "services.slack_search_mcp.main.WebClient"
@@ -287,9 +275,7 @@ async def test_mcp_client_accessor_user_email_missing():
     """If user ID token has no email claim, should return 403."""
     with patch(
         "services.slack_search_mcp.main.verify_iap_jwt",
-        return_value={
-            "email": "mcp-client-accessor@proj.iam.gserviceaccount.com"
-        },
+        return_value={"email": "mcp-client-accessor@proj.iam.gserviceaccount.com"},
     ):
         with patch(
             "google.oauth2.id_token.verify_oauth2_token",
@@ -332,13 +318,9 @@ async def test_mcp_client_accessor_header_scrubbing():
     with patch("google.cloud.firestore.AsyncClient", return_value=mock_db):
         with patch(
             "services.slack_search_mcp.main.verify_iap_jwt",
-            return_value={
-                "email": "mcp-client-accessor@proj.iam.gserviceaccount.com"
-            },
+            return_value={"email": "mcp-client-accessor@proj.iam.gserviceaccount.com"},
         ):
-            with patch(
-                "google.oauth2.id_token.verify_oauth2_token"
-            ) as mock_verify:
+            with patch("google.oauth2.id_token.verify_oauth2_token") as mock_verify:
                 mock_verify.return_value = {"email": "user@example.com"}
                 with patch(
                     "services.slack_search_mcp.main.WebClient"
@@ -384,9 +366,7 @@ async def test_mcp_client_accessor_user_not_in_slack():
     with patch("google.cloud.firestore.AsyncClient", return_value=mock_db):
         with patch(
             "services.slack_search_mcp.main.verify_iap_jwt",
-            return_value={
-                "email": "mcp-client-accessor@proj.iam.gserviceaccount.com"
-            },
+            return_value={"email": "mcp-client-accessor@proj.iam.gserviceaccount.com"},
         ):
             with patch(
                 "google.oauth2.id_token.verify_oauth2_token",
@@ -426,9 +406,7 @@ async def test_mcp_client_accessor_unauthorized_team():
     with patch("google.cloud.firestore.AsyncClient", return_value=mock_db):
         with patch(
             "services.slack_search_mcp.main.verify_iap_jwt",
-            return_value={
-                "email": "mcp-client-accessor@proj.iam.gserviceaccount.com"
-            },
+            return_value={"email": "mcp-client-accessor@proj.iam.gserviceaccount.com"},
         ):
             with patch(
                 "google.oauth2.id_token.verify_oauth2_token",
@@ -460,10 +438,7 @@ async def test_mcp_client_accessor_unauthorized_team():
                                 },
                             )
                         assert response.status_code == 403
-                        assert (
-                            "Unauthorized access"
-                            in response.json()["error"]
-                        )
+                        assert "Unauthorized access" in response.json()["error"]
 
 
 # ---------------------------------------------------------------------------
