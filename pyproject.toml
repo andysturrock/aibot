@@ -25,7 +25,7 @@ dev = [
     "aibot-logic",
     "slack-collector",
     "slack-search-mcp",
-    "pytest>=8.0.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
     "respx>=0.21.0",
