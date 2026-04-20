@@ -4,7 +4,7 @@ version = "0.1.0"
 dependencies = [
     "shared",
     "google-adk>=1.29.0",
-    "fastapi>=0.135.3",
+    "fastapi>=0.136.0",
     "uvicorn>=0.44.0",
     "google-cloud-pubsub>=2.37.0",
     "google-cloud-firestore>=2.26.0",
