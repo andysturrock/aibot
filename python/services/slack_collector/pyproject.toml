@@ -7,7 +7,7 @@ dependencies = [
     "google-cloud-aiplatform>=1.147.0",
     "vertexai>=1.43.0",
     "python-dotenv>=1.2.2",
-    "fastapi>=0.135.3",
+    "fastapi>=0.136.0",
     "uvicorn>=0.44.0"
 ]
 
