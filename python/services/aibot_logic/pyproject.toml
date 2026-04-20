@@ -15,7 +15,7 @@ dependencies = [
     "google-cloud-aiplatform>=1.148.1",
     "pydantic>=2.13.3",
     "pytz>=2026.1.post1",
-    "pyjwt>=2.10.1"
+    "pyjwt>=2.12.1"
 ]
 
 [tool.setuptools]
