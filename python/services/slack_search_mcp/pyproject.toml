@@ -4,7 +4,7 @@ version = "0.1.0"
 dependencies = [
     "shared",
     "mcp[fastapi]>=1.27.0",
-    "fastapi>=0.136.0",
+    "fastapi>=0.136.1",
     "uvicorn>=0.46.0",
     "google-cloud-bigquery>=3.41.0",
     "google-genai>=1.73.1",
