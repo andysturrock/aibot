@@ -10,7 +10,7 @@ dependencies = [
     "google-genai>=1.73.1",
     "python-dotenv>=1.2.2",
     "slack-sdk>=3.41.0",
-    "google-auth>=2.49.2"
+    "google-auth>=2.50.0"
 ]
 
 [tool.setuptools]
