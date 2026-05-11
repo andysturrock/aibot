@@ -174,7 +174,7 @@ resource "google_cloud_run_v2_service" "slack_search_mcp" {
   ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
   template {
-    timeout = "60s"
+    timeout = "3600s" # 1 hour — must match backend service timeout for SSE connections
     scaling {
       min_instance_count = 1
       max_instance_count = 5
