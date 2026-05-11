@@ -3,7 +3,7 @@ name = "aibot-logic"
 version = "0.1.0"
 dependencies = [
     "shared",
-    "google-adk>=1.32.0",
+    "google-adk>=1.33.0",
     "fastapi>=0.136.1",
     "uvicorn>=0.46.0",
     "google-cloud-pubsub>=2.38.0",
