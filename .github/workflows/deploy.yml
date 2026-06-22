@@ -14,7 +14,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -47,7 +47,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -76,7 +76,7 @@ jobs:
       contents: 'read'
       id-token: 'write'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
@@ -129,7 +129,7 @@ jobs:
       contents: 'read'
       id-token: 'write'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
@@ -155,7 +155,7 @@ jobs:
       contents: 'read'
       id-token: 'write'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
