@@ -65,6 +65,20 @@ resource "google_project_service" "iap_api" {
   disable_on_destroy = false
 }
 
+# Enable IAM Credentials API (required for signJwt used by MCP proxy SA JWT auth)
+resource "google_project_service" "iamcredentials_api" {
+  project            = var.gcp_gemini_project_id
+  service            = "iamcredentials.googleapis.com"
+  disable_on_destroy = false
+}
+
+# Enable Cloud KMS API (required for token encryption key)
+resource "google_project_service" "cloudkms_api" {
+  project            = var.gcp_gemini_project_id
+  service            = "cloudkms.googleapis.com"
+  disable_on_destroy = false
+}
+
 resource "google_firestore_database" "database" {
   project     = var.gcp_gemini_project_id
   name        = "(default)"
