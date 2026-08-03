@@ -3,7 +3,7 @@ name = "slack-search-mcp"
 version = "0.1.0"
 dependencies = [
     "shared",
-    "mcp[fastapi]>=1.28.1",
+    "mcp[fastapi]>=2.0.0",
     "fastapi>=0.140.5",
     "uvicorn>=0.52.0",
     "google-cloud-bigquery>=3.42.2",
