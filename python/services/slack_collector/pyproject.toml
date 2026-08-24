@@ -6,7 +6,7 @@ dependencies = [
     "google-cloud-bigquery>=3.43.0",
     "google-cloud-aiplatform>=1.165.1",
     "vertexai>=1.71.1",
-    "python-dotenv>=1.2.2",
+    "python-dotenv>=1.2.3",
     "fastapi>=0.141.1",
     "uvicorn>=0.52.4"
 ]
