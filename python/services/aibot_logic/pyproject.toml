@@ -13,7 +13,7 @@ dependencies = [
     "mcp[fastapi]>=2.0.0",
     "vertexai>=1.71.1",
     "google-cloud-aiplatform>=1.165.1",
-    "pydantic>=2.13.4",
+    "pydantic>=2.13.5",
     "pytz>=2026.3.post1",
     "pyjwt>=2.13.0"
 ]
