@@ -4,7 +4,7 @@ version = "0.1.0"
 dependencies = [
     "shared",
     "google-cloud-bigquery>=3.43.0",
-    "google-cloud-aiplatform>=1.165.1",
+    "google-cloud-aiplatform>=2.0.1",
     "vertexai>=1.71.1",
     "python-dotenv>=1.2.3",
     "fastapi>=0.141.1",
