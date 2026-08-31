@@ -320,6 +320,30 @@ resource "google_iap_web_backend_service_iam_member" "domain_iap_access" {
   member              = "domain:${local.iap_auth_domain}"
 }
 
+# --- SA for Desktop MCP Proxy Clients (SA JWT auth) ---
+# This SA is used by desktop users running the MCP proxy to authenticate
+# through IAP without needing OAuth client_id/client_secret.
+# Users impersonate this SA via the IAM Credentials signJwt API.
+resource "google_service_account" "mcp_client_accessor" {
+  account_id   = "mcp-client-accessor"
+  display_name = "Service Account for MCP Desktop Proxy Clients"
+  project      = var.gcp_gemini_project_id
+}
+
+# This SA can access IAP on the MCP backend only — no other permissions
+resource "google_iap_web_backend_service_iam_member" "mcp_client_iap_access" {
+  project             = var.gcp_gemini_project_id
+  web_backend_service = google_compute_backend_service.mcp_backend.name
+  role                = "roles/iap.httpsResourceAccessor"
+  member              = "serviceAccount:${google_service_account.mcp_client_accessor.email}"
+}
+
+# All domain users can impersonate this SA to sign JWTs for IAP access
+resource "google_service_account_iam_member" "domain_mcp_token_creator" {
+  service_account_id = google_service_account.mcp_client_accessor.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "domain:${local.iap_auth_domain}"
+}
 
 # Ensure the IAP Service Agent exists
 resource "google_project_service_identity" "iap_sa" {

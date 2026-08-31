@@ -166,14 +166,18 @@ class SecurityMiddleware:
             # 3. Determine User Identity
             final_user_email = caller_email
             is_logic_server = "aibot-logic" in caller_email
+            is_mcp_client_accessor = "mcp-client-accessor" in caller_email
+            is_service_caller = is_logic_server or is_mcp_client_accessor
 
-            if is_logic_server:
-                # Require X-User-ID-Token for impersonation
+            if is_service_caller:
+                # Service callers (aibot-logic, mcp-client-accessor) must provide
+                # an X-User-ID-Token header to identify the real user.
                 user_id_token = request.headers.get("X-User-ID-Token")
                 if not user_id_token:
-                    logger.warning("Logic Server calling without X-User-ID-Token")
+                    caller_type = "Logic Server" if is_logic_server else "MCP Client Accessor"
+                    logger.warning(f"{caller_type} calling without X-User-ID-Token")
                     response = JSONResponse(
-                        {"error": "X-User-ID-Token required for Logic Server"},
+                        {"error": f"X-User-ID-Token required for {caller_type}"},
                         status_code=401,
                     )
                     await response(scope, receive, send)
@@ -184,11 +188,20 @@ class SecurityMiddleware:
                 from google.oauth2 import id_token as google_id_token
 
                 try:
-                    # The audience for these user tokens is the IAP Client ID.
-                    client_id = await get_secret_value("iapClientId")
-                    user_payload = google_id_token.verify_oauth2_token(
-                        user_id_token, auth_requests.Request(), client_id
-                    )
+                    if is_logic_server:
+                        # aibot-logic: user tokens are minted with IAP Client ID as audience
+                        client_id = await get_secret_value("iapClientId")
+                        user_payload = google_id_token.verify_oauth2_token(
+                            user_id_token, auth_requests.Request(), client_id
+                        )
+                    else:
+                        # mcp-client-accessor: user tokens come from
+                        # 'gcloud auth print-identity-token' which have no specific
+                        # IAP audience. Verify signature and issuer only.
+                        user_payload = google_id_token.verify_oauth2_token(
+                            user_id_token, auth_requests.Request()
+                        )
+
                     final_user_email = user_payload.get("email")
                     if not final_user_email:
                         raise ValueError("User ID Token missing email")
@@ -196,7 +209,7 @@ class SecurityMiddleware:
                     # Rate Limit Impersonation
                     if not await self._check_impersonation_rate_limit(final_user_email):
                         logger.warning(
-                            f"Rate limit exceeded: Logic Server impersonating too many unique users ({final_user_email})"
+                            f"Rate limit exceeded: service caller impersonating too many unique users ({final_user_email})"
                         )
                         response = JSONResponse(
                             {"error": "Impersonation rate limit exceeded"},
