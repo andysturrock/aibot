@@ -5,7 +5,7 @@ dependencies = [
     "shared",
     "mcp[fastapi]>=2.2.0",
     "fastapi>=0.141.1",
-    "uvicorn>=0.52.4",
+    "uvicorn>=0.53.0",
     "google-cloud-bigquery>=3.45.0",
     "google-genai>=2.23.0",
     "python-dotenv>=1.2.3",
