@@ -14,7 +14,7 @@ dependencies = [
     "vertexai>=1.71.1",
     "google-cloud-aiplatform>=2.5.0",
     "pydantic>=2.14.2",
-    "pytz>=2026.5",
+    "pytz>=2026.6",
     "pyjwt>=2.15.1"
 ]
 
